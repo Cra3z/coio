@@ -1,0 +1,14 @@
+# unrelated project directories
+.idea
+.vscode
+build*
+cmake-build-*
+
+# non-text files
+*.exe
+*.obj
+*.lib
+*.dll
+*.o
+*.a
+*.so
