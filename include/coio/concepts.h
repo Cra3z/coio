@@ -2,6 +2,7 @@
 #include <type_traits>
 #include <concepts>
 #include <coroutine>
+#include <ranges>
 
 namespace coio {
 	namespace detail {
@@ -32,6 +33,11 @@ namespace coio {
 			using type = decltype(operator co_await(std::declval<Awaitable>()));
 		};
 
+		template<typename T, template<typename...> typename Templ>
+		struct template_spec_helper : std::false_type {};
+
+		template<template<typename...> typename Tmpl, typename... Args>
+		struct template_spec_helper<Tmpl<Args...>, Tmpl> : std::true_type {};
 	}
 
 	template<typename T>
@@ -57,4 +63,23 @@ namespace coio {
 
 	template<typename Awaitable>
 	concept awaitable = awaitable_for<Awaitable, void>;
+
+	template<typename Range>
+	concept elements_move_insertable_range = std::ranges::forward_range<Range> and std::move_constructible<std::ranges::range_value_t<Range>> and requires (Range range, std::ranges::iterator_t<Range> it) {
+		range.insert(it, std::declval<std::ranges::range_value_t<Range>>());
+	};
+
+	template<typename Range>
+	concept elements_copy_insertable_range = elements_move_insertable_range<Range> and std::copy_constructible<std::ranges::range_value_t<Range>> and requires (Range range, std::ranges::iterator_t<Range> it, std::ranges::range_value_t<Range> value) {
+		range.insert(it, value);
+	};
+
+	template<typename T>
+	concept borrowed_forward_range = std::ranges::forward_range<T> and std::ranges::borrowed_range<T>;
+
+	template<typename T>
+	concept value_type = std::is_object_v<T> and std::same_as<std::remove_cv_t<T>, T>;
+
+	template<typename T, template<typename...> typename Templ>
+	concept specialization_of = detail::template_spec_helper<T, Templ>::value;
 }
