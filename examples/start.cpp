@@ -38,9 +38,8 @@ auto after(int x) ->coio::task<int> {
 	co_return x;
 }
 
-auto insert_after(std::vector<int>& out, int x) ->coio::task<coio::nothing> {
+auto insert_after(std::vector<int>& out, int x) ->coio::task<> {
 	out.push_back(co_await after(x));
-	co_return {};
 }
 
 auto sleep_sort(std::span<int> nums) ->coio::task<std::vector<int>> {
@@ -54,9 +53,9 @@ auto sleep_sort(std::span<int> nums) ->coio::task<std::vector<int>> {
 
 class timekeeper {
 public:
-	timekeeper() noexcept : begin(std::chrono::steady_clock::now()) {}
+	COIO_ALWAYS_INLINE timekeeper() noexcept : begin(std::chrono::steady_clock::now()) {}
 
-	~timekeeper() {
+	COIO_ALWAYS_INLINE ~timekeeper() {
 		auto end = std::chrono::steady_clock::now();
 		::println("take {}s", float(std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()) / 1000.f);
 	}
