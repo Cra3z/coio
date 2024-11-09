@@ -1,7 +1,12 @@
 #include <iostream>
 #include <sstream>
 #include <format>
-#include <coio/core.h>
+#include <array>
+#include <algorithm>
+#include <numeric>
+#include <complex>
+#include <ranges>
+#include <coio/coio.h>
 
 #ifndef __cpp_lib_format_ranges
 	template<typename T, typename Alloc>

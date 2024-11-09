@@ -48,3 +48,19 @@
 #define COIO_STATIC_CALL_OP
 #define COIO_STATIC_CALL_OP_CONST const
 #endif
+
+#define COIO_ASSERT(...) assert(__VA_ARGS__)
+#define COIO_PRECONDITION(...)
+#define COIO_POSTCONDITION(r, ...)
+
+#define COIO_MODULE_EXPORT export
+#define COIO_MODULE_EXPORT_BEGIN export {
+#define COIO_MODULE_EXPORT_END }
+
+#if COIO_CXX_STANDARD >= COIO_CXX_STD23 and defined(__cpp_lib_start_lifetime_as)
+#define COIO_START_LIFETIME_AS(type, address) void(std::start_lifetime_as<type>(address))
+#define COIO_START_LIFETIME_AS_ARRAY(type, address, size) void(std::start_lifetime_as_array<type>(address, size))
+#else
+#define COIO_START_LIFETIME_AS(type, address) void(0)
+#define COIO_START_LIFETIME_AS_ARRAY(type, address, size) void(0)
+#endif
