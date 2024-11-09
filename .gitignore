@@ -1,14 +1,30 @@
-# unrelated project directories
-.idea
-.vscode
-build*
-cmake-build-*
+# unrelated directories
+/.idea/
+/.vscode/
+/.vs/
+/build*/
+/cmake-build-*/
+/bin/
+/build/
+/out/
 
-# non-text files
+# unrelated files
+CMakeSettings.json
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.DS_store
 *.exe
+*.out
+*.app
+*.pch
+*.gch
 *.obj
-*.lib
-*.dll
 *.o
+*.lo
+*.slo
+*.lib
 *.a
+*.dll
 *.so
+*.dylib
