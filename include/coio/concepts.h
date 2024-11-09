@@ -94,14 +94,14 @@ namespace coio {
 	template<typename R, typename T>
 	concept container_compatible_range = std::ranges::input_range<R> and std::convertible_to<std::ranges::range_reference_t<R>, T> and std::constructible_from<T, std::ranges::range_reference_t<R>>;
 
-	template<class T>
+	template<typename T>
 	concept cpp17_iterator = std::copyable<T> and requires(T t) {
 		{   *t } -> detail::can_reference;
 		{  ++t } -> std::same_as<T&>;
 		{ *t++ } -> detail::can_reference;
 	};
 
-	template<class T>
+	template<typename T>
 	concept cpp17_input_iterator = cpp17_iterator<T> and std::equality_comparable<T> && requires(T t) {
 		typename std::incrementable_traits<T>::difference_type;
 		typename std::indirectly_readable_traits<T>::value_type;
