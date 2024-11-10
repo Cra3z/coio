@@ -427,19 +427,17 @@ namespace coio {
 	    	if constexpr (cpp17_random_access_iterator<InputIt>) {
 	    		if (std::distance(first, last) + cur_size_ > N) throw std::bad_alloc{};
 	    	}
-	    	auto ptr_ = std::addressof(storages_[0]);
 	    	auto index = pos - cbegin();
 	    	auto n = cur_size_, old_size = cur_size_;
 	    	try {
 	    		for (auto it = std::move(first); it != last; ++n, ++it) {
 	    			if (n == N) [[unlikely]] throw std::bad_alloc{};
-	    			auto p = std::construct_at(std::addressof(storages_[n]), *it);
-	    			if (ptr_ == nullptr) [[unlikely]] ptr_ = p;
+	    			std::construct_at(std::addressof(storages_[n]), *it);
 	    		}
 	    		cur_size_ = n;
 	    	}
 	    	catch (...) {
-	    		while (n-- > cur_size_) std::destroy_at(ptr_ + n);
+	    		while (n-- > cur_size_) std::destroy_at(std::addressof(storages_[n]));
 	    		throw;
 	    	}
 	    	shift_right_(index, cur_size_ - old_size);
