@@ -56,6 +56,21 @@ auto sleep_sort(std::span<int> nums) ->coio::task<std::vector<int>> {
 	co_return result;
 }
 
+int a = 114;
+int b = 514;
+
+auto return_a() ->coio::task<int&> {
+	using namespace std::chrono_literals;
+	co_await 1ms;
+	co_return a;
+}
+
+auto return_b() ->coio::task<int&> {
+	using namespace std::chrono_literals;
+	co_await 500ms;
+	co_return b;
+}
+
 class timekeeper {
 public:
 	COIO_ALWAYS_INLINE timekeeper() noexcept : begin(std::chrono::steady_clock::now()) {}
@@ -79,6 +94,13 @@ auto co_main() ->coio::task<> {
 		timekeeper _{};
 		std::vector nums{3, 1, 4, 2, 2, 1, 0, 3, 2, 1};
 		::println("{}", co_await sleep_sort(nums));
+	}
+	{
+		::println("a + b = {}", co_await return_a() + co_await return_b());
+		auto [a, b] = co_await coio::when_all(return_a(), return_b());
+		::println("local: a = {}, b = {}", a, b);
+		std::ranges::swap(a, b);
+		::println("global: a = {}, b = {}", ::a, ::b);
 	}
 }
 

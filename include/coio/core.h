@@ -153,10 +153,19 @@ namespace coio {
 			[[nodiscard]]
 			auto await_resume() const ->typename TaskType::result_type {
 				auto& promise = coro.promise();
-				assert(promise.value_ or promise.except_); // must have a value or error
+				COIO_ASSERT(promise.value_ or promise.except_); // must have a value or error
 				if (auto except = std::exchange(promise.except_, {}); except) std::rethrow_exception(except);
-				auto result = std::move(promise.value_);
-				return std::move(result.value());
+				using result_type = typename TaskType::result_type;
+				if constexpr (std::is_lvalue_reference_v<result_type>) {
+					auto result = std::exchange(promise.value_, nullptr);
+					COIO_ASSERT(result != nullptr);
+					return *result;
+				}
+				else {
+					auto result = std::move(promise.value_);
+					COIO_ASSERT(result.has_value());
+					return std::move(*result);
+				}
 			}
 
 			auto await_resume() const ->void requires std::same_as<TaskType, task<>> {
@@ -185,8 +194,10 @@ namespace coio {
 
 		template<typename TaskType>
 		class task_promise_base {
-			friend task_promise<TaskType>;
+			friend TaskType;
 			friend final_awaiter;
+			friend task_promise<TaskType>;
+			friend task_awaiter<TaskType>;
 		private:
 
 			task_promise_base() = default;
@@ -219,14 +230,9 @@ namespace coio {
 			std::exception_ptr except_;
 		};
 
-
-		template<typename>
-		struct task_base;
-
 		template<typename TaskType>
 		struct task_promise : task_promise_base<TaskType> {
 			friend task_awaiter<TaskType>;
-			friend task_base<TaskType>;
 
 			auto return_value(typename TaskType::result_type value) noexcept(
 				std::is_nothrow_move_constructible_v<typename TaskType::result_type> and
@@ -243,37 +249,23 @@ namespace coio {
 		template<>
 		struct task_promise<task<>> : task_promise_base<task<>> {
 			friend task_awaiter<task<>>;
-			friend task_base<task<>>;
 
 			auto return_void() noexcept ->void {}
 		};
 
-
 		template<typename T>
-		struct task_base {
-			static_assert(std::is_object_v<T> and not std::is_array_v<T> and std::movable<T>, "type `T` must be movable non-array object type.");
+		struct task_promise<task<T&>> : task_promise_base<task<T&>> {
+			friend task_awaiter<task<T&>>;
+		private:
+			using base = task_promise<task<std::reference_wrapper<T>>>;
+		public:
 
-			using result_type = T;
+			auto return_value(T& ref) noexcept ->void {
+				value_ = std::addressof(ref);
+			}
 
-			using promise_type = task_promise<task<T>>;
-		};
-
-		template<typename T>
-		struct task_base<T&> {
-
-			using result_type = T&;
-
-			using promise_type = task_promise<task<std::reference_wrapper<T>>>;
-
-		};
-
-		template<>
-		struct task_base<void> {
-
-			using result_type = void;
-
-			using promise_type = task_promise<task<>>;
-
+		private:
+			T* value_ = nullptr;
 		};
 
 		template<typename T>
@@ -281,20 +273,20 @@ namespace coio {
 	}
 
 	template<typename T>
-	class task : detail::task_base<T> {
+	class task {
 
 		friend run_loop;
 		friend detail::task_promise_base<task>;
 		friend detail::task_promise<task>;
 		friend auto detail::handle_of_task<T>(const task&) noexcept ->std::coroutine_handle<>;
 
-		using base = detail::task_base<T>;
+		static_assert(std::is_object_v<T> or std::is_void_v<T> or std::is_lvalue_reference_v<T>);
 
 	public:
 
-		using typename base::result_type;
+		using result_type = T;
 
-		using typename base::promise_type;
+		using promise_type = detail::task_promise<task>;
 
 	private:
 
@@ -328,7 +320,7 @@ namespace coio {
 		}
 
 		auto operator co_await() const noexcept -> detail::task_awaiter<task> {
-			assert(not ready());
+			COIO_ASSERT(not ready());
 			return {.coro = coro};
 		}
 
@@ -403,7 +395,7 @@ namespace coio {
 			using count_type = std::atomic<std::size_t>;
 
 			explicit when_all_counter(std::size_t count) noexcept : count(count) {
-				assert(count > 0);
+				COIO_ASSERT(count > 0);
 			}
 
 			[[nodiscard]]
@@ -417,6 +409,9 @@ namespace coio {
 		};
 
 		template<typename T>
+		using make_ref_wrapper_t = std::conditional_t<std::is_lvalue_reference_v<T>, std::reference_wrapper<std::remove_reference_t<T>>, T>;
+
+		template<typename T>
 		struct when_all_task final {
 
 			struct promise_type {
@@ -428,19 +423,19 @@ namespace coio {
 				static auto initial_suspend() noexcept -> std::suspend_always { return {}; }
 
 				auto final_suspend() noexcept -> final_awaiter {
-					assert(counter_ != nullptr);
+					COIO_ASSERT(counter_ != nullptr);
 					return {counter_->decrease()};
 				}
 
 				auto return_value(T value) noexcept ->void {
-					except_or_value_ = std::move(value);
+					except_or_value_.template emplace<2>(static_cast<T&&>(value));
 				}
 
 				auto unhandled_exception() noexcept ->void {
-					except_or_value_ = std::current_exception();
+					except_or_value_.template emplace<1>(std::current_exception());
 				}
 
-				std::variant<std::monostate, std::exception_ptr, T> except_or_value_;
+				std::variant<std::monostate, std::exception_ptr, make_ref_wrapper_t<T>> except_or_value_;
 				when_all_counter* counter_ = nullptr;
 
 			};
@@ -472,11 +467,11 @@ namespace coio {
 
 			/** \note: 保证任务完成后才调用
 			 */
-			auto get_result() const {
+			decltype(auto) get_result() const {
 				auto& except_or_value = coro.promise().except_or_value_;
-				assert(except_or_value.index() > 0);
+				COIO_ASSERT(except_or_value.index() > 0);
 				if (except_or_value.index() == 1) std::rethrow_exception(std::get<1>(except_or_value));
-				return std::move(std::get<2>(except_or_value));
+				return static_cast<T&&>(std::get<2>(except_or_value));
 			}
 
 			std::coroutine_handle<promise_type> coro;
@@ -603,7 +598,7 @@ namespace coio {
 					when_all_ready(std::forward<decltype(awaitables)>(awaitables)...),
 					[]<typename... Types>(std::tuple<when_all_task<Types>...> when_all_tasks_) {
 						return [&when_all_tasks_]<std::size_t... I>(std::index_sequence<I...>) {
-							return std::tuple{std::get<I>(when_all_tasks_).get_result()...};
+							return std::tuple<Types...>{std::get<I>(when_all_tasks_).get_result()...};
 						}(std::make_index_sequence<sizeof...(Types)>{});
 					}
 				);
