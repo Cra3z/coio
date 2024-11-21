@@ -553,7 +553,7 @@ namespace coio {
 		template<typename ResultStorageRange>
 		struct store_results_in_t final {};
 
-		template<value_type TaskStorageRange>
+		template<unqualified_object TaskStorageRange>
 		inline constexpr store_results_in_t<TaskStorageRange> store_results_in{};
 
 		struct when_all_ready_fn final {

@@ -64,3 +64,9 @@
 #define COIO_START_LIFETIME_AS(type, address) void(0)
 #define COIO_START_LIFETIME_AS_ARRAY(type, address, size) void(0)
 #endif
+
+#if COIO_CXX_COMPILER_MSVC
+#define COIO_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#else
+#define COIO_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#endif

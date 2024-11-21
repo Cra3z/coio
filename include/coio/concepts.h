@@ -18,6 +18,9 @@ namespace coio {
 		template<typename T>
 		concept boolean_testable_impl = std::convertible_to<T, bool>;
 
+		template<typename T, typename U>
+		concept different_from_impl = not std::is_same_v<T, U>;
+
 		template<typename Awaitable>
 		struct get_awaiter {
 			using type = Awaitable;
@@ -86,7 +89,7 @@ namespace coio {
 	concept borrowed_forward_range = std::ranges::forward_range<T> and std::ranges::borrowed_range<T>;
 
 	template<typename T>
-	concept value_type = std::is_object_v<T> and std::same_as<std::remove_cv_t<T>, T>;
+	concept unqualified_object = std::is_object_v<T> and std::same_as<std::remove_cv_t<T>, T>;
 
 	template<typename T, template<typename...> typename Templ>
 	concept specialization_of = detail::template_spec_helper<T, Templ>::value;
@@ -147,4 +150,7 @@ namespace coio {
 		{ t -  t } -> std::same_as<decltype(n)>;
 		{  t[n]  } -> std::convertible_to<std::iter_reference_t<T>>;
 	};
+
+	template<typename T, typename U>
+	concept different_from = detail::different_from_impl<T, U> and detail::different_from_impl<U, T>;
 }
