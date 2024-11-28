@@ -4,6 +4,7 @@
 #include <ranges>
 #include <iostream>
 #include <sstream>
+#include <span>
 #include <coio/coio.h>
 
 

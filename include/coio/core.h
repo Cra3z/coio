@@ -11,6 +11,7 @@
 #include <future>
 #include <stop_token>
 #include <variant>
+#include <functional>
 #include "config.h"
 #include "concepts.h"
 #include "task_error.h"

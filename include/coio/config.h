@@ -53,9 +53,15 @@
 #define COIO_PRECONDITION(...)
 #define COIO_POSTCONDITION(r, ...)
 
+#ifdef COIO_USE_MODULE
 #define COIO_MODULE_EXPORT export
 #define COIO_MODULE_EXPORT_BEGIN export {
 #define COIO_MODULE_EXPORT_END }
+#else
+#define COIO_MODULE_EXPORT
+#define COIO_MODULE_EXPORT_BEGIN
+#define COIO_MODULE_EXPORT_END
+#endif
 
 #if COIO_CXX_STANDARD >= COIO_CXX_STD23 and defined(__cpp_lib_start_lifetime_as)
 #define COIO_START_LIFETIME_AS(type, address) void(std::start_lifetime_as<type>(address))
@@ -65,8 +71,10 @@
 #define COIO_START_LIFETIME_AS_ARRAY(type, address, size) void(0)
 #endif
 
-#if COIO_CXX_COMPILER_MSVC
+#if __has_cpp_attribute(no_unique_address)
+#define COIO_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#elif COIO_CXX_COMPILER_MSVC and __has_cpp_attribute(msvc::no_unique_address)
 #define COIO_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
 #else
-#define COIO_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#define COIO_NO_UNIQUE_ADDRESS
 #endif

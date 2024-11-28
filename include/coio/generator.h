@@ -2,10 +2,8 @@
 #include <cassert>
 #include <ranges>
 #include <iterator>
-#include <memory>
-#include <utility>
-#include "config.h"
 #include "concepts.h"
+#include "detail/co_memory.h"
 
 namespace coio {
 	template<std::ranges::range Range, typename Alloc = std::allocator<std::byte>>
@@ -220,55 +218,6 @@ namespace coio {
 			std::variant<std::monostate, std::add_pointer_t<Yielded>, std::exception_ptr> value_or_error_;
 		};
 
-		struct generator_coro_memory {
-			struct default_align_t {
-				alignas(__STDCPP_DEFAULT_NEW_ALIGNMENT__) std::byte _[__STDCPP_DEFAULT_NEW_ALIGNMENT__];
-			};
-
-			using dealloc_fn_t = void(*)(void*, default_align_t*, std::size_t) noexcept; ///< (address-of-pointer-to-allocator, address-of-default_align_t-array, length-of-default_align_t-array)
-
-			/*
-			 * layout:
-			 *   +-----------------+------------------+----------------------+------------------+----------------------------------+
-			 *   | coroutine state | possible padding | pointer to allocator | possible padding | pointer to deallocating function |
-			 *   +-----------------+------------------+----------------------+------------------+----------------------------------+
-			 *           |                                       |                                              |
-			 *      `n` bytes                          `sizeof(void*)` bytes                      `sizeof(dealloc_fn_t)` bytes
-			 */
-			template<typename Alloc>
-			static auto allocate(std::unique_ptr<Alloc> alloc_, std::size_t n) ->void* {
-				using alloc_traits_t = std::allocator_traits<Alloc>;
-				auto offset_of_alloc_ptr = ceiling_division(n, alignof(void*)) * alignof(void*);
-				n = offset_of_alloc_ptr + sizeof(void*);
-				auto offset_of_dealloc_fn = ceiling_division(n, alignof(dealloc_fn_t)) * alignof(dealloc_fn_t);
-				n = offset_of_dealloc_fn + sizeof(dealloc_fn_t);
-				void* result = alloc_traits_t::allocate(*alloc_, ceiling_division(n, sizeof(default_align_t)));
-				void* address_of_alloc_ptr = static_cast<std::byte*>(result) + offset_of_alloc_ptr;
-				void* address_of_dealloc_fn = static_cast<std::byte*>(result) + offset_of_dealloc_fn;
-				void(::new(address_of_alloc_ptr) void*(alloc_.get()));
-				void(::new(address_of_dealloc_fn) dealloc_fn_t(+[](void* address_of_pointer_to_allocator, default_align_t* ptr, std::size_t length) noexcept {
-					auto allocator_ = static_cast<Alloc*>(*std::launder(static_cast<void**>(address_of_pointer_to_allocator)));
-					alloc_traits_t::deallocate(*allocator_, ptr, length);
-					delete allocator_;
-				}));
-				void(alloc_.release());
-				return result;
-			}
-
-			static auto deallocate(void* ptr, std::size_t n) noexcept ->void {
-				auto offset_of_alloc_ptr = ceiling_division(n, alignof(void*)) * alignof(void*);
-				n = offset_of_alloc_ptr + sizeof(void*);
-				auto offset_of_dealloc_fn = ceiling_division(n, alignof(dealloc_fn_t)) * alignof(dealloc_fn_t);
-				n = offset_of_dealloc_fn + sizeof(dealloc_fn_t);
-				auto dealloc_fn = *std::launder(reinterpret_cast<dealloc_fn_t*>(static_cast<std::byte*>(ptr) + offset_of_dealloc_fn));
-				dealloc_fn(static_cast<std::byte*>(ptr) + offset_of_alloc_ptr, static_cast<default_align_t*>(ptr), ceiling_division(n, sizeof(default_align_t)));
-			}
-
-			COIO_ALWAYS_INLINE static constexpr auto ceiling_division(std::size_t n, std::size_t m) noexcept ->std::size_t {
-				COIO_ASSERT(m != 0);
-				return (n + m - 1) / m;
-			}
-		};
 
 		template<typename Generator>
 		struct generator_promise_ : generator_promise_base_<typename Generator::yielded> {
@@ -301,31 +250,22 @@ namespace coio {
 				return {std::coroutine_handle<generator_promise_>::from_promise(*this)};
 			}
 
-
 			auto operator new (std::size_t n) ->void* requires std::same_as<allocator_type, void> or std::default_initializable<allocator_type> {
-				using alloc_t = typename std::allocator_traits<
-					std::conditional_t<
-						std::same_as<allocator_type, void>,
-						std::allocator<void>,
-						allocator_type
-					>
-				>::template rebind_alloc<generator_coro_memory::default_align_t>;
-				return generator_coro_memory::allocate(std::make_unique<alloc_t>(), n);
+				return co_memory<allocator_type>::allocate(std::conditional_t<std::same_as<allocator_type, void>, std::allocator<void>, allocator_type>(), n);
 			}
 
 			template<typename OtherAlloc, typename... Args> requires std::same_as<allocator_type, void> or std::convertible_to<const OtherAlloc&, allocator_type>
-			auto operator new (std::size_t n, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for normal corotuine function `auto some_function(std::allocator_arg_t, allocator, ...) ->coio::generator<...>`
-				using alloc_t = typename std::allocator_traits<OtherAlloc>::template rebind_alloc<generator_coro_memory::default_align_t>;
-				return generator_coro_memory::allocate(std::make_unique<alloc_t>(other_alloc), n);
+			auto operator new (std::size_t n, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for normal corotuine function `auto some_function(std::allocator_arg_t, allocator, ...) ->xxx::generator<...>`
+				return co_memory<allocator_type>::allocate(other_alloc, n);
 			}
 
 			template<typename This, typename OtherAlloc, typename... Args> requires std::same_as<allocator_type, void> or std::convertible_to<const OtherAlloc&, allocator_type>
-			auto operator new (std::size_t n, const This&, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for non-static member corotuine function `auto some_class::some_function(std::allocator_arg_t, allocator, ...) ->coio::generator<...>`
+			auto operator new (std::size_t n, const This&, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for non-static member corotuine function `auto some_class::some_function(std::allocator_arg_t, allocator, ...) ->xxx::generator<...>`
 				return operator new (n, std::allocator_arg, other_alloc);
 			}
 
 			auto operator delete (void* ptr, std::size_t n) noexcept ->void {
-				generator_coro_memory::deallocate(ptr, n);
+				co_memory<allocator_type>::deallocate(ptr, n);
 			}
 
 		};
@@ -334,6 +274,7 @@ namespace coio {
 		using gen_stack_node_handle_t = typename generator_promise_base_<Yielded>::node_handle_t_;
 
 	}
+
 
 	template<typename Ref, typename Val, typename Alloc>
 	class [[nodiscard]] generator : public std::ranges::view_interface<generator<Ref, Val, Alloc>> {
