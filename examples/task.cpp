@@ -1,4 +1,5 @@
 #include <chrono>
+#include <memory_resource>
 #include "common.h"
 
 auto after(int x) ->coio::task<int> {
@@ -35,6 +36,16 @@ auto return_b() ->coio::task<int&> {
 	co_return b;
 }
 
+auto return_hello(std::allocator_arg_t, std::pmr::polymorphic_allocator<> alloc) ->coio::task<std::pmr::string, std::pmr::polymorphic_allocator<>> {
+	using namespace std::chrono_literals;
+	co_await 500ms;
+	co_return std::pmr::string("hello", alloc);
+}
+
+auto return_hello_world(std::allocator_arg_t, std::pmr::polymorphic_allocator<> alloc) ->coio::task<std::pmr::string, std::pmr::polymorphic_allocator<>> {
+	co_return co_await return_hello(std::allocator_arg, alloc) + " world";
+}
+
 class timekeeper {
 public:
 	COIO_ALWAYS_INLINE timekeeper() noexcept : begin(std::chrono::steady_clock::now()) {}
@@ -65,6 +76,10 @@ auto co_main() ->coio::task<> {
 		::println("local: a = {}, b = {}", a, b);
 		std::ranges::swap(a, b);
 		::println("global: a = {}, b = {}", ::a, ::b);
+	}
+	{
+		std::pmr::monotonic_buffer_resource mem;
+		::println("{}", co_await return_hello_world(std::allocator_arg, &mem));
 	}
 }
 

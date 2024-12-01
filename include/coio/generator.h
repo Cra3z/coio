@@ -255,12 +255,12 @@ namespace coio {
 			}
 
 			template<typename OtherAlloc, typename... Args> requires std::same_as<allocator_type, void> or std::convertible_to<const OtherAlloc&, allocator_type>
-			auto operator new (std::size_t n, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for normal corotuine function `auto some_function(std::allocator_arg_t, allocator, ...) ->xxx::generator<...>`
+			auto operator new (std::size_t n, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for normal corotuine function `auto some_function(std::allocator_arg_t, allocator, ...) ->coio::generator<...>`
 				return co_memory<allocator_type>::allocate(other_alloc, n);
 			}
 
 			template<typename This, typename OtherAlloc, typename... Args> requires std::same_as<allocator_type, void> or std::convertible_to<const OtherAlloc&, allocator_type>
-			auto operator new (std::size_t n, const This&, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for non-static member corotuine function `auto some_class::some_function(std::allocator_arg_t, allocator, ...) ->xxx::generator<...>`
+			auto operator new (std::size_t n, const This&, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for non-static member corotuine function `auto some_class::some_function(std::allocator_arg_t, allocator, ...) ->coio::generator<...>`
 				return operator new (n, std::allocator_arg, other_alloc);
 			}
 
