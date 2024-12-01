@@ -1,4 +1,5 @@
 #include <memory_resource>
+#include <coio/generator.h>
 #include "common.h"
 
 auto fibonacci(std::size_t n) ->coio::generator<int> {

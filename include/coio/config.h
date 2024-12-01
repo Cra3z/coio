@@ -1,4 +1,6 @@
 #pragma once
+#include <cassert>
+#include <version>
 
 #define COIO_CXX_STD98 199711L
 #define COIO_CXX_STD11 201103L

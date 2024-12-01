@@ -5,6 +5,7 @@
 #include <ranges>
 #include <memory>
 #include <cassert>
+#include <algorithm>
 #include "config.h"
 #include "concepts.h"
 

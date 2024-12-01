@@ -2,6 +2,7 @@
 #include <cassert>
 #include <ranges>
 #include <iterator>
+#include <variant>
 #include "concepts.h"
 #include "detail/co_memory.h"
 
@@ -19,9 +20,6 @@ namespace coio {
 	class generator;
 
 	namespace detail {
-
-		template<typename Alloc>
-		concept valid_generator_alloctor_ = std::same_as<Alloc, void> or std::is_pointer_v<typename std::allocator_traits<Alloc>::pointer>;
 
 		template<typename Yielded>
 		struct generator_promise_base_ {
@@ -220,7 +218,7 @@ namespace coio {
 
 
 		template<typename Generator>
-		struct generator_promise_ : generator_promise_base_<typename Generator::yielded> {
+		struct generator_promise_ : generator_promise_base_<typename Generator::yielded>, promise_alloc_control<typename Generator::allocator_type> {
 
 			using yielded = typename Generator::yielded;
 			using allocator_type = typename Generator::allocator_type;
@@ -250,24 +248,6 @@ namespace coio {
 				return {std::coroutine_handle<generator_promise_>::from_promise(*this)};
 			}
 
-			auto operator new (std::size_t n) ->void* requires std::same_as<allocator_type, void> or std::default_initializable<allocator_type> {
-				return co_memory<allocator_type>::allocate(std::conditional_t<std::same_as<allocator_type, void>, std::allocator<void>, allocator_type>(), n);
-			}
-
-			template<typename OtherAlloc, typename... Args> requires std::same_as<allocator_type, void> or std::convertible_to<const OtherAlloc&, allocator_type>
-			auto operator new (std::size_t n, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for normal corotuine function `auto some_function(std::allocator_arg_t, allocator, ...) ->xxx::generator<...>`
-				return co_memory<allocator_type>::allocate(other_alloc, n);
-			}
-
-			template<typename This, typename OtherAlloc, typename... Args> requires std::same_as<allocator_type, void> or std::convertible_to<const OtherAlloc&, allocator_type>
-			auto operator new (std::size_t n, const This&, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for non-static member corotuine function `auto some_class::some_function(std::allocator_arg_t, allocator, ...) ->xxx::generator<...>`
-				return operator new (n, std::allocator_arg, other_alloc);
-			}
-
-			auto operator delete (void* ptr, std::size_t n) noexcept ->void {
-				co_memory<allocator_type>::deallocate(ptr, n);
-			}
-
 		};
 
 		template<typename Yielded>
@@ -287,7 +267,7 @@ namespace coio {
 		using rref = std::conditional_t<std::is_reference_v<reference>, std::remove_reference_t<reference>&&, reference>;
 		using allocator_type = Alloc;
 
-		static_assert(detail::valid_generator_alloctor_<allocator_type>);
+		static_assert(detail::valid_coroutine_alloctor_<allocator_type>);
 		static_assert(unqualified_object<value_type>);
 		static_assert(
 			std::is_reference_v<reference> or

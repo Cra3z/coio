@@ -3,7 +3,6 @@ project(coio-examples)
 file(GLOB EXAMPLE_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/*.cpp")
 
 foreach(EXAMPLE_FILE ${EXAMPLE_FILES})
-    message("${EXAMPLE_FILE}")
     get_filename_component(EXAMPLE_FILE_NAME ${EXAMPLE_FILE} NAME_WE)
 
     add_executable(

@@ -27,12 +27,12 @@ install(
 
 install(
     TARGETS ${PROJECT_NAME}
-    EXPORT ${PROJECT_NAME}Targets
+    EXPORT ${PROJECT_NAME}-targets
 )
 
 install(
-    EXPORT ${PROJECT_NAME}Targets
-    FILE ${PROJECT_NAME}Targets.cmake
+    EXPORT ${PROJECT_NAME}-targets
+    FILE ${PROJECT_NAME}-targets.cmake
     NAMESPACE ${PROJECT_NAME}::
     DESTINATION ${PROJECT_NAME}/lib/cmake/${PROJECT_NAME}
 )
@@ -40,13 +40,13 @@ install(
 include(CMakePackageConfigHelpers)
 
 configure_package_config_file(
-    ${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}Config.cmake.in
-    ${PROJECT_NAME}Config.cmake
+    ${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}-config.cmake.in
+    ${PROJECT_NAME}-config.cmake
     INSTALL_DESTINATION ${PROJECT_NAME}/lib/cmake/${PROJECT_NAME}
 )
 
 install(
-    FILES ${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
+    FILES ${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake
     DESTINATION ${PROJECT_NAME}/lib/cmake/${PROJECT_NAME}
 )
 

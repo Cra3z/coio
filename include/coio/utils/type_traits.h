@@ -197,4 +197,11 @@ namespace coio {
 		using unique = type_list;
 
 	};
+
+	template<typename T>
+	using wrap_ref_t = std::conditional_t<std::is_lvalue_reference_v<T>, std::reference_wrapper<std::remove_reference_t<T>>, T>;
+
+	template<typename T>
+	using add_const_lvalue_ref_t = std::add_lvalue_reference_t<std::add_const_t<T>>;
+
 }

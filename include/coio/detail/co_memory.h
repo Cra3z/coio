@@ -140,4 +140,28 @@ namespace coio::detail {
 		    dealloc_fn(static_cast<default_align_t*>(ptr), n);
 		}
     };
+
+    template<typename Alloc>
+    concept valid_coroutine_alloctor_ = std::same_as<Alloc, void> or (std::is_pointer_v<typename std::allocator_traits<Alloc>::pointer> and std::is_object_v<typename std::allocator_traits<Alloc>::template rebind_alloc<default_align_t>>);
+
+    template<typename Alloc>
+    struct promise_alloc_control {
+        auto operator new (std::size_t n) ->void* requires std::same_as<Alloc, void> or std::default_initializable<Alloc> {
+            return co_memory<Alloc>::allocate(std::conditional_t<std::same_as<Alloc, void>, std::allocator<void>, Alloc>(), n);
+        }
+
+        template<typename OtherAlloc, typename... Args> requires std::same_as<Alloc, void> or std::convertible_to<const OtherAlloc&, Alloc>
+        auto operator new (std::size_t n, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for normal corotuine function `auto some_function(std::allocator_arg_t, allocator, ...) ->coio::task<...>`
+            return co_memory<Alloc>::allocate(other_alloc, n);
+        }
+
+        template<typename This, typename OtherAlloc, typename... Args> requires std::same_as<Alloc, void> or std::convertible_to<const OtherAlloc&, Alloc>
+        auto operator new (std::size_t n, const This&, std::allocator_arg_t, const OtherAlloc& other_alloc, const Args&...) ->void* { // for non-static member corotuine function `auto some_class::some_function(std::allocator_arg_t, allocator, ...) ->coio::task<...>`
+            return operator new (n, std::allocator_arg, other_alloc);
+        }
+
+        auto operator delete (void* ptr, std::size_t n) noexcept ->void {
+            co_memory<Alloc>::deallocate(ptr, n);
+        }
+    };
 }

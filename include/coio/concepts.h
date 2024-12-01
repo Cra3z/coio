@@ -56,9 +56,6 @@ namespace coio {
 		{ not static_cast<T&&>(t) } -> detail::boolean_testable_impl;
 	};
 
-	template<typename T>
-	concept promise = true;
-
 	template<typename Awaiter, typename PromiseType>
 	concept awaiter_for = requires(Awaiter awaiter, std::coroutine_handle<PromiseType> coro) {
 		{ awaiter.await_ready() } -> boolean_testable;
@@ -153,4 +150,46 @@ namespace coio {
 
 	template<typename T, typename U>
 	concept different_from = detail::different_from_impl<T, U> and detail::different_from_impl<U, T>;
+
+	namespace detail {
+		struct dummy_readable_buffer {
+			auto data() noexcept ->const void*;
+
+			auto size() noexcept ->std::size_t;	
+		};
+
+		struct dummy_writable_buffer {
+			auto data() noexcept ->void*;
+
+			auto size() noexcept ->std::size_t;
+		};
+	}
+
+
+	template<typename T>
+	concept readable_file = requires (T t, detail::dummy_writable_buffer buffer) {
+		t.read(buffer);
+	};
+
+	template<typename T>
+	concept writable_file = requires (T t, detail::dummy_readable_buffer buffer) {
+		t.write(buffer);
+	};
+
+	template<typename T>
+	concept readable_and_writable_file = readable_file<T> and writable_file<T>;
+
+	template<typename T>
+	concept async_readable_file = requires (T t, detail::dummy_writable_buffer buffer) {
+		{ t.async_read(buffer) } -> awaitable;
+	};
+
+	template<typename T>
+	concept async_writable_file = requires (T t, detail::dummy_readable_buffer buffer) {
+		{ t.async_write(buffer) } -> awaitable;
+	};
+
+	template<typename T>
+	concept async_readable_and_writable_file = async_readable_file<T> and async_writable_file<T>;
+
 }
