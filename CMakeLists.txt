@@ -10,12 +10,13 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
 
 add_library(
     ${PROJECT_NAME}
-    INTERFACE
+    STATIC
+    src/linux.cpp
 )
 
 target_include_directories(
     ${PROJECT_NAME}
-    INTERFACE
+    PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${PROJECT_NAME}/include>
 )
@@ -28,6 +29,7 @@ install(
 install(
     TARGETS ${PROJECT_NAME}
     EXPORT ${PROJECT_NAME}-targets
+    DESTINATION ${PROJECT_NAME}/lib/${CMAKE_BUILD_TYPE}
 )
 
 install(

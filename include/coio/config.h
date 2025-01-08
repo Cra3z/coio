@@ -1,6 +1,10 @@
 #pragma once
 #include <cassert>
 #include <version>
+#ifdef __linux__
+#include <linux/version.h>
+#endif
+
 
 #define COIO_CXX_STD98 199711L
 #define COIO_CXX_STD11 201103L
@@ -55,6 +59,22 @@
 #define COIO_PRECONDITION(...)
 #define COIO_POSTCONDITION(r, ...)
 
+#if __has_cpp_attribute(assume)
+#define COIO_ASSUME(expr) [[assume(expr)]]
+#elif COIO_CXX_COMPILER_CLANG
+#define COIO_ASSUME(expr) __builtin_assume(expr)
+#elif COIO_CXX_COMPILER_GCC
+#define COIO_ASSUME(expr) __attribute__((assume(expr)))
+#elif COIO_CXX_COMPILER_MSVC
+#define COIO_ASSUME(expr) __assume(expr)
+#endif
+
+#ifdef NDEBUG
+#define COIO_DCHECK(expr) COIO_ASSERT(expr)
+#else
+#define COIO_DCHECK(expr) COIO_ASSUME(expr)
+#endif
+
 #ifdef COIO_USE_MODULE
 #define COIO_MODULE_EXPORT export
 #define COIO_MODULE_EXPORT_BEGIN export {
@@ -79,4 +99,40 @@
 #define COIO_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
 #else
 #define COIO_NO_UNIQUE_ADDRESS
+#endif
+
+#if defined(_WIN32) or defined(_WIN64)
+#define COIO_OS_WINDOWS 1
+#define COIO_OS_LINUX 0
+#elif defined(__linux__)
+#define COIO_OS_WINDOWS 0
+#define COIO_OS_LINUX 1
+#else
+#error "unsupported operation system."
+#endif
+
+#if COIO_OS_WINDOWS
+    #define COIO_HAS_EPOLL 0
+    #define COIO_HAS_IO_URING 0
+    #if __has_include(<ioapiset.h>)
+    #define COIO_HAS_IOCP 1
+    #else
+    #define COIO_HAS_IOCP 0
+    #endif
+#elif COIO_OS_LINUX
+    #define COIO_HAS_IOCP 0
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 45) and __has_include(<sys/epoll.h>)
+    #define COIO_HAS_EPOLL 1
+    #else
+    #define COIO_HAS_EPOLL 0
+    #endif
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0) and __has_include(<linux/io_uring.h>)
+    #define COIO_HAS_IO_URING 1
+    #else
+    #define COIO_HAS_IO_URING 0
+    #endif
+#endif
+
+#if not COIO_HAS_IOCP and not COIO_HAS_EPOLL and not COIO_HAS_IO_URING
+#error "there must be epoll or iocp or io_uring."
 #endif
