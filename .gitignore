@@ -11,6 +11,7 @@
 # unrelated files
 CMakeSettings.json
 CMakeCache.txt
+CMakeUserPresets.json
 cmake_install.cmake
 compile_commands.json
 *.DS_store
