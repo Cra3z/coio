@@ -17,14 +17,14 @@ auto handle_connection(coio::net::tcp_socket socket) -> coio::task<> try {
     }
 }
 catch (const std::system_error& e) {
-    ::println("connection broken because \"{}\"", e.what());
+    ::println("connection with [{}] broken because \"{}\"", socket.remote_endpoint(), e.what());
 }
 
 auto main() -> int {
     coio::io_context context;
-    coio::async_scope scope;
     coio::sync_wait(coio::when_all(
-        [&context, &scope]() -> coio::task<> {
+        [&context]() -> coio::task<> {
+            coio::async_scope scope;
             coio::net::tcp_acceptor acceptor{context, {coio::net::ipv4_address::any(), 8086}};
             ::println("server \"{}\" start...", acceptor.local_endpoint());
             try {

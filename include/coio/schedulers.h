@@ -55,13 +55,15 @@ namespace coio {
         auto operator= (const round_robin_scheduler&) -> round_robin_scheduler& = delete;
 
         [[nodiscard]]
-        auto schedule() noexcept ->schedule_operation {
+        auto schedule() noexcept -> schedule_operation {
             return schedule_operation{*this};
         }
+
     private:
-        auto select_and_exchange(std::coroutine_handle<> new_coro) noexcept ->std::coroutine_handle<> {
+        auto select_and_exchange(std::coroutine_handle<> new_coro) noexcept -> std::coroutine_handle<> {
             return std::exchange(coros_[std::exchange(index_, (index_ + 1) % N)], new_coro);
         }
+
     private:
         std::size_t index_ = 0;
         std::array<std::coroutine_handle<>, N> coros_;

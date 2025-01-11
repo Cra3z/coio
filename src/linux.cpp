@@ -87,6 +87,22 @@ namespace coio {
             }
         }
 
+        auto sockaddr_storage_to_endpoint(::sockaddr_storage& addr) noexcept -> net::endpoint {
+            switch (addr.ss_family) {
+            case AF_INET: {
+                ::sockaddr_in ipv4{};
+                std::memcpy(&ipv4, &addr, sizeof(ipv4));
+                return {std::bit_cast<net::ipv4_address>(ipv4.sin_addr), ::ntohs(ipv4.sin_port)};
+            }
+            case AF_INET6: {
+                ::sockaddr_in6 ipv6{};
+                std::memcpy(&ipv6, &addr, sizeof(ipv6));
+                return {std::bit_cast<net::ipv6_address>(ipv6.sin6_addr), ::ntohs(ipv6.sin6_port)};
+            }
+            default: unreachable();
+            }
+        }
+
         auto to_sockaddr(std::variant<::sockaddr_in, ::sockaddr_in6>& sa)-> std::pair<::sockaddr*, ::socklen_t> {
             return std::visit([](auto& sai) noexcept -> std::pair<::sockaddr*, ::socklen_t> {
                 return {reinterpret_cast<::sockaddr*>(&sai), sizeof(sai)};
@@ -499,20 +515,20 @@ namespace coio::net {
 
         auto socket_base::local_endpoint() const noexcept -> endpoint {
             COIO_ASSERT(this->is_open());
-            ::sockaddr_in addr{};
+            ::sockaddr_storage addr{};
             ::socklen_t addr_len = sizeof(addr);
             [[maybe_unused]] auto ret = ::getsockname(handle_, reinterpret_cast<::sockaddr*>(&addr), &addr_len);
             COIO_ASSERT(ret != -1);
-            return {std::bit_cast<ipv4_address>(addr.sin_addr.s_addr), ::ntohs(addr.sin_port)};
+            return sockaddr_storage_to_endpoint(addr);
         }
 
         auto socket_base::remote_endpoint() const noexcept -> endpoint {
             COIO_ASSERT(this->is_open());
-            ::sockaddr_in addr{};
+            ::sockaddr_storage addr{};
             ::socklen_t addr_len = sizeof(addr);
             [[maybe_unused]] auto ret = ::getpeername(handle_, reinterpret_cast<::sockaddr*>(&addr), &addr_len);
             COIO_ASSERT(ret != -1);
-            return {std::bit_cast<ipv4_address>(addr.sin_addr.s_addr), ::ntohs(addr.sin_port)};
+            return sockaddr_storage_to_endpoint(addr);
         }
 
         auto socket_base::open_(int family, int type, int protocol_id) -> void {
