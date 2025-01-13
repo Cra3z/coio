@@ -19,20 +19,35 @@ namespace coio::net {
 
     public:
 
+        /**
+         * \brief construct to represent the IPv4 TCP protocol.
+         */
         [[nodiscard]]
         static auto v4() noexcept -> tcp;
 
+        /**
+         * \brief construct to represent the IPv6 TCP protocol.
+         */
         [[nodiscard]]
         static auto v6() noexcept -> tcp;
 
+        /**
+         * \brief get the identifier for the protocol family.
+         */
         [[nodiscard]]
         auto family() const noexcept -> int {
             return family_;
         }
 
+        /**
+         * \brief get the identifier for the type of the protocol.
+         */
         [[nodiscard]]
         static auto type() noexcept -> int;
 
+        /**
+         * \brief get the identifier for the protocol.
+         */
         [[nodiscard]]
         static auto protocol_id() noexcept -> int;
 
@@ -46,20 +61,35 @@ namespace coio::net {
 
     public:
 
+        /**
+         * \brief construct to represent the IPv4 UDP protocol.
+         */
         [[nodiscard]]
         static auto v4() noexcept -> udp;
 
+        /**
+         * \brief construct to represent the IPv6 UDP protocol.
+         */
         [[nodiscard]]
         static auto v6() noexcept -> udp;
 
+        /**
+         * \brief get the identifier for the protocol family.
+         */
         [[nodiscard]]
         auto family() const noexcept -> int {
             return family_;
         }
 
+        /**
+         * \brief get the identifier for the type of the protocol.
+         */
         [[nodiscard]]
         static auto type() noexcept -> int;
 
+        /**
+         * \brief get the identifier for the protocol.
+         */
         [[nodiscard]]
         static auto protocol_id() noexcept -> int;
 
@@ -335,6 +365,11 @@ namespace coio::net {
                 return *this;
             }
 
+
+            /**
+             * \brief get associated `io_context`.
+             * \return associated `io_context`.
+             */
             [[nodiscard]]
             auto context() const noexcept -> io_context& {
                 COIO_DCHECK(context_);
@@ -366,26 +401,56 @@ namespace coio::net {
             [[nodiscard]]
             auto remote_endpoint() const noexcept -> endpoint;
 
+            /**
+             * \brief determine whether the socket is open.
+             */
             explicit operator bool() const noexcept {
                 return is_open();
             }
 
             /**
-             * \brief check whether is the socket open
+             * \brief determine whether the socket is open.
              */
             [[nodiscard]]
             auto is_open() const noexcept -> bool {
                 return native_handle() != invalid_socket_handle_value;
             }
 
+            /**
+             * \brief close socket.
+             */
             auto close() noexcept -> void;
 
+            /**
+             * \brief disable sends or receives on the socket.
+             * \param how `shutdown_send`: disable sends,
+             * `shutdown_receive`: disable receives,
+             * `shutdonw_both`: disable sends and receives.
+             * \throw std::system_error on failure.
+             */
             auto shutdown(shutdown_type how) -> void;
 
+            /**
+             * \brief allow the socket to be bound to an address that is already in use.
+             * \throw std::system_error on failure. 
+             */
             auto reuse_address() -> void;
 
+            /**
+             * \brief sets the non-blocking mode of the socket.
+             * \throw std::system_error on failure.
+             * \note the socket's synchronous operations will throw \n
+             * `std::system_error` with `operation_would_block` or
+             * `resource_unavailable_try_again`
+             *  if they are unable to perform the requested operation immediately.
+             */
             auto set_non_blocking() -> void;
 
+            /**
+             * \brief bind the socket to the given local endpoint.
+             * \param addr an endpoint on the local machine to which the socket will be bound.
+             * \throw std::system_error on failure.
+             */
             auto bind(const endpoint& addr) -> void;
 
         protected:
@@ -428,20 +493,38 @@ namespace coio::net {
         using socket_base::set_non_blocking;
         using socket_base::bind;
 
+        /**
+         * \brief get the maximum length of the queue of pending incoming connections.
+        */
         [[nodiscard]]
         static auto max_backlog() noexcept -> std::size_t;
 
+        /**
+         * \brief open the socket using the specified protocol.
+         * \param protocol an object specifying protocol parameters to be used. it's `tcp::v4()` or `tcp::v6()`.
+        */
         auto open(const protocol_type& protocol) -> void {
             open_(protocol.family(), protocol.type(), protocol.protocol_id());
         }
 
         auto listen(std::size_t backlog = max_backlog()) -> void;
 
+        /**
+         * \brief start an asynchronous accept.
+         * \param out the socket into which the new connection will be accepted.
+         * \return the awaiter - `async_accept_operation`
+         */
         [[nodiscard]]
         auto async_accept(tcp_socket& out) noexcept -> async_accept_operation {
             return {*context_, op_list_, out};
         }
 
+        /**
+         * \brief start an asynchronous accept.
+         * \param out the socket into which the new connection will be accepted.
+         * \param token a cancellation token.
+         * \return the awaiter - `async_accept_operation`
+         */
         [[nodiscard]]
         auto async_accept(tcp_socket& out, std::stop_token token) -> async_accept_operation {
             if (token.stop_requested()) throw operation_stopped{};
@@ -473,20 +556,49 @@ namespace coio::net {
         using socket_base::set_non_blocking;
         using socket_base::bind;
 
+        /**
+         * \brief open the socket using the specified protocol.
+         * \param protocol an object specifying protocol parameters to be used. it's `tcp::v4()` or `tcp::v6()`.
+        */
         auto open(const protocol_type& protocol) -> void {
             open_(protocol.family(), protocol.type(), protocol.protocol_id());
         }
 
+        /**
+         * \brief connect the socket to the specified endpoint.
+         * \param addr the remote endpoint to which the socket will be connected.
+         * \throw std::system_error on failure.
+        */
         auto connect(const endpoint& addr) -> void;
 
+        /**
+         * \brief start an asynchronous connect.
+         * \param addr the remote endpoint to which the socket will be connected.
+         * \return the awaiter - `async_connect_operation`.
+         * \throw std::system_error on failure.
+         */
         [[nodiscard]]
         auto async_connect(const endpoint& addr) -> async_connect_operation;
 
+        /**
+         * \brief read some data to the socket.
+         * \param buffer data buffer to be read to the socket.
+         * \return the number of bytes read.
+         * \throw std::system_error on failure.
+         * \note consider using `read` if you need to ensure that the requested amount of data is read before the blocking operation completes.
+        */
         [[nodiscard]]
         auto read_some(std::span<std::byte> buffer) -> std::size_t {
             return detail::sync_recv(handle_, buffer, true);
         }
 
+        /**
+         * \brief write some data to the socket.
+         * \param buffer data buffer to be written to the socket.
+         * \return the number of bytes written.
+         * \throw std::system_error on failure.
+         * \note consider using `write` if you need to ensure that all data is written before the blocking operation completes.
+        */
         [[nodiscard]]
         auto write_some(std::span<const std::byte> buffer) -> std::size_t {
             return detail::sync_send(handle_, buffer);
@@ -509,12 +621,15 @@ namespace coio::net {
         }
 
         /**
-         * \brief async-receive data
-         * \param buffer data
-         * \return async_read_some_operation
-         * \note the behavior is undefined, if `async_write_some` without waiting for the previous `async_read_some` or `coio::async_read` of the same socket to be finished
-         * \see async_read_some_operation
-         * \see async_read
+         * \brief receive some message data asynchronously.
+         * \param buffer the buffers containing the message part to receive.
+         * \return the awaiter - `async_receive_operation`.
+         * \note
+         * 1) the program must ensure that no other calls to `read`, `read_some`, `receive`,
+         * `async_read`, `async_read_some` or `async_receive` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.\n
+         * 3) consider using `async_read` if you need to ensure that the requested amount of data is read before the asynchronous operation completes.
         */
         [[nodiscard]]
         auto async_read_some(std::span<std::byte> buffer) noexcept -> async_receive_operation {
@@ -522,12 +637,15 @@ namespace coio::net {
         }
 
         /**
-         * \brief async-send data
-         * \param buffer data
-         * \return async_write_some_operation
-         * \note the behavior is undefined, if `async_write_some` without waiting for the previous `async_write_some` or `coio::async_write` of the same socket to be finished
-         * \see async_write_some_operation
-         * \see async_write
+         * \brief send some message data asynchronously.
+         * \param buffer the buffers containing the message part to send.
+         * \return the awaiter - `async_send_operation`.
+         * \note
+         * 1) the program must ensure that no other calls to `write`, `write_some`, `send`,
+         * `async_write`, `async_write_some`, or `async_send` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.\n
+         * 3) consider using the async_write function if you need to ensure that all data is written before the asynchronous operation completes.
         */
         [[nodiscard]]
         auto async_write_some(std::span<const std::byte> buffer) noexcept -> async_send_operation {
@@ -573,50 +691,133 @@ namespace coio::net {
         using socket_base::set_non_blocking;
         using socket_base::bind;
 
+        /**
+         * \brief open the socket using the specified protocol.
+         * \param protocol an object specifying protocol parameters to be used. it's `udp::v4()` or `udp::v6()`.
+         */
         auto open(const protocol_type& protocol) -> void {
             open_(protocol.family(), protocol.type(), protocol.protocol_id());
         }
 
+        /**
+         * \brief connect the socket to the specified endpoint.
+         * \param addr the remote endpoint to which the socket will be connected.
+         * \throw std::system_error on failure.
+        */
         auto connect(const endpoint& addr) -> void;
 
+        /**
+         * \brief start an asynchronous connect.
+         * \param addr the remote endpoint to which the socket will be connected.
+         * \return the awaiter - `async_connect_operation`.
+         * \throw std::system_error on failure.
+         */
         [[nodiscard]]
         auto async_connect(const endpoint& addr) -> async_connect_operation;
 
+        /**
+         * \brief read data to the socket.
+         * \param buffer data buffer to be read to the socket.
+         * \return the number of bytes read.
+         * \throw std::system_error on failure.
+        */
         [[nodiscard]]
         auto receive(std::span<std::byte> buffer) -> std::size_t {
             return detail::sync_recv(handle_, buffer, false);
         }
 
+        /**
+         * \brief write data to the socket.
+         * \param buffer data buffer to be written to the socket.
+         * \return the number of bytes written.
+         * \throw std::system_error on failure.
+        */
         [[nodiscard]]
         auto send(std::span<const std::byte> buffer) -> std::size_t {
             return detail::sync_send(handle_, buffer);
         }
 
+        /**
+         * \brief read data to the socket.
+         * \param buffer data buffer to be read to the socket.
+         * \param src an endpoint object that receives the endpoint of the remote sender of the datagram.
+         * \return the number of bytes read.
+         * \throw std::system_error on failure.
+        */
         [[nodiscard]]
         auto receive_from(std::span<std::byte> buffer, const endpoint& src) -> std::size_t {
             return detail::sync_recv_from(handle_, buffer, src, false);
         }
 
+        /**
+         * \brief write data to the socket.
+         * \param buffer data buffer to be written to the socket.
+         * \param dest the remote endpoint to which the data will be sent.
+         * \return the number of bytes written.
+         * \throw std::system_error on failure.
+        */
         [[nodiscard]]
         auto send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
             return detail::sync_send_to(handle_, buffer, dest);
         }
 
+        /**
+         * \brief receive message data asynchronously.
+         * \param buffer the buffers containing the message part to receive.
+         * \return the awaiter - `async_receive_operation`.
+         * \note
+         * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
+         * `async_receive_from` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.
+        */
         [[nodiscard]]
         auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_operation {
             return {*context_, op_list_, buffer, false};
         }
 
+        /**
+         * \brief send message data asynchronously.
+         * \param buffer the buffers containing the message part to send.
+         * \return the awaiter - `async_send_operation`.
+         * \note
+         * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
+         * `async_send_to` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.
+        */
         [[nodiscard]]
         auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_operation {
             return {*context_, op_list_, buffer};
         }
 
+        /**
+         * \brief receive message data asynchronously.
+         * \param buffer the buffers containing the message part to receive.
+         * \param src an endpoint object that receives the endpoint of the remote sender of the datagram.
+         * \return the awaiter - `async_receive_from_operation`.
+         * \note
+         * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
+         * `async_receive_from` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.
+         */
         [[nodiscard]]
         auto async_receive_from(std::span<std::byte> buffer, const endpoint& src) noexcept -> async_receive_from_operation {
             return {*context_, op_list_, buffer, src, false};
         }
 
+        /**
+         * \brief send message data asynchronously.
+         * \param buffer the buffers containing the message part to send.
+         * \param dest the remote endpoint to which the data will be sent.
+         * \return the awaiter - `async_send_to_operation`.
+         * \note
+         * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
+         * `async_send_to` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.
+         */
         [[nodiscard]]
         auto async_send_to(std::span<const std::byte> buffer, const endpoint& dest) noexcept -> async_send_to_operation {
             return {*context_, op_list_, buffer, dest};
@@ -756,6 +957,9 @@ namespace coio::net {
 
         explicit resolver(protocol_type protocol) noexcept(std::is_nothrow_move_constructible_v<protocol_type>) : protocol_(std::move(protocol)) {}
 
+        /**
+         * \brief resolve a query into a sequence of endpoint entries.
+         */
         [[nodiscard]]
         auto resolve(query_t query) const -> generator<result_t> {
             if (protocol_) return detail::resolve_impl(std::move(query), protocol_->family(), protocol_type::type(), protocol_type::protocol_id());
