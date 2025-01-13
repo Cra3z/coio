@@ -493,11 +493,6 @@ namespace coio::net {
         transferred_ = n;
         return transferred_;
     }
-    
-
-    auto async_accept_operation::await_ready() noexcept -> bool {
-        return false;
-    }
 
     auto async_accept_operation::await_resume() -> void {
         if (exception_) std::rethrow_exception(exception_);
@@ -509,6 +504,26 @@ namespace coio::net {
             }
         }
         out_.reset_(accepted_);
+    }
+
+    auto async_connect_operation::await_ready() noexcept -> bool {
+        auto sa = endpoint_to_sockaddr_in(dest_);
+        auto [psa, len] = to_sockaddr(sa);
+        if (::connect(op_list_->handle, psa, len) == -1) {
+            const auto er = errno;
+            if (er == EINPROGRESS) return false;
+            exception_ = std::make_exception_ptr(std::system_error(er, std::system_category()));
+        }
+        else connected_ = true;
+        return true;
+    }
+
+    auto async_connect_operation::await_resume() -> void {
+        if (exception_) std::rethrow_exception(exception_);
+        if (connected_) return;
+        auto sa = endpoint_to_sockaddr_in(dest_);
+        auto [psa, len] = to_sockaddr(sa);
+        throw_last_error(::connect(op_list_->handle, psa, len), "async_connect");
     }
 
     namespace detail {
@@ -547,6 +562,24 @@ namespace coio::net {
         auto socket_base::close() noexcept -> void {
             ::close(std::exchange(handle_, invalid_socket_handle_value));
             delete std::exchange(op_list_, nullptr);
+        }
+
+        auto socket_base::shutdown(shutdown_type how) -> void {
+            int h;
+            using enum shutdown_type;
+            switch (how) {
+            case shutdown_receive:
+                h = SHUT_RD;
+                break;
+            case shutdown_send:
+                h = SHUT_WR;
+                break;
+            case shutdown_both:
+                h = SHUT_RDWR;
+                break;
+            default: unreachable();
+            }
+            throw_last_error(::shutdown(handle_, h));
         }
 
         auto socket_base::reuse_address() -> void {
@@ -628,8 +661,18 @@ namespace coio::net {
         connect_(addr);
     }
 
+    auto tcp_socket::async_connect(const endpoint& addr) -> async_connect_operation {
+        if (not is_open()) open(addr.ip().is_v4() ? tcp::v4() : tcp::v6());
+        return async_connect_(addr);
+    }
+
     auto udp_socket::connect(const endpoint& addr) -> void {
         if (not is_open()) open(addr.ip().is_v4() ? udp::v4() : udp::v6());
         connect_(addr);
+    }
+
+    auto udp_socket::async_connect(const endpoint& addr) -> async_connect_operation {
+        if (not is_open()) open(addr.ip().is_v4() ? udp::v4() : udp::v6());
+        return async_connect_(addr);
     }
 }

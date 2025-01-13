@@ -4,10 +4,10 @@
 
 auto main() -> int {
     coio::io_context context;
-    coio::net::tcp_socket socket{context};
-    socket.connect({coio::net::ipv4_address::loopback(), 8086});
     coio::sync_wait(coio::when_all(
-        [&socket]() -> coio::task<> {
+        [&context]() -> coio::task<> {
+            coio::net::tcp_socket socket{context};
+            co_await socket.async_connect({coio::net::ipv4_address::loopback(), 8086});
             char buffer[256];
             std::uint8_t length;
             while (true) {

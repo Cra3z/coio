@@ -2,9 +2,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <compare>
-#ifdef __cpp_lib_format
-#include <format>
-#endif
+#include "../utils/format.h"
 
 namespace coio::net {
 
@@ -193,19 +191,8 @@ struct std::tuple_element<I, coio::net::endpoint> {
 
 #ifdef __cpp_lib_format
 
-namespace coio::detail {
-    struct no_specification_formatter {
-        constexpr auto parse(std::format_parse_context& ctx) {
-            auto [first, last] = std::ranges::subrange{ctx};
-            if (first == last or *first == '}') return first;
-            throw std::format_error{"invalid format specification."};
-        }
-    };
-}
-
-
 template<>
-struct std::formatter<coio::net::ipv4_address> : coio::detail::no_specification_formatter {
+struct std::formatter<coio::net::ipv4_address> : coio::no_specification_formatter {
     auto format(const coio::net::ipv4_address& ipv4, std::format_context& ctx) const {
         return std::format_to(ctx.out(), "{}", ipv4.to_string());
     }
@@ -213,7 +200,7 @@ struct std::formatter<coio::net::ipv4_address> : coio::detail::no_specification_
 
 
 template<>
-struct std::formatter<coio::net::ipv6_address> : coio::detail::no_specification_formatter {
+struct std::formatter<coio::net::ipv6_address> : coio::no_specification_formatter {
     auto format(const coio::net::ipv6_address& ipv6, std::format_context& ctx) const {
         return std::format_to(ctx.out(), "{}", ipv6.to_string());
     }
@@ -221,7 +208,7 @@ struct std::formatter<coio::net::ipv6_address> : coio::detail::no_specification_
 
 
 template<>
-struct std::formatter<coio::net::ip_address> : coio::detail::no_specification_formatter {
+struct std::formatter<coio::net::ip_address> : coio::no_specification_formatter {
     auto format(const coio::net::ip_address& ip, std::format_context& ctx) const {
         return std::format_to(ctx.out(), "{}", ip.to_string());
     }
@@ -229,7 +216,7 @@ struct std::formatter<coio::net::ip_address> : coio::detail::no_specification_fo
 
 
 template<>
-struct std::formatter<coio::net::endpoint> : coio::detail::no_specification_formatter {
+struct std::formatter<coio::net::endpoint> : coio::no_specification_formatter {
     auto format(const coio::net::endpoint& ep, std::format_context& ctx) const {
         return std::format_to(ctx.out(), "{}:{}", ep.ip().to_string(), ep.port());
     }

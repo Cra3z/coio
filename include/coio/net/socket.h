@@ -1,5 +1,6 @@
 #pragma once
 #include <span>
+#include <map>
 #if COIO_OS_WINSOWS
 #include <BaseTsd.h>
 #endif
@@ -269,7 +270,9 @@ namespace coio::net {
         async_accept_operation(io_context& context, detail::op_list* op_list, tcp_socket& out) noexcept :
             async_in_operation_base(context, op_list), out_(out) {}
 
-        auto await_ready() noexcept -> bool;
+        static auto await_ready() noexcept -> bool {
+            return false;
+        }
 
         auto await_resume() -> void;
 
@@ -278,12 +281,32 @@ namespace coio::net {
         detail::socket_native_handle_type accepted_ = detail::invalid_socket_handle_value;
     };
 
+    class async_connect_operation : public detail::async_out_operation_base {
+    public:
+        async_connect_operation(io_context& context, detail::op_list* op_list, const endpoint& dest_) noexcept :
+            async_out_operation_base(context, op_list), dest_(dest_) {}
+
+        auto await_ready() noexcept -> bool;
+
+        auto await_resume() -> void;
+
+    private:
+        endpoint dest_;
+        bool connected_ = false;
+    };
+
 
     namespace detail {
 
         class socket_base {
         public:
             using native_handle_type = socket_native_handle_type;
+
+            enum class shutdown_type : short {
+                shutdown_send,
+                shutdown_receive,
+                shutdown_both,
+            };
 
         private:
             socket_base(std::nullptr_t, io_context& context, socket_native_handle_type handle) noexcept : context_(&context), handle_(handle), op_list_(nullptr) {}
@@ -357,6 +380,8 @@ namespace coio::net {
 
             auto close() noexcept -> void;
 
+            auto shutdown(shutdown_type how) -> void;
+
             auto reuse_address() -> void;
 
             auto set_non_blocking() -> void;
@@ -369,6 +394,10 @@ namespace coio::net {
             auto open_(int family, int type, int protocol_id) -> void;
 
             auto connect_(const endpoint& addr) -> void;
+
+            auto async_connect_(const endpoint& addr) noexcept -> async_connect_operation {
+                return {*context_, op_list_, addr};
+            }
 
         protected:
             io_context* context_;
@@ -426,7 +455,9 @@ namespace coio::net {
 
     public:
         using socket_base::native_handle_type;
+        using socket_base::shutdown_type;
         using protocol_type = tcp;
+        using enum shutdown_type;
 
     public:
         using socket_base::socket_base;
@@ -437,6 +468,7 @@ namespace coio::net {
         using socket_base::is_open;
         using socket_base::operator bool;
         using socket_base::close;
+        using socket_base::shutdown;
         using socket_base::reuse_address;
         using socket_base::set_non_blocking;
         using socket_base::bind;
@@ -446,6 +478,9 @@ namespace coio::net {
         }
 
         auto connect(const endpoint& addr) -> void;
+
+        [[nodiscard]]
+        auto async_connect(const endpoint& addr) -> async_connect_operation;
 
         [[nodiscard]]
         auto read_some(std::span<std::byte> buffer) -> std::size_t {
@@ -520,7 +555,9 @@ namespace coio::net {
     class udp_socket : detail::socket_base {
     public:
         using socket_base::native_handle_type;
+        using socket_base::shutdown_type;
         using protocol_type = udp;
+        using enum shutdown_type;
 
     public:
         using socket_base::socket_base;
@@ -531,6 +568,7 @@ namespace coio::net {
         using socket_base::is_open;
         using socket_base::operator bool;
         using socket_base::close;
+        using socket_base::shutdown;
         using socket_base::reuse_address;
         using socket_base::set_non_blocking;
         using socket_base::bind;
@@ -540,6 +578,9 @@ namespace coio::net {
         }
 
         auto connect(const endpoint& addr) -> void;
+
+        [[nodiscard]]
+        auto async_connect(const endpoint& addr) -> async_connect_operation;
 
         [[nodiscard]]
         auto receive(std::span<std::byte> buffer) -> std::size_t {
@@ -562,12 +603,12 @@ namespace coio::net {
         }
 
         [[nodiscard]]
-        auto async_receive(std::span<std::byte> buffer) -> async_receive_operation {
+        auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_operation {
             return {*context_, op_list_, buffer, false};
         }
 
         [[nodiscard]]
-        auto async_send(std::span<const std::byte> buffer) -> async_send_operation {
+        auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_operation {
             return {*context_, op_list_, buffer};
         }
 
@@ -606,8 +647,101 @@ namespace coio::net {
         auto resolve_impl(resolve_query_t query, int family, int socktype, int protocol_id) -> generator<resolve_result_t>;
 
         auto resolve_impl(resolve_query_t query, int sock_type, int protocol_id) -> generator<resolve_result_t>;
+
+        inline auto parse_path(std::string_view str) -> std::string {
+            return std::string(str);
+        }
+
+        inline auto parse_host_and_port(std::string_view str) -> std::pair<std::string, std::uint16_t> {
+            std::pair<std::string, std::uint16_t> result{};
+            auto pos = str.find(':');
+            result.first = std::string(str.substr(0, pos));
+            if (pos == std::string_view::npos) return result;
+            auto port_str = str.substr(pos + 1);
+            auto ec = std::from_chars(port_str.data(), port_str.data() + port_str.size(), result.second).ec;
+            if (ec != std::errc()) throw std::invalid_argument("invalid URL: invalid port.");
+            return result;
+        }
+
+        inline auto parse_query(std::string_view str) -> std::map<std::string, std::string> {
+            std::map<std::string, std::string> result;
+            while (not str.empty()) {
+                auto eq_pos = str.find('=');
+                auto amp_pos = str.find('&');
+
+                std::string key = std::string(str.substr(0, eq_pos));
+                std::string value;
+                if (eq_pos != std::string_view::npos) [[likely]] {
+                    value = std::string(str.substr(eq_pos + 1, amp_pos - eq_pos - 1));
+                }
+                result.insert({std::move(key), std::move(value)});
+
+                if (amp_pos == std::string_view::npos) break;
+                str.remove_prefix(amp_pos + 1);
+            }
+            return result;
+        }
     }
 
+    struct url {
+    public:
+        url(std::string_view uri) {
+            std::size_t first = 0;
+            auto last = uri.find("://", first);
+            if (last == std::string_view::npos) throw std::invalid_argument("invalid URL: missing protocol.");
+            protocol = std::string(uri.substr(first, last - first));
+            first = last + 3;
+
+            last = uri.find('/', first);
+            std::tie(host, port) = detail::parse_host_and_port(uri.substr(first, last - first));
+            if (port == 0) {
+                if (protocol == "http") port = 80;
+                else if (protocol == "https") port = 443;
+            }
+            if (last == std::string_view::npos) return;
+            first = last + 1;
+
+            last = uri.find('?', first);
+            path += std::string(uri.substr(first, last - first));
+            if (last == std::string_view::npos) return;
+            first = last + 1;
+
+            last = uri.find('#', first);
+            query = detail::parse_query(uri.substr(first, last - first));
+            if (last == std::string_view::npos) return;
+            first = last + 1;
+
+            fragment = std::string(uri.substr(first));
+        }
+
+        [[nodiscard]] auto to_string() const -> std::string {
+            std::string result;
+            result.append(protocol).append("://").append(host);
+            if (not ((protocol == "http" and port == 80) or (protocol == "https" and port == 443))) {
+                result.append(":" + std::to_string(port));
+            }
+            result.append(path);
+            if (not query.empty()) {
+                result.push_back('?');
+                for (bool is_first = true; const auto& [key, value] : query) {
+                    if (not is_first) [[likely]] result.push_back('&');
+                    else is_first = false;
+                    result.append(key).append("=").append(value);
+                }
+            }
+            if (not fragment.empty()) {
+                result.append("#" + fragment);
+            }
+            return result;
+        }
+
+        std::string                        protocol;
+        std::string                        host;
+        std::uint16_t                      port;
+        std::string                        path{"/"};
+        std::map<std::string, std::string> query;
+        std::string                        fragment;
+    };
 
     template<typename Protocol>
     class resolver {
@@ -635,3 +769,12 @@ namespace coio::net {
     using tcp_resolver = resolver<tcp>;
     using udp_resolver = resolver<udp>;
 }
+
+#ifdef __cpp_lib_format
+template<>
+struct std::formatter<coio::net::url> : coio::no_specification_formatter {
+    auto format(const coio::net::url& uri, std::format_context& ctx) const {
+        return std::format_to(ctx.out(), "{}", uri.to_string());
+    }
+};
+#endif
