@@ -15,13 +15,13 @@
 #include <linux/io_uring.h>
 #endif
 #include <coio/core.h>
+#include <coio/timer.h>
 #include <coio/utils/utility.h>
 #include <coio/utils/concurrent_queue.h>
 #include <coio/utils/scope_exit.h>
 #include <coio/net/socket.h>
 #include <coio/net/detail/error_code.h>
 
-#include <iostream>
 
 namespace coio {
 
@@ -113,27 +113,18 @@ namespace coio {
             return std::system_error{net::error::eof};
         }
 
-        struct timed_coro {
-            std::chrono::steady_clock::time_point timeout_time;
-
-            std::coroutine_handle<> coro;
-
-            friend auto operator== (const timed_coro& lhs, const timed_coro& rhs) noexcept -> bool {
-                return lhs.timeout_time == rhs.timeout_time;
+        struct timer_compare {
+            COIO_STATIC_CALL_OP auto operator() (steady_timer::awaiter* lhs, steady_timer::awaiter* rhs) COIO_STATIC_CALL_OP_CONST noexcept -> bool {
+                return rhs->deadline_ < lhs->deadline_;
             }
-
-            friend auto operator<=> (const timed_coro& lhs, const timed_coro& rhs) noexcept {
-                return lhs.timeout_time <=> rhs.timeout_time;
-            }
-
         };
 
         struct io_context_data {
             std::stop_source stop_;
             std::atomic<std::size_t> work_count_{0};
             blocking_queue<std::coroutine_handle<>> ready_coros;
-            std::mutex sleeping_mtx_;
-            std::priority_queue<timed_coro, std::vector<timed_coro>, std::greater<>> sleeping_coros;
+            std::mutex timer_queue_lock_;
+            std::priority_queue<steady_timer::awaiter*, std::vector<steady_timer::awaiter*>, timer_compare> timer_queue_;
         };
     }
 
@@ -178,14 +169,14 @@ namespace coio {
             }
 
             while (true) {
-                if (not sleeping_mtx_.try_lock()) break;
-                std::unique_lock lock{sleeping_mtx_, std::adopt_lock};
-                if (sleeping_coros.empty()) break;
-                auto [timeout_time, coro] = sleeping_coros.top();
-                if (timeout_time <= std::chrono::steady_clock::now()) {
-                    sleeping_coros.pop();
+                if (not timer_queue_lock_.try_lock()) break;
+                std::unique_lock lock{timer_queue_lock_, std::adopt_lock};
+                if (timer_queue_.empty()) break;
+                auto timer_awaiter = timer_queue_.top();
+                if (timer_awaiter->deadline_ <= std::chrono::steady_clock::now()) {
+                    timer_queue_.pop();
                     lock.unlock();
-                    ready_coros.push(coro);
+                    if (not timer_awaiter->cancelled_.load()) ready_coros.push(timer_awaiter->coro_);
                 }
                 else break;
             }
@@ -674,5 +665,14 @@ namespace coio::net {
     auto udp_socket::async_connect(const endpoint& addr) -> async_connect_operation {
         if (not is_open()) open(addr.ip().is_v4() ? udp::v4() : udp::v6());
         return async_connect_(addr);
+    }
+}
+
+namespace coio {
+    auto steady_timer::awaiter::await_suspend(std::coroutine_handle<> this_coro) -> void {
+        coro_ = this_coro;
+        auto& context_impl = io_context::impl::of(context_);
+        std::scoped_lock _{context_impl.timer_queue_lock_};
+        context_impl.timer_queue_.push(this);
     }
 }
