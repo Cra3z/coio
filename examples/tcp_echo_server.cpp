@@ -2,22 +2,24 @@
 #include <coio/net/socket.h>
 #include "common.h"
 
-auto handle_connection(coio::net::tcp_socket socket) -> coio::task<> try {
-    std::uint8_t length;
-    char buffer[255];
+auto handle_connection(coio::net::tcp_socket socket) -> coio::task<> {
     auto remote_endpoint = socket.remote_endpoint();
-    ::println("new connection with [{}]", remote_endpoint);
-    while (true) {
-        co_await coio::async_read(socket, std::as_writable_bytes(std::span{&length, 1}));
-        co_await coio::async_read(socket, std::as_writable_bytes(std::span{buffer, length}));
-        ::println("[{}] {}", remote_endpoint, std::string_view{buffer, length});
-        for (std::size_t i = 0; i < length; ++i) buffer[i] = char(std::toupper(buffer[i]));
-        co_await coio::async_write(socket, std::as_bytes(std::span{&length, 1}));
-        co_await coio::async_write(socket, std::as_bytes(std::span{buffer, length}));
+    try {
+        std::uint8_t length;
+        char buffer[255];
+        ::println("new connection with [{}]", remote_endpoint);
+        while (true) {
+            co_await coio::async_read(socket, std::as_writable_bytes(std::span{&length, 1}));
+            co_await coio::async_read(socket, std::as_writable_bytes(std::span{buffer, length}));
+            ::println("[{}] {}", remote_endpoint, std::string_view{buffer, length});
+            for (std::size_t i = 0; i < length; ++i) buffer[i] = char(std::toupper(buffer[i]));
+            co_await coio::async_write(socket, std::as_bytes(std::span{&length, 1}));
+            co_await coio::async_write(socket, std::as_bytes(std::span{buffer, length}));
+        }
     }
-}
-catch (const std::system_error& e) {
-    ::println("connection with [{}] broken because \"{}\"", socket.remote_endpoint(), e.what());
+    catch (const std::system_error& e) {
+        ::println("connection with [{}] broken because \"{}\"", remote_endpoint, e.what());
+    }
 }
 
 auto main() -> int {
