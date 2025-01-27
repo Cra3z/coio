@@ -1,5 +1,4 @@
 #include <coio/core.h>
-#include <coio/timer.h>
 #include "common.h"
 
 auto main() -> int {
@@ -8,7 +7,7 @@ auto main() -> int {
         [&context]() -> coio::task<> {
             using namespace std::chrono_literals;
             for (std::size_t i = 0; i < 5; ++i) {
-                co_await coio::steady_timer{context, 500ms}.async_wait();
+                co_await coio::steady_timer{context, 1s}.async_wait();
                 ::print(std::clog, "{}", std::string(i + 1, '='));
             }
             ::println(std::clog);

@@ -132,12 +132,12 @@ namespace coio::net {
 
         auto sync_send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
 
-        struct op_list;
+        struct op_state;
 
-        class async_io_operation_base {
+        class async_io_operation_base : public io_context::async_operation_base {
         public:
-            async_io_operation_base(io_context& context, op_list* op_list_) noexcept : context_(context), op_list_(op_list_) {
-                context_.work_started();
+            async_io_operation_base(io_context& context, op_state* op_state_) noexcept : async_operation_base(context), op_state_(op_state_) {
+                context.work_started();
             }
 
             async_io_operation_base(const async_io_operation_base&) = delete;
@@ -148,84 +148,47 @@ namespace coio::net {
 
             auto operator= (const async_io_operation_base&) ->async_io_operation_base& = delete;
 
+            auto context() const noexcept -> io_context& {
+                return static_cast<io_context&>(context_);
+            }
+
         protected:
-            io_context& context_;
-            op_list* op_list_;
+            op_state* op_state_;
             std::exception_ptr exception_;
         };
 
         class async_in_operation_base : public async_io_operation_base {
-            friend op_list;
+            friend op_state;
         public:
             using async_io_operation_base::async_io_operation_base;
 
             auto await_suspend(std::coroutine_handle<> this_coro) -> void;
-
-        private:
-            async_in_operation_base* next_ = nullptr;
-            std::coroutine_handle<> waiter_;
         };
 
         class async_out_operation_base : public async_io_operation_base {
-            friend op_list;
+            friend op_state;
         public:
             using async_io_operation_base::async_io_operation_base;
 
             auto await_suspend(std::coroutine_handle<> this_coro) -> void;
-
-        private:
-            async_out_operation_base* next_ = nullptr;
-            std::coroutine_handle<> waiter_;
         };
 
-        struct op_list {
-            auto add_one_in_op(async_in_operation_base* op) noexcept -> void {
-                auto old_tail = std::exchange(in_op_tail, op);
-                if (old_tail) old_tail->next_ = in_op_tail;
-                if (in_op_head == nullptr) in_op_head = in_op_tail;
-                ++length;
-            }
+        struct op_state {
+            op_state(socket_native_handle_type handle) noexcept : handle(handle) {};
 
-            auto add_one_out_op(async_out_operation_base* op) noexcept -> void {
-                auto old_tail = std::exchange(out_op_tail, op);
-                if (old_tail) old_tail->next_ = out_op_tail;
-                if (out_op_head == nullptr) out_op_head = out_op_tail;
-                ++length;
-            }
+            op_state(const op_state&) = delete;
 
-            auto end_one_in_op() noexcept -> std::size_t {
-                if (in_op_head == in_op_tail) in_op_head = in_op_tail = nullptr;
-                else in_op_head = in_op_head->next_;
-                return --length;
-            }
-
-            auto end_one_out_op() noexcept -> std::size_t {
-                if (out_op_head == out_op_tail) out_op_head = out_op_tail = nullptr;
-                else out_op_head = out_op_head->next_;
-                return --length;
-            }
+            auto operator= (const op_state&) -> op_state& = delete;
 
             auto reset(socket_native_handle_type new_handle) noexcept -> void {
                 handle = new_handle;
-                length = 0;
-                in_op_head = in_op_tail = nullptr;
-                out_op_head = out_op_tail = nullptr;
-            }
-
-            auto out_op_waiter() noexcept -> std::coroutine_handle<> {
-                COIO_DCHECK(out_op_head and out_op_head->waiter_);
-                return out_op_head->waiter_;
-            }
-
-            auto in_op_waiter() noexcept -> std::coroutine_handle<> {
-                COIO_DCHECK(in_op_head and in_op_head->waiter_);
-                return in_op_head->waiter_;
+                in_op = nullptr;
+                out_op = nullptr;
             }
 
             socket_native_handle_type handle{invalid_socket_handle_value};
-            std::size_t length{};
-            async_in_operation_base* in_op_head{nullptr}, *in_op_tail{nullptr};
-            async_out_operation_base* out_op_head{nullptr}, *out_op_tail{nullptr};
+            async_in_operation_base* in_op{nullptr};
+            async_out_operation_base* out_op{nullptr};
         };
     }
 
@@ -233,8 +196,8 @@ namespace coio::net {
 
     class async_receive_operation : public detail::async_in_operation_base {
     public:
-        async_receive_operation(io_context& context, detail::op_list* op_list, std::span<std::byte> buffer, bool zero_as_eof) noexcept :
-            async_in_operation_base{context, op_list}, buffer_(buffer), zero_as_eof_(zero_as_eof) {}
+        async_receive_operation(io_context& context, detail::op_state* op_state, std::span<std::byte> buffer, bool zero_as_eof) noexcept :
+            async_in_operation_base{context, op_state}, buffer_(buffer), zero_as_eof_(zero_as_eof) {}
 
         auto await_ready() noexcept -> bool;
 
@@ -249,8 +212,8 @@ namespace coio::net {
 
     class async_send_operation : public detail::async_out_operation_base {
     public:
-        async_send_operation(io_context& context, detail::op_list* op_list, std::span<const std::byte> buffer) noexcept :
-            async_out_operation_base{context, op_list}, buffer_(buffer) {}
+        async_send_operation(io_context& context, detail::op_state* op_state, std::span<const std::byte> buffer) noexcept :
+            async_out_operation_base{context, op_state}, buffer_(buffer) {}
 
         auto await_ready() noexcept -> bool;
 
@@ -264,8 +227,8 @@ namespace coio::net {
 
     class async_receive_from_operation : public detail::async_in_operation_base {
     public:
-        async_receive_from_operation(io_context& context, detail::op_list* op_list, std::span<std::byte> buffer, const endpoint& src, bool zero_as_eof) noexcept :
-            async_in_operation_base{context, op_list}, buffer_(buffer), src_(src), zero_as_eof_(zero_as_eof) {}
+        async_receive_from_operation(io_context& context, detail::op_state* op_state, std::span<std::byte> buffer, const endpoint& src, bool zero_as_eof) noexcept :
+            async_in_operation_base{context, op_state}, buffer_(buffer), src_(src), zero_as_eof_(zero_as_eof) {}
 
         auto await_ready() noexcept -> bool;
 
@@ -281,8 +244,8 @@ namespace coio::net {
 
     class async_send_to_operation : public detail::async_out_operation_base {
     public:
-        async_send_to_operation(io_context& context, detail::op_list* op_list, std::span<const std::byte> buffer, const endpoint& dest) noexcept :
-            async_out_operation_base{context, op_list}, buffer_(buffer), dest_(dest) {}
+        async_send_to_operation(io_context& context, detail::op_state* op_state, std::span<const std::byte> buffer, const endpoint& dest) noexcept :
+            async_out_operation_base{context, op_state}, buffer_(buffer), dest_(dest) {}
 
         auto await_ready() noexcept -> bool;
 
@@ -297,12 +260,14 @@ namespace coio::net {
 
     class async_accept_operation : public detail::async_in_operation_base {
     public:
-        async_accept_operation(io_context& context, detail::op_list* op_list, tcp_socket& out) noexcept :
-            async_in_operation_base(context, op_list), out_(out) {}
+        async_accept_operation(io_context& context, detail::op_state* op_state, tcp_socket& out) noexcept :
+            async_in_operation_base(context, op_state), out_(out) {}
 
         static auto await_ready() noexcept -> bool {
             return false;
         }
+
+        auto await_suspend(std::coroutine_handle<> this_coro) -> void;
 
         auto await_resume() -> void;
 
@@ -313,8 +278,8 @@ namespace coio::net {
 
     class async_connect_operation : public detail::async_out_operation_base {
     public:
-        async_connect_operation(io_context& context, detail::op_list* op_list, const endpoint& dest_) noexcept :
-            async_out_operation_base(context, op_list), dest_(dest_) {}
+        async_connect_operation(io_context& context, detail::op_state* op_state, const endpoint& dest_) noexcept :
+            async_out_operation_base(context, op_state), dest_(dest_) {}
 
         auto await_ready() noexcept -> bool;
 
@@ -339,20 +304,20 @@ namespace coio::net {
             };
 
         private:
-            socket_base(std::nullptr_t, io_context& context, socket_native_handle_type handle) noexcept : context_(&context), handle_(handle), op_list_(nullptr) {}
+            socket_base(std::nullptr_t, io_context& context, socket_native_handle_type handle) noexcept : context_(&context), handle_(handle), op_state_(nullptr) {}
 
         public:
             explicit socket_base(io_context& context) noexcept : socket_base(nullptr, context, invalid_socket_handle_value) {}
 
             socket_base(io_context& context, socket_native_handle_type handle) : socket_base(nullptr, context, handle) {
-                op_list_ = new op_list{handle};
+                op_state_ = new op_state{handle};
             }
 
             socket_base(const socket_base&) = delete;
 
             socket_base(socket_base&& other) noexcept : context_(other.context_),
                                                         handle_(std::exchange(other.handle_, invalid_socket_handle_value)),
-                                                        op_list_(std::exchange(other.op_list_, nullptr)) {}
+                                                        op_state_(std::exchange(other.op_state_, nullptr)) {}
 
             ~socket_base() {
                 close();
@@ -361,7 +326,7 @@ namespace coio::net {
             auto operator= (socket_base other) noexcept -> socket_base& {
                 std::swap(context_, other.context_);
                 std::swap(handle_, other.handle_);
-                std::swap(op_list_, other.op_list_);
+                std::swap(op_state_, other.op_state_);
                 return *this;
             }
 
@@ -461,13 +426,13 @@ namespace coio::net {
             auto connect_(const endpoint& addr) -> void;
 
             auto async_connect_(const endpoint& addr) noexcept -> async_connect_operation {
-                return {*context_, op_list_, addr};
+                return {*context_, op_state_, addr};
             }
 
         protected:
             io_context* context_;
             socket_native_handle_type handle_;
-            op_list* op_list_;
+            op_state* op_state_;
         };
     }
 
@@ -516,7 +481,7 @@ namespace coio::net {
          */
         [[nodiscard]]
         auto async_accept(tcp_socket& out) noexcept -> async_accept_operation {
-            return {*context_, op_list_, out};
+            return {*context_, op_state_, out};
         }
 
         /**
@@ -633,7 +598,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto async_read_some(std::span<std::byte> buffer) noexcept -> async_receive_operation {
-            return {*context_, op_list_, buffer, true};
+            return {*context_, op_state_, buffer, true};
         }
 
         /**
@@ -649,7 +614,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto async_write_some(std::span<const std::byte> buffer) noexcept -> async_send_operation {
-            return {*context_, op_list_, buffer};
+            return {*context_, op_state_, buffer};
         }
 
         /**
@@ -773,7 +738,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_operation {
-            return {*context_, op_list_, buffer, false};
+            return {*context_, op_state_, buffer, false};
         }
 
         /**
@@ -788,7 +753,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_operation {
-            return {*context_, op_list_, buffer};
+            return {*context_, op_state_, buffer};
         }
 
         /**
@@ -804,7 +769,7 @@ namespace coio::net {
          */
         [[nodiscard]]
         auto async_receive_from(std::span<std::byte> buffer, const endpoint& src) noexcept -> async_receive_from_operation {
-            return {*context_, op_list_, buffer, src, false};
+            return {*context_, op_state_, buffer, src, false};
         }
 
         /**
@@ -820,7 +785,7 @@ namespace coio::net {
          */
         [[nodiscard]]
         auto async_send_to(std::span<const std::byte> buffer, const endpoint& dest) noexcept -> async_send_to_operation {
-            return {*context_, op_list_, buffer, dest};
+            return {*context_, op_state_, buffer, dest};
         }
 
     };
@@ -915,7 +880,8 @@ namespace coio::net {
             fragment = std::string(uri.substr(first));
         }
 
-        [[nodiscard]] auto to_string() const -> std::string {
+        [[nodiscard]]
+        auto to_string() const -> std::string {
             std::string result;
             result.append(protocol).append("://").append(host);
             if (not ((protocol == "http" and port == 80) or (protocol == "https" and port == 443))) {

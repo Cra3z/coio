@@ -1,6 +1,7 @@
 #pragma once
 #include <ostream>
 #include <concepts>
+#include <cstring>
 #include <iterator>
 #include <string_view>
 #include <typeindex>

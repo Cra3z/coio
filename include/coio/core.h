@@ -2,6 +2,7 @@
 #include <atomic>
 #include <coroutine>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <queue>
@@ -17,7 +18,6 @@
 #include "detail/task_error.h"
 #include "utils/retain_ptr.h"
 #include "utils/type_traits.h"
-#include "utils/concurrent_queue.h"
 
 namespace coio {
     template<awaiter T>
@@ -38,56 +38,249 @@ namespace coio {
     template<typename T = void, typename Alloc = void>
     class [[nodiscard]] shared_task;
 
-    class io_context {
+    namespace detail {
+        class queued_execution_context;
+    }
+
+    class steady_timer {
     public:
-        struct impl;
+        using clock_type = std::chrono::steady_clock;
+        using duration = clock_type::duration;
+        using time_point = clock_type::time_point;
 
-        class work_guard {
+    public:
+        struct sleep_operation;
+
+    public:
+        explicit steady_timer(detail::queued_execution_context& pool) noexcept : pool_(&pool) {}
+
+        steady_timer(detail::queued_execution_context& pool, std::chrono::steady_clock::time_point timeout) noexcept : pool_(&pool), deadline_(timeout) {}
+
+        steady_timer(detail::queued_execution_context& pool, std::chrono::steady_clock::duration duration) noexcept : steady_timer(pool, clock_type::now() + duration) {}
+
+        steady_timer(steady_timer&& other) noexcept : pool_(other.pool_), deadline_(std::exchange(other.deadline_, {})) {}
+
+        auto operator= (steady_timer other) noexcept -> steady_timer& {
+            std::swap(other.deadline_, deadline_);
+            std::swap(other.pool_, pool_);
+            return *this;
+        }
+
+        [[nodiscard]]
+        auto async_wait() noexcept -> sleep_operation;
+
+        [[nodiscard]]
+        auto context() const noexcept -> detail::queued_execution_context& {
+            return *pool_;
+        }
+    private:
+        detail::queued_execution_context* pool_;
+        time_point deadline_;
+    };
+
+    namespace detail {
+        struct timer_compare {
+            COIO_STATIC_CALL_OP auto operator() (steady_timer::sleep_operation* lhs, steady_timer::sleep_operation* rhs) COIO_STATIC_CALL_OP_CONST noexcept -> bool ;
+        };
+
+        class queued_execution_context {
+            friend steady_timer::sleep_operation;
         public:
-            explicit work_guard(io_context& ctx) noexcept : ctx_(&ctx) {
-                ctx_->work_started();
-            }
+            class async_operation_base {
+                friend queued_execution_context;
+            public:
+                async_operation_base(queued_execution_context& pool_) noexcept : context_(pool_) {}
 
-            work_guard(const work_guard& other) noexcept : work_guard(*other.ctx_) {}
+                async_operation_base(const async_operation_base&) = delete;
 
-            ~work_guard() {
-                ctx_->work_finished();
-            }
+                auto operator= (const async_operation_base&) -> async_operation_base& = delete;
 
-            auto operator= (work_guard other) noexcept -> work_guard& {
-                std::swap(ctx_, other.ctx_);
+                auto post() -> bool {
+                    next_ = nullptr;
+                    if (context_.stop_requested()) return false;
+                    std::unique_lock lock{context_.op_queue_mtx_};
+                    if (auto old_tail = std::exchange(context_.op_queue_tail_, this)) old_tail->next_ = this;
+                    if (context_.op_queue_head_ == nullptr) context_.op_queue_head_ = this;
+                    context_.op_queue_mtx_.unlock();
+                    context_.op_queue_cv_.notify_one();
+                    return true;
+                }
+
+            protected:
+                queued_execution_context& context_;
+                std::coroutine_handle<> coro_;
+                async_operation_base* next_{};
+            };
+
+            class schedule_operation : public async_operation_base {
+                friend queued_execution_context;
+            protected:
+                using async_operation_base::async_operation_base;
+
+            public:
+                static auto await_ready() noexcept -> bool {
+                    return false;
+                }
+
+                auto await_suspend(std::coroutine_handle<> this_coro) -> bool {
+                    coro_ = this_coro;
+                    return post();
+                }
+
+                static auto await_resume() noexcept -> void {}
+            };
+
+            class work_guard {
+            public:
+                explicit work_guard(queued_execution_context& ctx) noexcept : pool_(&ctx) {
+                    pool_->work_started();
+                }
+
+                work_guard(const work_guard& other) noexcept : pool_(other.pool_) {
+                    if (pool_) pool_->work_started();
+                }
+
+                work_guard(work_guard&& other) noexcept : pool_(std::exchange(other.pool_, {})) {}
+
+                ~work_guard() {
+                    if (pool_) pool_->work_finished();
+                }
+
+                auto operator= (work_guard other) noexcept -> work_guard& {
+                    std::swap(pool_, other.pool_);
+                    return *this;
+                }
+            private:
+                queued_execution_context* pool_;
+            };
+
+        public:
+            queued_execution_context() = default;
+
+            queued_execution_context(const queued_execution_context&) = delete;
+
+            auto operator= (const queued_execution_context&) -> queued_execution_context& = delete;
+
+            [[nodiscard]]
+            auto schedule() noexcept -> schedule_operation {
                 return *this;
             }
-        private:
-            io_context* ctx_;
-        };
 
-        class schedule_operation {
-            friend io_context;
-        private:
-            schedule_operation(io_context& context) noexcept: context_(context) {}
-
-        public:
-            schedule_operation(const schedule_operation&) = delete;
-
-            auto operator= (const schedule_operation&) -> schedule_operation& = delete;
-
-            static auto await_ready() noexcept -> bool {
-                return false;
+            template<typename Fn, typename... Args> requires std::invocable<Fn, Args...> && std::movable<std::invoke_result_t<Fn, Args...>>
+            [[nodiscard]]
+            auto submit(Fn fn, Args... args) -> task<std::invoke_result_t<Fn, Args...>> {
+                co_await schedule();
+                co_return std::invoke(fn, std::move(args)...);
             }
 
-            auto await_suspend(std::coroutine_handle<> coro) noexcept -> void {
-                context_.post(coro);
+            auto poll_one() -> bool {
+                std::unique_lock lock{op_queue_mtx_};
+                if (stop_requested() or op_queue_head_ == nullptr) return false;
+                if (op_queue_head_ == op_queue_tail_) op_queue_tail_ = nullptr;
+                auto op = std::exchange(op_queue_head_, op_queue_head_->next_);
+                lock.unlock();
+                op->coro_.resume();
+                return true;
             }
 
-            static auto await_resume() noexcept -> void {}
+            auto poll() -> std::size_t {
+                std::size_t count = 0;
+                while (poll_one()) ++count;
+                return count;
+            }
+
+            auto make_timeout_timers_ready() -> void;
+
+            auto request_stop() noexcept -> bool {
+                return stop_source_.request_stop();
+            }
+
+            [[nodiscard]]
+            auto stop_requested() const noexcept -> bool {
+                return stop_source_.stop_requested();
+            }
+
+            auto work_started() noexcept ->void {
+                ++work_count_;
+            }
+
+            auto work_finished() noexcept ->void {
+                --work_count_;
+            }
+
+            [[nodiscard]]
+            auto work_count() noexcept -> std::size_t {
+                return work_count_;
+            }
+
+            [[nodiscard]]
+            auto make_work_guard() noexcept -> work_guard {
+                return work_guard{*this};
+            }
 
         private:
-            io_context& context_;
+            std::stop_source stop_source_;
+            std::mutex timer_queue_mtx_;
+            std::priority_queue<steady_timer::sleep_operation*, std::vector<steady_timer::sleep_operation*>, timer_compare> timer_queue_;
+            std::condition_variable op_queue_cv_;
+            std::mutex op_queue_mtx_;
+            async_operation_base* op_queue_head_{};
+            async_operation_base* op_queue_tail_{};
+            std::atomic<std::size_t> work_count_{0};
         };
+    }
 
+    struct steady_timer::sleep_operation : detail::queued_execution_context::async_operation_base {
+        sleep_operation(detail::queued_execution_context& pool, time_point deadline) noexcept : async_operation_base(pool), deadline_(deadline) {
+            context_.work_started();
+        }
+
+        ~sleep_operation() {
+            context_.work_finished();
+        }
+
+        auto await_ready() noexcept -> bool {
+            return deadline_ <= clock_type::now();
+        }
+
+        auto await_suspend(std::coroutine_handle<> this_coro) -> void {
+            coro_ = this_coro;
+            std::scoped_lock _{context_.timer_queue_mtx_};
+            context_.timer_queue_.push(this);
+        }
+
+        static auto await_resume() noexcept -> void {}
+
+        time_point deadline_;
+    };
+
+    inline auto steady_timer::async_wait() noexcept -> sleep_operation {
+        return {*pool_, deadline_};
+    }
+
+    inline auto detail::timer_compare::operator()(steady_timer::sleep_operation* lhs, steady_timer::sleep_operation* rhs) const noexcept -> bool {
+        return rhs->deadline_ < lhs->deadline_;
+    }
+
+    inline auto detail::queued_execution_context::make_timeout_timers_ready() -> void {
+        while (true) {
+            if (not timer_queue_mtx_.try_lock()) break;
+            std::unique_lock lock{timer_queue_mtx_, std::adopt_lock};
+            if (timer_queue_.empty()) break;
+            auto sleep_op = timer_queue_.top();
+            if (sleep_op->deadline_ <= std::chrono::steady_clock::now()) {
+                timer_queue_.pop();
+                lock.unlock();
+                sleep_op->post();
+            }
+            else break;
+        }
+    }
+
+    class io_context : public detail::queued_execution_context {
     public:
-
+        struct impl;
+    public:
         io_context();
 
         io_context(const io_context&) = delete;
@@ -96,30 +289,7 @@ namespace coio {
 
         auto operator= (const io_context&) -> io_context& = delete;
 
-        auto post(std::coroutine_handle<> coro) -> void;
-
-        auto poll() -> std::size_t;
-
         auto run() -> void;
-
-        auto request_stop() noexcept -> void;
-
-        [[nodiscard]]
-        auto stop_requested() const noexcept -> bool;
-
-        auto work_started() noexcept ->void;
-
-        auto work_finished() noexcept ->void;
-
-        [[nodiscard]]
-        auto make_work_guard() noexcept -> work_guard {
-            return work_guard{*this};
-        }
-
-        [[nodiscard]]
-        auto schedule() noexcept -> schedule_operation {
-            return *this;
-        }
 
     private:
         std::unique_ptr<impl> pimpl_;
@@ -175,7 +345,7 @@ namespace coio {
             }
 
             auto get_result() ->T& {
-                COIO_DCHECK(result_.index() > 0);
+                COIO_ASSERT(result_.index() > 0);
                 if (result_.index() == 2) std::rethrow_exception(*std::get_if<2>(&result_));
                 return *std::get_if<1>(&result_);
             }
@@ -197,7 +367,7 @@ namespace coio {
             }
 
             auto get_result() ->void {
-                COIO_DCHECK(result_.index() > 0);
+                COIO_ASSERT(result_.index() > 0);
                 if (result_.index() == 2) std::rethrow_exception(*std::get_if<2>(&result_));
             }
 

@@ -15,10 +15,10 @@
 #include <linux/io_uring.h>
 #endif
 #include <coio/core.h>
-#include <coio/timer.h>
 #include <coio/utils/utility.h>
-#include <coio/utils/concurrent_queue.h>
 #include <coio/utils/scope_exit.h>
+#include <coio/utils/signal_set.h>
+#include <coio/utils/macros.h>
 #include <coio/net/socket.h>
 #include <coio/net/detail/error_code.h>
 
@@ -113,26 +113,13 @@ namespace coio {
             return std::system_error{net::error::eof};
         }
 
-        struct timer_compare {
-            COIO_STATIC_CALL_OP auto operator() (steady_timer::awaiter* lhs, steady_timer::awaiter* rhs) COIO_STATIC_CALL_OP_CONST noexcept -> bool {
-                return rhs->deadline_ < lhs->deadline_;
-            }
-        };
-
-        struct io_context_data {
-            std::stop_source stop_;
-            std::atomic<std::size_t> work_count_{0};
-            blocking_queue<std::coroutine_handle<>> ready_coros;
-            std::mutex timer_queue_lock_;
-            std::priority_queue<steady_timer::awaiter*, std::vector<steady_timer::awaiter*>, timer_compare> timer_queue_;
-        };
     }
 
     auto net::error::gai_category_t::message(int ec) const -> std::string {
         return ::gai_strerror(ec);
     }
 
-    struct io_context::impl : io_context_data {
+    struct io_context::impl {
         static auto of(io_context& context) ->impl& {
             return *context.pimpl_;
         }
@@ -149,68 +136,61 @@ namespace coio {
 
         auto operator= (const impl&) ->impl& = delete;
 
-        auto pull() -> void {
-            ::epoll_event epoll_events_buffer[epoll_max_wait_count];
+        auto pull(::epoll_event* epoll_events_buffer) -> void {
             auto ready_count = ::epoll_wait(epoll_fd, epoll_events_buffer, epoll_max_wait_count, 0);
             throw_last_error(ready_count);
             for (int i = 0; i < ready_count; ++i) {
-                auto op_list = static_cast<net::detail::op_list*>(epoll_events_buffer[i].data.ptr);
+                auto op_state = static_cast<net::detail::op_state*>(epoll_events_buffer[i].data.ptr);
                 auto evt = epoll_events_buffer[i].events;
                 bool unregister_event = false;
                 if (evt & EPOLLIN) {
-                    ready_coros.push(op_list->in_op_waiter());
-                    unregister_event = op_list->end_one_in_op() == 0;
+                    COIO_DCHECK(op_state->in_op != nullptr);
+                    std::exchange(op_state->in_op, nullptr)->post();
+                    unregister_event = op_state->out_op == nullptr;
                 }
                 if (evt & EPOLLOUT) {
-                    ready_coros.push(op_list->out_op_waiter());
-                    unregister_event = op_list->end_one_out_op() == 0;
+                    COIO_DCHECK(op_state->out_op != nullptr);
+                    std::exchange(op_state->out_op, nullptr)->post();
+                    unregister_event = op_state->in_op == nullptr;
                 }
-                if (unregister_event) ::epoll_ctl(epoll_fd, EPOLL_CTL_DEL, op_list->handle, &epoll_events_buffer[i]);
-            }
-
-            while (true) {
-                if (not timer_queue_lock_.try_lock()) break;
-                std::unique_lock lock{timer_queue_lock_, std::adopt_lock};
-                if (timer_queue_.empty()) break;
-                auto timer_awaiter = timer_queue_.top();
-                if (timer_awaiter->deadline_ <= std::chrono::steady_clock::now()) {
-                    timer_queue_.pop();
-                    lock.unlock();
-                    if (not timer_awaiter->cancelled_.load()) ready_coros.push(timer_awaiter->coro_);
-                }
-                else break;
+                if (unregister_event) {
+                    no_errno_here(
+                        ::epoll_ctl(epoll_fd, EPOLL_CTL_DEL, op_state->handle, &epoll_events_buffer[i]),
+                        "coio::io_context::impl::push:" COIO_STRINGTIFY(__LINE__)
+                    );
+                };
             }
         }
 
-        auto push(net::detail::op_list* op_list_, net::detail::async_in_operation_base* op) ->void {
-            op_list_->add_one_in_op(op);
-            if (op_list_->in_op_head != op_list_->in_op_tail) return;
-            std::uint32_t events = EPOLLIN | EPOLLET;
+        auto push(net::detail::op_state* op_state_, net::detail::async_in_operation_base* op, std::uint32_t extra_flags = EPOLLET) ->void {
+            COIO_ASSERT(op_state_->in_op == nullptr);
+            op_state_->in_op = op;
+            std::uint32_t events = EPOLLIN | EPOLLONESHOT | extra_flags;
             int epoll_ctl_op = EPOLL_CTL_ADD;
-            if (op_list_->out_op_head) {
+            if (op_state_->out_op) {
                 events |= EPOLLOUT;
                 epoll_ctl_op = EPOLL_CTL_MOD;
             }
-            ::epoll_event event{.events = events, .data = op_list_};
+            ::epoll_event event{.events = events, .data = {.ptr = op_state_}};
             no_errno_here(
-                ::epoll_ctl(epoll_fd, epoll_ctl_op, op_list_->handle, &event),
-                "coio::io_context::impl::push > epoll_ctl"
+                ::epoll_ctl(epoll_fd, epoll_ctl_op, op_state_->handle, &event),
+                "coio::io_context::impl::push:" COIO_STRINGTIFY(__LINE__)
             );
         }
 
-        auto push(net::detail::op_list* op_list_, net::detail::async_out_operation_base* op) ->void {
-            op_list_->add_one_out_op(op);
-            if (op_list_->out_op_head != op_list_->out_op_tail) return;
-            std::uint32_t events = EPOLLOUT | EPOLLET;
+        auto push(net::detail::op_state* op_state_, net::detail::async_out_operation_base* op, std::uint32_t extra_flags = EPOLLET) ->void {
+            COIO_ASSERT(op_state_->out_op == nullptr);
+            op_state_->out_op = op;
+            std::uint32_t events = EPOLLOUT | EPOLLONESHOT | extra_flags;
             int epoll_ctl_op = EPOLL_CTL_ADD;
-            if (op_list_->in_op_head) {
+            if (op_state_->in_op) {
                 events |= EPOLLIN;
                 epoll_ctl_op = EPOLL_CTL_MOD;
             }
-            ::epoll_event event{.events = events, .data = op_list_};
+            ::epoll_event event{.events = events, .data = {.ptr = op_state_}};
             no_errno_here(
-                ::epoll_ctl(epoll_fd, epoll_ctl_op, op_list_->handle, &event),
-                "coio::io_context::impl::push > epoll_ctl"
+                ::epoll_ctl(epoll_fd, epoll_ctl_op, op_state_->handle, &event),
+                "coio::io_context::impl::push:" COIO_STRINGTIFY(__LINE__)
             );
         }
 
@@ -223,41 +203,16 @@ namespace coio {
 
     io_context::~io_context() = default;
 
-    auto io_context::post(std::coroutine_handle<> coro) -> void {
-        pimpl_->ready_coros.push(coro);
-    }
-
-    auto io_context::poll() -> std::size_t {
-        auto to_be_resumed = pimpl_->ready_coros.pop_all();
-        for (auto coro : to_be_resumed) coro.resume();
-        return to_be_resumed.size();
-    }
-
     auto io_context::run() -> void {
-        while (not pimpl_->stop_.stop_requested()) {
-            pimpl_->pull();
-            while (auto coro = pimpl_->ready_coros.try_pop_value()) {
-                coro->resume();
-            }
-            if (pimpl_->work_count_ == 0) break;
+        ::epoll_event epoll_events_buffer[impl::epoll_max_wait_count];
+        while (not stop_requested()) {
+            make_timeout_timers_ready();
+            pimpl_->pull(epoll_events_buffer);
+            poll();
+            if (work_count() == 0) break;
         }
     }
 
-    auto io_context::request_stop() noexcept -> void {
-        void(pimpl_->stop_.request_stop());
-    }
-
-    auto io_context::stop_requested() const noexcept -> bool {
-        return pimpl_->stop_.stop_requested();
-    }
-
-    auto io_context::work_started() noexcept -> void {
-        ++pimpl_->work_count_;
-    }
-
-    auto io_context::work_finished() noexcept -> void {
-        --pimpl_->work_count_;
-    }
 }
 
 namespace coio::net {
@@ -303,13 +258,13 @@ namespace coio::net {
         }
 
         auto async_in_operation_base::await_suspend(std::coroutine_handle<> this_coro) -> void {
-            waiter_ = this_coro;
-            io_context::impl::of(context_).push(op_list_, this);
+            coro_ = this_coro;
+            io_context::impl::of(context()).push(op_state_, this);
         }
 
         auto async_out_operation_base::await_suspend(std::coroutine_handle<> this_coro) -> void {
-            waiter_ = this_coro;
-            io_context::impl::of(context_).push(op_list_, this);
+            coro_ = this_coro;
+            io_context::impl::of(context()).push(op_state_, this);
         }
 
     }
@@ -383,7 +338,7 @@ namespace coio::net {
     }
 
     auto async_receive_operation::await_ready() noexcept -> bool {
-        ::ssize_t n = ::recv(op_list_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
+        ::ssize_t n = ::recv(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
         if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(make_eof_error());
         else if (n == -1) {
             exception_ = make_system_error_from_nonblock_errno();
@@ -396,7 +351,7 @@ namespace coio::net {
     auto async_receive_operation::await_resume() -> std::size_t {
         if (exception_) std::rethrow_exception(exception_);
         if (transferred_ > 0) return transferred_;
-        ::ssize_t n = ::recv(op_list_->handle, buffer_.data(), buffer_.size(), 0);
+        ::ssize_t n = ::recv(op_state_->handle, buffer_.data(), buffer_.size(), 0);
         if (n == 0 and zero_as_eof_) throw make_eof_error();
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
@@ -408,7 +363,7 @@ namespace coio::net {
 
 
     auto async_send_operation::await_ready() noexcept -> bool {
-        ::ssize_t n = ::send(op_list_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
+        ::ssize_t n = ::send(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
         if (n == -1) {
             exception_ = make_system_error_from_nonblock_errno();
             if (not exception_) return false;
@@ -420,7 +375,7 @@ namespace coio::net {
     auto async_send_operation::await_resume() -> std::size_t {
         if (exception_) std::rethrow_exception(exception_);
         if (transferred_ > 0) return transferred_;
-        ::ssize_t n = ::send(op_list_->handle, buffer_.data(), buffer_.size(), 0);
+        ::ssize_t n = ::send(op_state_->handle, buffer_.data(), buffer_.size(), 0);
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
             throw std::system_error(errno, std::system_category());
@@ -433,7 +388,7 @@ namespace coio::net {
     auto async_receive_from_operation::await_ready() noexcept -> bool {
         auto sa = endpoint_to_sockaddr_in(src_);
         auto [psa, len] = to_sockaddr(sa);
-        ::ssize_t n = ::recvfrom(op_list_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT, psa, &len);
+        ::ssize_t n = ::recvfrom(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT, psa, &len);
         if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(make_eof_error());
         else if (n == -1) {
             exception_ = make_system_error_from_nonblock_errno();
@@ -448,7 +403,7 @@ namespace coio::net {
         if (transferred_ > 0) return transferred_;
         auto sa = endpoint_to_sockaddr_in(src_);
         auto [psa, len] = to_sockaddr(sa);
-        ::ssize_t n = ::recvfrom(op_list_->handle, buffer_.data(), buffer_.size(), 0, psa, &len);
+        ::ssize_t n = ::recvfrom(op_state_->handle, buffer_.data(), buffer_.size(), 0, psa, &len);
         if (n == 0 and zero_as_eof_) throw make_eof_error();
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
@@ -462,7 +417,7 @@ namespace coio::net {
     auto async_send_to_operation::await_ready() noexcept -> bool {
         auto sa = endpoint_to_sockaddr_in(dest_);
         auto [psa, len] = to_sockaddr(sa);
-        ::ssize_t n = ::sendto(op_list_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT, psa, len);
+        ::ssize_t n = ::sendto(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT, psa, len);
         if (n == -1) {
             exception_ = make_system_error_from_nonblock_errno();
             if (not exception_) return false;
@@ -476,7 +431,7 @@ namespace coio::net {
         if (transferred_ > 0) return transferred_;
         auto sa = endpoint_to_sockaddr_in(dest_);
         auto [psa, len] = to_sockaddr(sa);
-        ::ssize_t n = ::sendto(op_list_->handle, buffer_.data(), buffer_.size(), 0, psa, len);
+        ::ssize_t n = ::sendto(op_state_->handle, buffer_.data(), buffer_.size(), 0, psa, len);
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
             throw std::system_error(errno, std::system_category());
@@ -485,10 +440,15 @@ namespace coio::net {
         return transferred_;
     }
 
+    auto async_accept_operation::await_suspend(std::coroutine_handle<> this_coro) -> void {
+        coro_ = this_coro;
+        io_context::impl::of(context()).push(op_state_, this, 0);
+    }
+
     auto async_accept_operation::await_resume() -> void {
         if (exception_) std::rethrow_exception(exception_);
         if (accepted_ == -1) {
-            accepted_ = ::accept4(op_list_->handle, nullptr, nullptr, 0);
+            accepted_ = ::accept4(op_state_->handle, nullptr, nullptr, 0);
             if (accepted_ == -1) {
                 COIO_ASSERT(not is_blocking_errno(errno));
                 throw std::system_error(errno, std::system_category());
@@ -500,7 +460,7 @@ namespace coio::net {
     auto async_connect_operation::await_ready() noexcept -> bool {
         auto sa = endpoint_to_sockaddr_in(dest_);
         auto [psa, len] = to_sockaddr(sa);
-        if (::connect(op_list_->handle, psa, len) == -1) {
+        if (::connect(op_state_->handle, psa, len) == -1) {
             const auto er = errno;
             if (er == EINPROGRESS) return false;
             exception_ = std::make_exception_ptr(std::system_error(er, std::system_category()));
@@ -514,7 +474,7 @@ namespace coio::net {
         if (connected_) return;
         auto sa = endpoint_to_sockaddr_in(dest_);
         auto [psa, len] = to_sockaddr(sa);
-        throw_last_error(::connect(op_list_->handle, psa, len), "async_connect");
+        throw_last_error(::connect(op_state_->handle, psa, len), "async_connect");
     }
 
     namespace detail {
@@ -546,13 +506,13 @@ namespace coio::net {
 
         auto socket_base::reset_(native_handle_type new_handle) noexcept -> void {
             ::close(std::exchange(handle_, new_handle));
-            if (op_list_) op_list_->reset(new_handle);
-            else op_list_ = new op_list{new_handle};
+            if (op_state_) op_state_->reset(new_handle);
+            else op_state_ = new op_state{new_handle};
         }
 
         auto socket_base::close() noexcept -> void {
             ::close(std::exchange(handle_, invalid_socket_handle_value));
-            delete std::exchange(op_list_, nullptr);
+            delete std::exchange(op_state_, nullptr);
         }
 
         auto socket_base::shutdown(shutdown_type how) -> void {
@@ -668,11 +628,3 @@ namespace coio::net {
     }
 }
 
-namespace coio {
-    auto steady_timer::awaiter::await_suspend(std::coroutine_handle<> this_coro) -> void {
-        coro_ = this_coro;
-        auto& context_impl = io_context::impl::of(context_);
-        std::scoped_lock _{context_impl.timer_queue_lock_};
-        context_impl.timer_queue_.push(this);
-    }
-}

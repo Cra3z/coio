@@ -22,10 +22,10 @@ auto println(std::format_string<Args...> fmt, Args&&... args) ->void {
     ::println(std::cout, fmt, std::forward<Args>(args)...);
 }
 
-auto println(std::ostream& out) -> void {
+inline auto println(std::ostream& out) -> void {
     out << std::endl;
 }
 
-auto println() -> void {
+inline auto println() -> void {
     ::println(std::cout);
 }
