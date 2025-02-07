@@ -28,6 +28,7 @@ implemented facilities:
     * resolver
 * containers:
     * inplace_vector
+    * fixed_string
     * blocking_queue
     * ring_buffer
 * async-io and schedulers:
@@ -36,9 +37,12 @@ implemented facilities:
     * noop_scheduler
     * async_write
     * async_read
+    * async_mutex
 * others:
-    * when_wall
+    * when_all
     * sync_wait
+    * async_scope
+    * steady_timer
 
 note that some network and async-io facilities are currently only implemented using epoll on linux.
 

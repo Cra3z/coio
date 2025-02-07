@@ -28,6 +28,7 @@ coio 提供了一些*C++20 coroutine*的基本库设施。
   * resolver
 * 容器:
   * inplace_vector
+  * fixed_string
   * blocking_queue
   * ring_buffer
 * 异步io与调度器:
@@ -36,9 +37,12 @@ coio 提供了一些*C++20 coroutine*的基本库设施。
   * noop_scheduler
   * async_write
   * async_read
+  * async_mutex
 * 其它:
-  * when_wall
+  * when_all
   * sync_wait
+  * async_scope
+  * steady_timer
 
 需要注意的是network和async-io部分的设施目前仅在linux上使用epoll实现。
 
