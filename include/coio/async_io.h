@@ -1,7 +1,9 @@
 #pragma once
+#include <algorithm>
 #include <span>
 #include <stop_token>
 #include "core.h"
+#include "error_code.h"
 
 namespace coio {
 

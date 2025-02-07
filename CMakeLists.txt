@@ -8,6 +8,8 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/permissive->")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
 
+option(COIO_EXAMPLES "whether to build examples" OFF)
+
 add_library(
     ${PROJECT_NAME}
     STATIC
@@ -52,6 +54,6 @@ install(
     DESTINATION ${PROJECT_NAME}/lib/cmake/${PROJECT_NAME}
 )
 
-if (DEFINED COIO_EXAMPLES AND COIO_EXAMPLES)
+if (COIO_EXAMPLES)
     add_subdirectory(examples)
 endif()

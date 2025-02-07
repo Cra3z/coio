@@ -15,13 +15,11 @@
 #include <linux/io_uring.h>
 #endif
 #include <coio/core.h>
+#include <coio/error_code.h>
 #include <coio/utils/utility.h>
 #include <coio/utils/scope_exit.h>
-#include <coio/utils/signal_set.h>
 #include <coio/utils/macros.h>
 #include <coio/net/socket.h>
-#include <coio/net/detail/error_code.h>
-
 
 namespace coio {
 
@@ -110,12 +108,12 @@ namespace coio {
         }
 
         auto make_eof_error() -> std::system_error {
-            return std::system_error{net::error::eof};
+            return std::system_error{error::eof};
         }
 
     }
 
-    auto net::error::gai_category_t::message(int ec) const -> std::string {
+    auto error::gai_category_t::message(int ec) const -> std::string {
         return ::gai_strerror(ec);
     }
 
@@ -363,7 +361,7 @@ namespace coio::net {
 
 
     auto async_send_operation::await_ready() noexcept -> bool {
-        ::ssize_t n = ::send(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
+        ::ssize_t n = ::send(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
         if (n == -1) {
             exception_ = make_system_error_from_nonblock_errno();
             if (not exception_) return false;
@@ -375,7 +373,7 @@ namespace coio::net {
     auto async_send_operation::await_resume() -> std::size_t {
         if (exception_) std::rethrow_exception(exception_);
         if (transferred_ > 0) return transferred_;
-        ::ssize_t n = ::send(op_state_->handle, buffer_.data(), buffer_.size(), 0);
+        ::ssize_t n = ::send(op_state_->handle, buffer_.data(), buffer_.size(), MSG_NOSIGNAL);
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
             throw std::system_error(errno, std::system_category());
@@ -417,7 +415,7 @@ namespace coio::net {
     auto async_send_to_operation::await_ready() noexcept -> bool {
         auto sa = endpoint_to_sockaddr_in(dest_);
         auto [psa, len] = to_sockaddr(sa);
-        ::ssize_t n = ::sendto(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT, psa, len);
+        ::ssize_t n = ::sendto(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
         if (n == -1) {
             exception_ = make_system_error_from_nonblock_errno();
             if (not exception_) return false;
@@ -431,7 +429,7 @@ namespace coio::net {
         if (transferred_ > 0) return transferred_;
         auto sa = endpoint_to_sockaddr_in(dest_);
         auto [psa, len] = to_sockaddr(sa);
-        ::ssize_t n = ::sendto(op_state_->handle, buffer_.data(), buffer_.size(), 0, psa, len);
+        ::ssize_t n = ::sendto(op_state_->handle, buffer_.data(), buffer_.size(), MSG_NOSIGNAL, psa, len);
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
             throw std::system_error(errno, std::system_category());
@@ -627,4 +625,3 @@ namespace coio::net {
         return async_connect_(addr);
     }
 }
-

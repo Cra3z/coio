@@ -1,12 +1,14 @@
 #pragma once
 #include <system_error>
-#include "../../utils/utility.h"
+#include "utils/utility.h"
 
-namespace coio::net::error {
+namespace coio::error {
 
     enum misc : int {
         eof = 1,
-        already_open
+        already_open,
+        not_found,
+        overflow
     };
 
     struct misc_category_t : std::error_category {
@@ -20,6 +22,10 @@ namespace coio::net::error {
                 return "end of file";
             case already_open:
                 return "already open";
+            case not_found:
+                return "not found";
+            case overflow:
+                return "overflow";
             default: unreachable();
             }
         }
@@ -53,4 +59,4 @@ namespace coio::net::error {
 }
 
 template<>
-struct std::is_error_code_enum<coio::net::error::misc> : std::true_type {};
+struct std::is_error_code_enum<coio::error::misc> : std::true_type {};

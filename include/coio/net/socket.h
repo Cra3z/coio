@@ -9,7 +9,7 @@
 #include "../async_io.h"
 #include "../generator.h"
 #include "ip.h"
-#include "detail/error_code.h"
+#include "../error_code.h"
 
 namespace coio::net {
 
