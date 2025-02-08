@@ -31,8 +31,7 @@ auto main() -> int {
             ::println("server \"{}\" start...", acceptor.local_endpoint());
             try {
                 while (true) {
-                    coio::net::tcp_socket socket{context};
-                    co_await acceptor.async_accept(socket);
+                    coio::net::tcp_socket socket = co_await acceptor.async_accept();
                     scope.spawn(handle_connection(std::move(socket)));
                 }
             }

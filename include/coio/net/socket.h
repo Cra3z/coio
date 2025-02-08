@@ -260,8 +260,7 @@ namespace coio::net {
 
     class async_accept_operation : public detail::async_in_operation_base {
     public:
-        async_accept_operation(io_context& context, detail::op_state* op_state, tcp_socket& out) noexcept :
-            async_in_operation_base(context, op_state), out_(out) {}
+        using async_in_operation_base::async_in_operation_base;
 
         static auto await_ready() noexcept -> bool {
             return false;
@@ -269,12 +268,16 @@ namespace coio::net {
 
         auto await_suspend(std::coroutine_handle<> this_coro) -> void;
 
-        auto await_resume() -> void;
+    protected:
+        auto output_accepted_(tcp_socket& peer) -> void;
 
     private:
-        tcp_socket& out_;
         detail::socket_native_handle_type accepted_ = detail::invalid_socket_handle_value;
     };
+
+    class async_accept_operation_1;
+
+    class async_accept_operation_2;
 
     class async_connect_operation : public detail::async_out_operation_base {
     public:
@@ -472,29 +475,71 @@ namespace coio::net {
             open_(protocol.family(), protocol.type(), protocol.protocol_id());
         }
 
+        /**
+         * \brief place the acceptor into the state where it will listen for new connections.
+         * \param backlog the maximum length of the queue of pending connections.
+         * \throw std::system_error on failure.
+         */
         auto listen(std::size_t backlog = max_backlog()) -> void;
 
         /**
-         * \brief start an asynchronous accept.
-         * \param out the socket into which the new connection will be accepted.
-         * \return the awaiter - `async_accept_operation`
+         * \brief accept a new connection.
+         * \param peer the socket into which the new connection will be accepted.
+         * \throw std::system_error on failure.
+         */
+        auto accept(tcp_socket& peer) -> void;
+
+        /**
+         * \brief accept a new connection.
+         * \param context_of_peer the io_context object to be used for the newly accepted socket.
+         * \return a socket object representing the newly accepted connection.
+         * \throw std::system_error on failure.
          */
         [[nodiscard]]
-        auto async_accept(tcp_socket& out) noexcept -> async_accept_operation {
-            return {*context_, op_state_, out};
-        }
+        auto accept(io_context& context_of_peer) -> tcp_socket;
+
+        /**
+         * \brief accept a new connection.
+         * \return a socket object representing the newly accepted connection.
+         * \throw std::system_error on failure.
+         */
+        [[nodiscard]]
+        auto accept() -> tcp_socket;
 
         /**
          * \brief start an asynchronous accept.
-         * \param out the socket into which the new connection will be accepted.
-         * \param token a cancellation token.
-         * \return the awaiter - `async_accept_operation`
+         * \param peer the socket into which the new connection will be accepted.
+         * \return the awaiter - `async_accept_operation_1`.
+         * \note
+         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.\n
          */
         [[nodiscard]]
-        auto async_accept(tcp_socket& out, std::stop_token token) -> async_accept_operation {
-            if (token.stop_requested()) throw operation_stopped{};
-            return async_accept(out);
-        }
+        auto async_accept(tcp_socket& peer) noexcept -> async_accept_operation_1;
+
+        /**
+         * \brief start an asynchronous accept.
+         * \param context_of_peer the io_context object to be used for the newly accepted socket.
+         * \return the awaiter - `async_accept_operation_2`.
+         * \note
+         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.\n
+         */
+        [[nodiscard]]
+        auto async_accept(io_context& context_of_peer) noexcept -> async_accept_operation_2;
+
+        /**
+         * \brief start an asynchronous accept.
+         * \return the awaiter - `async_accept_operation_2`.
+         * \note
+         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.\n
+         */
+        [[nodiscard]]
+        auto async_accept() noexcept -> async_accept_operation_2;
     };
 
     class tcp_socket : detail::socket_base {
@@ -634,6 +679,53 @@ namespace coio::net {
         }
     };
 
+    class async_accept_operation_1 : public async_accept_operation {
+    public:
+        async_accept_operation_1(io_context& context, detail::op_state* op_state, tcp_socket& out) noexcept :
+           async_accept_operation(context, op_state), peer_(out) {}
+
+        auto await_resume() -> void {
+            output_accepted_(peer_);
+        }
+    private:
+        tcp_socket& peer_;
+    };
+
+    class async_accept_operation_2 : public async_accept_operation {
+    public:
+        async_accept_operation_2(io_context& context, detail::op_state* op_state, io_context& context_of_peer) noexcept :
+            async_accept_operation(context, op_state), peer_(context_of_peer) {}
+
+        [[nodiscard]]
+        auto await_resume() -> tcp_socket {
+            output_accepted_(peer_);
+            return std::move(peer_);
+        }
+    private:
+        tcp_socket peer_;
+    };
+
+    inline auto tcp_acceptor::accept(io_context& context_of_peer) -> tcp_socket {
+        tcp_socket out{context_of_peer};
+        accept(out);
+        return out;
+    }
+
+    inline auto tcp_acceptor::accept() -> tcp_socket {
+        return accept(*context_);
+    }
+
+    inline auto tcp_acceptor::async_accept(tcp_socket& peer) noexcept -> async_accept_operation_1 {
+        return {*context_, op_state_, peer};
+    }
+
+    inline auto tcp_acceptor::async_accept(io_context& context_of_peer) noexcept -> async_accept_operation_2 {
+        return {*context_, op_state_, context_of_peer};
+    }
+
+    inline auto tcp_acceptor::async_accept() noexcept -> async_accept_operation_2 {
+        return async_accept(*context_);
+    }
 
     class udp_socket : detail::socket_base {
     public:

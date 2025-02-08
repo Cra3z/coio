@@ -31,7 +31,7 @@ namespace coio {
             // assume: msg is null or null-terminated.
             if (value != -1) return;
             if (msg == nullptr) throw std::system_error(errno, std::system_category());
-            throw std::system_error(errno, std::system_category(), msg); // NOLINT: `msg.data()` is null-terminated.
+            throw std::system_error(errno, std::system_category(), msg);
         }
 
         auto no_errno_here(::ssize_t value, const char* msg = nullptr) ->void {
@@ -50,10 +50,14 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto make_system_error_from_nonblock_errno() noexcept -> std::exception_ptr {
+        auto make_system_error_from_nonblock_errno(const char* msg = nullptr) noexcept -> std::exception_ptr {
             int errno_ = errno;
             if (is_blocking_errno(errno_)) return {};
-            return std::make_exception_ptr(std::system_error(errno_, std::system_category()));
+            return std::make_exception_ptr(
+                msg ?
+                std::system_error(errno_, std::system_category(), msg) :
+                std::system_error(errno_, std::system_category())
+            );
         }
 
         auto endpoint_to_sockaddr_in(const net::endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6> {
@@ -107,8 +111,8 @@ namespace coio {
             }, sa);
         }
 
-        auto make_eof_error() -> std::system_error {
-            return std::system_error{error::eof};
+        auto make_eof_error(const char* msg = nullptr) -> std::system_error {
+            return msg ? std::system_error{error::eof, msg} : std::system_error{error::eof};
         }
 
     }
@@ -218,14 +222,14 @@ namespace coio::net {
     namespace detail {
         auto sync_recv(socket_native_handle_type handle, std::span<std::byte> buffer, bool zero_as_eof) -> std::size_t {
             ::ssize_t n = ::recv(handle, buffer.data(), buffer.size(), 0);
-            if (n == 0 and zero_as_eof) throw make_eof_error();
-            throw_last_error(n, "sync_recv");
+            if (n == 0 and zero_as_eof) throw make_eof_error("receive");
+            throw_last_error(n, "receive");
             return n;
         }
 
         auto sync_send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
             ::ssize_t n = ::send(handle, buffer.data(), buffer.size(), 0);
-            throw_last_error(n, "sync_send");
+            throw_last_error(n, "send");
             return n;
         }
 
@@ -238,8 +242,8 @@ namespace coio::net {
             auto sa = endpoint_to_sockaddr_in(src);
             auto [psa, len] = to_sockaddr(sa);
             ::ssize_t n = ::recvfrom(handle, buffer.data(), buffer.size(), 0, psa, &len);
-            if (n == 0 and zero_as_eof) throw make_eof_error();
-            throw_last_error(n, "sync_recv_from");
+            if (n == 0 and zero_as_eof) throw make_eof_error("receive_from");
+            throw_last_error(n, "receive_from");
             return n;
         }
 
@@ -251,7 +255,7 @@ namespace coio::net {
             auto sa = endpoint_to_sockaddr_in(dest);
             auto [psa, len] = to_sockaddr(sa);
             ::ssize_t n = ::sendto(handle, buffer.data(), buffer.size(), 0, psa, len);
-            throw_last_error(n, "sync_send_to");
+            throw_last_error(n, "send_to");
             return n;
         }
 
@@ -337,9 +341,9 @@ namespace coio::net {
 
     auto async_receive_operation::await_ready() noexcept -> bool {
         ::ssize_t n = ::recv(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
-        if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(make_eof_error());
+        if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(make_eof_error("async_receive"));
         else if (n == -1) {
-            exception_ = make_system_error_from_nonblock_errno();
+            exception_ = make_system_error_from_nonblock_errno("async_receive");
             if (not exception_) return false;
         }
         transferred_ = n;
@@ -350,10 +354,10 @@ namespace coio::net {
         if (exception_) std::rethrow_exception(exception_);
         if (transferred_ > 0) return transferred_;
         ::ssize_t n = ::recv(op_state_->handle, buffer_.data(), buffer_.size(), 0);
-        if (n == 0 and zero_as_eof_) throw make_eof_error();
+        if (n == 0 and zero_as_eof_) throw make_eof_error("async_receive");
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
-            throw std::system_error(errno, std::system_category());
+            throw std::system_error(errno, std::system_category(), "async_receive");
         }
         transferred_ = n;
         return transferred_;
@@ -363,7 +367,7 @@ namespace coio::net {
     auto async_send_operation::await_ready() noexcept -> bool {
         ::ssize_t n = ::send(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
         if (n == -1) {
-            exception_ = make_system_error_from_nonblock_errno();
+            exception_ = make_system_error_from_nonblock_errno("async_send");
             if (not exception_) return false;
         }
         transferred_ = n;
@@ -376,7 +380,7 @@ namespace coio::net {
         ::ssize_t n = ::send(op_state_->handle, buffer_.data(), buffer_.size(), MSG_NOSIGNAL);
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
-            throw std::system_error(errno, std::system_category());
+            throw std::system_error(errno, std::system_category(), "async_send");
         }
         transferred_ = n;
         return transferred_;
@@ -387,9 +391,9 @@ namespace coio::net {
         auto sa = endpoint_to_sockaddr_in(src_);
         auto [psa, len] = to_sockaddr(sa);
         ::ssize_t n = ::recvfrom(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT, psa, &len);
-        if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(make_eof_error());
+        if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(make_eof_error("async_receive_from"));
         else if (n == -1) {
-            exception_ = make_system_error_from_nonblock_errno();
+            exception_ = make_system_error_from_nonblock_errno("async_receive_from");
             if (not exception_) return false;
         }
         transferred_ = n;
@@ -402,10 +406,10 @@ namespace coio::net {
         auto sa = endpoint_to_sockaddr_in(src_);
         auto [psa, len] = to_sockaddr(sa);
         ::ssize_t n = ::recvfrom(op_state_->handle, buffer_.data(), buffer_.size(), 0, psa, &len);
-        if (n == 0 and zero_as_eof_) throw make_eof_error();
+        if (n == 0 and zero_as_eof_) throw make_eof_error("async_receive_from");
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
-            throw std::system_error(errno, std::system_category());
+            throw std::system_error(errno, std::system_category(), "async_receive_from");
         }
         transferred_ = n;
         return transferred_;
@@ -417,7 +421,7 @@ namespace coio::net {
         auto [psa, len] = to_sockaddr(sa);
         ::ssize_t n = ::sendto(op_state_->handle, buffer_.data(), buffer_.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
         if (n == -1) {
-            exception_ = make_system_error_from_nonblock_errno();
+            exception_ = make_system_error_from_nonblock_errno("async_send_to");
             if (not exception_) return false;
         }
         transferred_ = n;
@@ -432,7 +436,7 @@ namespace coio::net {
         ::ssize_t n = ::sendto(op_state_->handle, buffer_.data(), buffer_.size(), MSG_NOSIGNAL, psa, len);
         if (n == -1) {
             COIO_ASSERT(not is_blocking_errno(errno));
-            throw std::system_error(errno, std::system_category());
+            throw std::system_error(errno, std::system_category(), "async_send_to");
         }
         transferred_ = n;
         return transferred_;
@@ -443,16 +447,16 @@ namespace coio::net {
         io_context::impl::of(context()).push(op_state_, this, 0);
     }
 
-    auto async_accept_operation::await_resume() -> void {
+    auto async_accept_operation::output_accepted_(tcp_socket& peer) -> void {
         if (exception_) std::rethrow_exception(exception_);
         if (accepted_ == -1) {
             accepted_ = ::accept4(op_state_->handle, nullptr, nullptr, 0);
             if (accepted_ == -1) {
                 COIO_ASSERT(not is_blocking_errno(errno));
-                throw std::system_error(errno, std::system_category());
+                throw std::system_error(errno, std::system_category(), "async_accept");
             }
         }
-        out_.reset_(accepted_);
+        peer.reset_(accepted_);
     }
 
     auto async_connect_operation::await_ready() noexcept -> bool {
@@ -461,7 +465,7 @@ namespace coio::net {
         if (::connect(op_state_->handle, psa, len) == -1) {
             const auto er = errno;
             if (er == EINPROGRESS) return false;
-            exception_ = std::make_exception_ptr(std::system_error(er, std::system_category()));
+            exception_ = std::make_exception_ptr(std::system_error(er, std::system_category(), "async_connect"));
         }
         else connected_ = true;
         return true;
@@ -599,6 +603,12 @@ namespace coio::net {
 
     auto tcp_acceptor::listen(std::size_t backlog) -> void {
         throw_last_error(::listen(handle_, int(backlog)));
+    }
+
+    auto tcp_acceptor::accept(tcp_socket& out) -> void {
+        auto accepted = ::accept4(handle_, nullptr, nullptr, 0);
+        throw_last_error(accepted, "accept");
+        out.reset_(accepted);
     }
 
     auto tcp_acceptor::max_backlog() noexcept -> std::size_t {
