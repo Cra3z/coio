@@ -111,7 +111,7 @@ namespace coio {
         static constexpr std::size_t find = detail::type_list_find_helper<0, T, type_list>::value;
 
         template<typename T>
-        static constexpr bool containes = find<T> != npos;
+        static constexpr bool contains = find<T> != npos;
 
         template<std::size_t I>
         using at = typename detail::type_list_at_helper<I, Types...>::type;
