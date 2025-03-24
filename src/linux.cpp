@@ -540,11 +540,18 @@ namespace coio::net {
             throw_last_error(::setsockopt(handle_, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int)), "reuse_address");
         }
 
-        auto socket_base::set_non_blocking() -> void {
+        auto socket_base::set_non_blocking(bool mode) -> void {
             COIO_ASSERT(this->is_open());
             int old_flag = ::fcntl(handle_, F_GETFL);
             throw_last_error(old_flag, "set_non_blocking");
-            throw_last_error(::fcntl(handle_, F_SETFL, old_flag | O_NONBLOCK), "set_non_blocking");
+            int new_flag = mode ? (old_flag | O_NONBLOCK) : (old_flag & ~O_NONBLOCK);
+            throw_last_error(::fcntl(handle_, F_SETFL, new_flag), "set_non_blocking");
+        }
+
+        auto socket_base::is_non_blocking() const noexcept -> bool {
+            int flag = ::fcntl(handle_, F_GETFL);
+            no_errno_here(flag, "unexcepted error in `coio::net::socket_base::is_non_blocking`");
+            return flag & O_NONBLOCK;
         }
 
         auto socket_base::bind(const endpoint& addr) -> void {

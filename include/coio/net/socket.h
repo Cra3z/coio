@@ -405,14 +405,27 @@ namespace coio::net {
             auto reuse_address() -> void;
 
             /**
-             * \brief sets the non-blocking mode of the socket.
+             * \brief set the non-blocking mode of the socket.
              * \throw std::system_error on failure.
-             * \note the socket's synchronous operations will throw \n
-             * `std::system_error` with `operation_would_block` or
-             * `resource_unavailable_try_again`
-             *  if they are unable to perform the requested operation immediately.
+             * \note 1) the socket's synchronous operations will throw
+             * `std::system_error` with `std::errc::operation_would_block` or
+             * `std::errc::resource_unavailable_try_again`
+             *  if they are unable to perform the requested operation immediately.\n
+             * 2) The non-blocking mode has no effect on the behaviour of asynchronous operations.
+            *  Asynchronous operations will never fail with the error `std::errc::operation_would_block` or
+             * `std::errc::resource_unavailable_try_again` \n
+             * \sa is_non_blocking
              */
-            auto set_non_blocking() -> void;
+            auto set_non_blocking(bool mode) -> void;
+
+            /**
+             * \brief get the non-blocking mode of the socket.
+             * \return true if the socket's synchronous operations will fail with `std::errc::operation_would_block` or `std::errc::resource_unavailable_try_again` if they are unable to perform the requested operation immediately. If false, synchronous operations will block until complete.
+             * \pre `is_open()` is true
+             * \sa set_non_blocking
+             */
+            [[nodiscard]]
+            auto is_non_blocking() const noexcept -> bool;
 
             /**
              * \brief bind the socket to the given local endpoint.
@@ -459,6 +472,7 @@ namespace coio::net {
         using socket_base::close;
         using socket_base::reuse_address;
         using socket_base::set_non_blocking;
+        using socket_base::is_non_blocking;
         using socket_base::bind;
 
         /**
@@ -564,6 +578,7 @@ namespace coio::net {
         using socket_base::shutdown;
         using socket_base::reuse_address;
         using socket_base::set_non_blocking;
+        using socket_base::is_non_blocking;
         using socket_base::bind;
 
         /**
@@ -746,6 +761,7 @@ namespace coio::net {
         using socket_base::shutdown;
         using socket_base::reuse_address;
         using socket_base::set_non_blocking;
+        using socket_base::is_non_blocking;
         using socket_base::bind;
 
         /**
