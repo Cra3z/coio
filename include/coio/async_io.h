@@ -2,8 +2,8 @@
 #include <algorithm>
 #include <span>
 #include <stop_token>
-#include "core.h"
-#include "error_code.h"
+#include "task.h"
+#include "error.h"
 
 namespace coio {
 
@@ -34,6 +34,17 @@ namespace coio {
 
     template<typename T>
     concept async_readable_and_writable_file = async_readable_file<T> and async_writable_file<T>;
+
+    template<typename T>
+    concept dynamic_buffer = std::move_constructible<T> and requires (T t, const T ct, std::size_t n) {
+        { ct.size() } -> std::integral;
+        { ct.capacity() } -> std::integral;
+        { ct.max_size() } -> std::integral;
+        { ct.data() } -> std::convertible_to<std::span<const std::byte>>;
+        { t.prepare(n) } -> std::convertible_to<std::span<std::byte>>;
+        t.commit(n);
+        t.consume(n);
+    };
 
     namespace detail {
         struct read_fn {
@@ -71,6 +82,18 @@ namespace coio {
                 while (remain > 0);
                 co_return total;
             }
+
+            template<valid_coroutine_alloctor_ Alloc>
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc&, async_readable_file auto&& file, std::span<std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
+                const std::size_t total = buffer.size();
+                std::size_t remain = total;
+                do {
+                    remain -= co_await file.async_read_some(buffer.subspan(total - remain, remain));
+                }
+                while (remain > 0);
+                co_return total;
+            }
         };
 
         struct async_write_fn {
@@ -84,14 +107,20 @@ namespace coio {
                 while (remain > 0);
                 co_return total;
             }
+
+            template<valid_coroutine_alloctor_ Alloc>
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc&, async_writable_file auto&& file, std::span<const std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
+                const std::size_t total = buffer.size();
+                std::size_t remain = total;
+                do {
+                    remain -= co_await file.async_write_some(buffer.subspan(total - remain, remain));
+                }
+                while (remain > 0);
+                co_return total;
+            }
         };
     }
-
-    struct operation_stopped : std::exception {
-        auto what() const noexcept -> const char* override {
-            return "operation stopped";
-        }
-    };
 
     inline constexpr detail::read_fn        read{};
     inline constexpr detail::write_fn       write{};

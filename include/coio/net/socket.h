@@ -1,298 +1,23 @@
 #pragma once
 #include <span>
-#include <map>
-#if COIO_OS_WINSOWS
-#include <BaseTsd.h>
-#endif
+#include "base.h"
+#include "async_operation.h"
 
-#include "../core.h"
-#include "../async_io.h"
-#include "../generator.h"
-#include "ip.h"
-#include "../error_code.h"
-
-namespace coio::net {
-
-    class tcp {
-    private:
-        explicit tcp(int family) noexcept : family_(family) {}
-
-    public:
-
-        /**
-         * \brief construct to represent the IPv4 TCP protocol.
-         */
-        [[nodiscard]]
-        static auto v4() noexcept -> tcp;
-
-        /**
-         * \brief construct to represent the IPv6 TCP protocol.
-         */
-        [[nodiscard]]
-        static auto v6() noexcept -> tcp;
-
-        /**
-         * \brief get the identifier for the protocol family.
-         */
-        [[nodiscard]]
-        auto family() const noexcept -> int {
-            return family_;
-        }
-
-        /**
-         * \brief get the identifier for the type of the protocol.
-         */
-        [[nodiscard]]
-        static auto type() noexcept -> int;
-
-        /**
-         * \brief get the identifier for the protocol.
-         */
-        [[nodiscard]]
-        static auto protocol_id() noexcept -> int;
-
-    private:
-        int family_;
-    };
-
-    class udp {
-    private:
-        explicit udp(int family) noexcept : family_(family) {}
-
-    public:
-
-        /**
-         * \brief construct to represent the IPv4 UDP protocol.
-         */
-        [[nodiscard]]
-        static auto v4() noexcept -> udp;
-
-        /**
-         * \brief construct to represent the IPv6 UDP protocol.
-         */
-        [[nodiscard]]
-        static auto v6() noexcept -> udp;
-
-        /**
-         * \brief get the identifier for the protocol family.
-         */
-        [[nodiscard]]
-        auto family() const noexcept -> int {
-            return family_;
-        }
-
-        /**
-         * \brief get the identifier for the type of the protocol.
-         */
-        [[nodiscard]]
-        static auto type() noexcept -> int;
-
-        /**
-         * \brief get the identifier for the protocol.
-         */
-        [[nodiscard]]
-        static auto protocol_id() noexcept -> int;
-
-    private:
-        int family_;
-    };
-
-    auto reverse_bytes(std::span<std::byte> bytes) noexcept -> void;
-
-    inline constexpr auto host_to_net = []<typename T> requires std::is_trivially_copyable_v<T> (T in_host) noexcept -> T {
-        static_assert(std::endian::native == std::endian::little or std::endian::native == std::endian::big);
-        if constexpr (std::endian::native == std::endian::little) {
-            reverse_bytes(std::span{reinterpret_cast<std::byte*>(&in_host), sizeof(T)});
-        }
-        return in_host;
-    };
-
-    inline constexpr auto net_to_host = []<typename T> requires std::is_trivially_copyable_v<T> (T from_net) noexcept -> T {
-        static_assert(std::endian::native == std::endian::little or std::endian::native == std::endian::big);
-        if constexpr (std::endian::native == std::endian::little) {
-            reverse_bytes(std::span{reinterpret_cast<std::byte*>(&from_net), sizeof(T)});
-        }
-        return from_net;
-    };
+namespace coio {
 
     namespace detail {
+        auto receive(socket_native_handle_type handle, std::span<std::byte> buffer, bool zero_as_eof) -> std::size_t;
 
-#if COIO_OS_LINUX
-        using socket_native_handle_type = int;
-#elif COIO_OS_WINDOWS
-        using socket_native_handle_type = ::UINT_PTR;
-#endif
-        inline constexpr socket_native_handle_type invalid_socket_handle_value = socket_native_handle_type(-1);
+        auto send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t;
 
-        auto sync_recv(socket_native_handle_type handle, std::span<std::byte> buffer, bool zero_as_eof) -> std::size_t;
+        auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer, const endpoint& src, bool zero_as_eof) -> std::size_t;
 
-        auto sync_send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t;
-
-        auto sync_recv_from(socket_native_handle_type handle, std::span<std::byte> buffer, const endpoint& src, bool zero_as_eof) -> std::size_t;
-
-        auto sync_send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
-
-        struct op_state;
-
-        class async_io_operation_base : public io_context::async_operation_base {
-        public:
-            async_io_operation_base(io_context& context, op_state* op_state_) noexcept : async_operation_base(context), op_state_(op_state_) {
-                context.work_started();
-            }
-
-            async_io_operation_base(const async_io_operation_base&) = delete;
-
-            ~async_io_operation_base() {
-                context_.work_finished();
-            }
-
-            auto operator= (const async_io_operation_base&) ->async_io_operation_base& = delete;
-
-            auto context() const noexcept -> io_context& {
-                return static_cast<io_context&>(context_);
-            }
-
-        protected:
-            op_state* op_state_;
-            std::exception_ptr exception_;
-        };
-
-        class async_in_operation_base : public async_io_operation_base {
-            friend op_state;
-        public:
-            using async_io_operation_base::async_io_operation_base;
-
-            auto await_suspend(std::coroutine_handle<> this_coro) -> void;
-        };
-
-        class async_out_operation_base : public async_io_operation_base {
-            friend op_state;
-        public:
-            using async_io_operation_base::async_io_operation_base;
-
-            auto await_suspend(std::coroutine_handle<> this_coro) -> void;
-        };
-
-        struct op_state {
-            op_state(socket_native_handle_type handle) noexcept : handle(handle) {};
-
-            op_state(const op_state&) = delete;
-
-            auto operator= (const op_state&) -> op_state& = delete;
-
-            auto reset(socket_native_handle_type new_handle) noexcept -> void {
-                handle = new_handle;
-                in_op = nullptr;
-                out_op = nullptr;
-            }
-
-            socket_native_handle_type handle{invalid_socket_handle_value};
-            async_in_operation_base* in_op{nullptr};
-            async_out_operation_base* out_op{nullptr};
-        };
+        auto send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
     }
-
-    class tcp_socket;
-
-    class async_receive_operation : public detail::async_in_operation_base {
-    public:
-        async_receive_operation(io_context& context, detail::op_state* op_state, std::span<std::byte> buffer, bool zero_as_eof) noexcept :
-            async_in_operation_base{context, op_state}, buffer_(buffer), zero_as_eof_(zero_as_eof) {}
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> std::size_t;
-
-    private:
-        std::span<std::byte> buffer_;
-        /* const */ bool zero_as_eof_;
-        std::size_t transferred_ = 0;
-    };
-
-
-    class async_send_operation : public detail::async_out_operation_base {
-    public:
-        async_send_operation(io_context& context, detail::op_state* op_state, std::span<const std::byte> buffer) noexcept :
-            async_out_operation_base{context, op_state}, buffer_(buffer) {}
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> std::size_t;
-
-    private:
-        std::span<const std::byte> buffer_;
-        std::size_t transferred_ = 0;
-    };
-
-
-    class async_receive_from_operation : public detail::async_in_operation_base {
-    public:
-        async_receive_from_operation(io_context& context, detail::op_state* op_state, std::span<std::byte> buffer, const endpoint& src, bool zero_as_eof) noexcept :
-            async_in_operation_base{context, op_state}, buffer_(buffer), src_(src), zero_as_eof_(zero_as_eof) {}
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> std::size_t;
-
-    private:
-        std::span<std::byte> buffer_;
-        endpoint src_;
-        bool zero_as_eof_;
-        std::size_t transferred_ = 0;
-    };
-
-
-    class async_send_to_operation : public detail::async_out_operation_base {
-    public:
-        async_send_to_operation(io_context& context, detail::op_state* op_state, std::span<const std::byte> buffer, const endpoint& dest) noexcept :
-            async_out_operation_base{context, op_state}, buffer_(buffer), dest_(dest) {}
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> std::size_t;
-
-    private:
-        std::span<const std::byte> buffer_;
-        endpoint dest_;
-        std::size_t transferred_ = 0;
-    };
-
-
-    class async_accept_operation : public detail::async_in_operation_base {
-    public:
-        using async_in_operation_base::async_in_operation_base;
-
-        static auto await_ready() noexcept -> bool {
-            return false;
-        }
-
-        auto await_suspend(std::coroutine_handle<> this_coro) -> void;
-
-    protected:
-        auto output_accepted_(tcp_socket& peer) -> void;
-
-    private:
-        detail::socket_native_handle_type accepted_ = detail::invalid_socket_handle_value;
-    };
 
     class async_accept_operation_1;
 
     class async_accept_operation_2;
-
-    class async_connect_operation : public detail::async_out_operation_base {
-    public:
-        async_connect_operation(io_context& context, detail::op_state* op_state, const endpoint& dest_) noexcept :
-            async_out_operation_base(context, op_state), dest_(dest_) {}
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> void;
-
-    private:
-        endpoint dest_;
-        bool connected_ = false;
-    };
-
 
     namespace detail {
 
@@ -306,21 +31,18 @@ namespace coio::net {
                 shutdown_both,
             };
 
-        private:
-            socket_base(std::nullptr_t, io_context& context, socket_native_handle_type handle) noexcept : context_(&context), handle_(handle), op_state_(nullptr) {}
-
         public:
-            explicit socket_base(io_context& context) noexcept : socket_base(nullptr, context, invalid_socket_handle_value) {}
+            explicit socket_base(io_context& context) noexcept : context_(&context), handle_(detail::invalid_socket_handle_value) {}
 
-            socket_base(io_context& context, socket_native_handle_type handle) : socket_base(nullptr, context, handle) {
-                op_state_ = new op_state{handle};
+            socket_base(io_context& context, native_handle_type handle) : socket_base(context) {
+                reset_(handle);
             }
 
             socket_base(const socket_base&) = delete;
 
-            socket_base(socket_base&& other) noexcept : context_(other.context_),
-                                                        handle_(std::exchange(other.handle_, invalid_socket_handle_value)),
-                                                        op_state_(std::exchange(other.op_state_, nullptr)) {}
+            socket_base(socket_base&& other) noexcept :
+                context_(other.context_), handle_(std::exchange(other.handle_, detail::invalid_socket_handle_value))
+            {}
 
             ~socket_base() {
                 close();
@@ -329,7 +51,6 @@ namespace coio::net {
             auto operator= (socket_base other) noexcept -> socket_base& {
                 std::swap(context_, other.context_);
                 std::swap(handle_, other.handle_);
-                std::swap(op_state_, other.op_state_);
                 return *this;
             }
 
@@ -381,7 +102,7 @@ namespace coio::net {
              */
             [[nodiscard]]
             auto is_open() const noexcept -> bool {
-                return native_handle() != invalid_socket_handle_value;
+                return native_handle() != detail::invalid_socket_handle_value;
             }
 
             /**
@@ -434,6 +155,8 @@ namespace coio::net {
              */
             auto bind(const endpoint& addr) -> void;
 
+            auto cancel() -> void;
+
         protected:
             auto reset_(native_handle_type new_handle) noexcept -> void;
 
@@ -442,13 +165,12 @@ namespace coio::net {
             auto connect_(const endpoint& addr) -> void;
 
             auto async_connect_(const endpoint& addr) noexcept -> async_connect_operation {
-                return {*context_, op_state_, addr};
+                return {*context_, handle_, addr};
             }
 
         protected:
             io_context* context_;
-            socket_native_handle_type handle_;
-            op_state* op_state_;
+            native_handle_type handle_;
         };
     }
 
@@ -558,7 +280,8 @@ namespace coio::net {
 
     class tcp_socket : detail::socket_base {
         friend tcp_acceptor;
-        friend async_accept_operation;
+        friend async_accept_operation_1;
+        friend async_accept_operation_2;
 
     public:
         using socket_base::native_handle_type;
@@ -614,7 +337,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto read_some(std::span<std::byte> buffer) -> std::size_t {
-            return detail::sync_recv(handle_, buffer, true);
+            return detail::receive(handle_, buffer, true);
         }
 
         /**
@@ -626,7 +349,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto write_some(std::span<const std::byte> buffer) -> std::size_t {
-            return detail::sync_send(handle_, buffer);
+            return detail::send(handle_, buffer);
         }
 
         /**
@@ -658,7 +381,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto async_read_some(std::span<std::byte> buffer) noexcept -> async_receive_operation {
-            return {*context_, op_state_, buffer, true};
+            return {*context_, handle_, buffer, true};
         }
 
         /**
@@ -674,7 +397,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto async_write_some(std::span<const std::byte> buffer) noexcept -> async_send_operation {
-            return {*context_, op_state_, buffer};
+            return {*context_, handle_, buffer};
         }
 
         /**
@@ -696,11 +419,11 @@ namespace coio::net {
 
     class async_accept_operation_1 : public async_accept_operation {
     public:
-        async_accept_operation_1(io_context& context, detail::op_state* op_state, tcp_socket& out) noexcept :
-           async_accept_operation(context, op_state), peer_(out) {}
+        async_accept_operation_1(io_context& context, detail::socket_native_handle_type native_handle, tcp_socket& out) noexcept :
+           async_accept_operation(context, native_handle), peer_(out) {}
 
         auto await_resume() -> void {
-            output_accepted_(peer_);
+            peer_.reset_(on_resume_());
         }
     private:
         tcp_socket& peer_;
@@ -708,12 +431,12 @@ namespace coio::net {
 
     class async_accept_operation_2 : public async_accept_operation {
     public:
-        async_accept_operation_2(io_context& context, detail::op_state* op_state, io_context& context_of_peer) noexcept :
-            async_accept_operation(context, op_state), peer_(context_of_peer) {}
+        async_accept_operation_2(io_context& context, detail::socket_native_handle_type native_handle, io_context& context_of_peer) noexcept :
+            async_accept_operation(context, native_handle), peer_(context_of_peer) {}
 
         [[nodiscard]]
         auto await_resume() -> tcp_socket {
-            output_accepted_(peer_);
+            peer_.reset_(on_resume_());
             return std::move(peer_);
         }
     private:
@@ -731,11 +454,11 @@ namespace coio::net {
     }
 
     inline auto tcp_acceptor::async_accept(tcp_socket& peer) noexcept -> async_accept_operation_1 {
-        return {*context_, op_state_, peer};
+        return {*context_, handle_, peer};
     }
 
     inline auto tcp_acceptor::async_accept(io_context& context_of_peer) noexcept -> async_accept_operation_2 {
-        return {*context_, op_state_, context_of_peer};
+        return {*context_, handle_, context_of_peer};
     }
 
     inline auto tcp_acceptor::async_accept() noexcept -> async_accept_operation_2 {
@@ -796,7 +519,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto receive(std::span<std::byte> buffer) -> std::size_t {
-            return detail::sync_recv(handle_, buffer, false);
+            return detail::receive(handle_, buffer, false);
         }
 
         /**
@@ -807,7 +530,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto send(std::span<const std::byte> buffer) -> std::size_t {
-            return detail::sync_send(handle_, buffer);
+            return detail::send(handle_, buffer);
         }
 
         /**
@@ -819,7 +542,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto receive_from(std::span<std::byte> buffer, const endpoint& src) -> std::size_t {
-            return detail::sync_recv_from(handle_, buffer, src, false);
+            return detail::receive_from(handle_, buffer, src, false);
         }
 
         /**
@@ -831,7 +554,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
-            return detail::sync_send_to(handle_, buffer, dest);
+            return detail::send_to(handle_, buffer, dest);
         }
 
         /**
@@ -846,7 +569,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_operation {
-            return {*context_, op_state_, buffer, false};
+            return {*context_, handle_, buffer, false};
         }
 
         /**
@@ -861,7 +584,7 @@ namespace coio::net {
         */
         [[nodiscard]]
         auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_operation {
-            return {*context_, op_state_, buffer};
+            return {*context_, handle_, buffer};
         }
 
         /**
@@ -877,7 +600,7 @@ namespace coio::net {
          */
         [[nodiscard]]
         auto async_receive_from(std::span<std::byte> buffer, const endpoint& src) noexcept -> async_receive_from_operation {
-            return {*context_, op_state_, buffer, src, false};
+            return {*context_, handle_, buffer, src, false};
         }
 
         /**
@@ -893,166 +616,8 @@ namespace coio::net {
          */
         [[nodiscard]]
         auto async_send_to(std::span<const std::byte> buffer, const endpoint& dest) noexcept -> async_send_to_operation {
-            return {*context_, op_state_, buffer, dest};
+            return {*context_, handle_, buffer, dest};
         }
-
     };
 
-    namespace detail {
-        struct resolve_query_t {
-            static const int canonical_name;
-            static const int passive;
-            static const int numeric_host;
-            static const int numeric_service;
-            static const int v4_mapped;
-            static const int all_matching;
-            static const int address_configured;
-
-            std::string host_name;
-            std::string service_name;
-            int         flags{v4_mapped | address_configured};
-        };
-
-        struct resolve_result_t {
-            class endpoint endpoint;
-            std::string canonical_name;
-        };
-
-        auto resolve_impl(resolve_query_t query, int family, int socktype, int protocol_id) -> generator<resolve_result_t>;
-
-        auto resolve_impl(resolve_query_t query, int sock_type, int protocol_id) -> generator<resolve_result_t>;
-
-        inline auto parse_path(std::string_view str) -> std::string {
-            return std::string(str);
-        }
-
-        inline auto parse_host_and_port(std::string_view str) -> std::pair<std::string, std::uint16_t> {
-            std::pair<std::string, std::uint16_t> result{};
-            auto pos = str.find(':');
-            result.first = std::string(str.substr(0, pos));
-            if (pos == std::string_view::npos) return result;
-            auto port_str = str.substr(pos + 1);
-            auto ec = std::from_chars(port_str.data(), port_str.data() + port_str.size(), result.second).ec;
-            if (ec != std::errc()) throw std::invalid_argument("invalid URL: invalid port.");
-            return result;
-        }
-
-        inline auto parse_query(std::string_view str) -> std::map<std::string, std::string> {
-            std::map<std::string, std::string> result;
-            while (not str.empty()) {
-                auto eq_pos = str.find('=');
-                auto amp_pos = str.find('&');
-
-                std::string key = std::string(str.substr(0, eq_pos));
-                std::string value;
-                if (eq_pos != std::string_view::npos) [[likely]] {
-                    value = std::string(str.substr(eq_pos + 1, amp_pos - eq_pos - 1));
-                }
-                result.insert({std::move(key), std::move(value)});
-
-                if (amp_pos == std::string_view::npos) break;
-                str.remove_prefix(amp_pos + 1);
-            }
-            return result;
-        }
-    }
-
-    struct url {
-    public:
-        url(std::string_view uri) {
-            std::size_t first = 0;
-            auto last = uri.find("://", first);
-            if (last == std::string_view::npos) throw std::invalid_argument("invalid URL: missing protocol.");
-            protocol = std::string(uri.substr(first, last - first));
-            first = last + 3;
-
-            last = uri.find('/', first);
-            std::tie(host, port) = detail::parse_host_and_port(uri.substr(first, last - first));
-            if (port == 0) {
-                if (protocol == "http") port = 80;
-                else if (protocol == "https") port = 443;
-            }
-            if (last == std::string_view::npos) return;
-            first = last + 1;
-
-            last = uri.find('?', first);
-            path += std::string(uri.substr(first, last - first));
-            if (last == std::string_view::npos) return;
-            first = last + 1;
-
-            last = uri.find('#', first);
-            query = detail::parse_query(uri.substr(first, last - first));
-            if (last == std::string_view::npos) return;
-            first = last + 1;
-
-            fragment = std::string(uri.substr(first));
-        }
-
-        [[nodiscard]]
-        auto to_string() const -> std::string {
-            std::string result;
-            result.append(protocol).append("://").append(host);
-            if (not ((protocol == "http" and port == 80) or (protocol == "https" and port == 443))) {
-                result.append(":" + std::to_string(port));
-            }
-            result.append(path);
-            if (not query.empty()) {
-                result.push_back('?');
-                for (bool is_first = true; const auto& [key, value] : query) {
-                    if (not is_first) [[likely]] result.push_back('&');
-                    else is_first = false;
-                    result.append(key).append("=").append(value);
-                }
-            }
-            if (not fragment.empty()) {
-                result.append("#" + fragment);
-            }
-            return result;
-        }
-
-        std::string                        protocol;
-        std::string                        host;
-        std::uint16_t                      port;
-        std::string                        path{"/"};
-        std::map<std::string, std::string> query;
-        std::string                        fragment;
-    };
-
-    template<typename Protocol>
-    class resolver {
-    public:
-        using protocol_type = Protocol;
-        using query_t = detail::resolve_query_t;
-        using result_t = detail::resolve_result_t;
-
-    public:
-
-        resolver() = default;
-
-        explicit resolver(protocol_type protocol) noexcept(std::is_nothrow_move_constructible_v<protocol_type>) : protocol_(std::move(protocol)) {}
-
-        /**
-         * \brief resolve a query into a sequence of endpoint entries.
-         */
-        [[nodiscard]]
-        auto resolve(query_t query) const -> generator<result_t> {
-            if (protocol_) return detail::resolve_impl(std::move(query), protocol_->family(), protocol_type::type(), protocol_type::protocol_id());
-            return detail::resolve_impl(std::move(query), protocol_type::type(), protocol_type::protocol_id());
-        }
-
-    private:
-        std::optional<protocol_type> protocol_;
-    };
-
-    using tcp_resolver = resolver<tcp>;
-    using udp_resolver = resolver<udp>;
 }
-
-#ifdef __cpp_lib_format
-template<>
-struct std::formatter<coio::net::url> : coio::no_specification_formatter {
-    auto format(const coio::net::url& uri, std::format_context& ctx) const {
-        return std::format_to(ctx.out(), "{}", uri.to_string());
-    }
-};
-#endif

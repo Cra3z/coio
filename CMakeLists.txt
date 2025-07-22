@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.26)
 
 project(coio)
 
@@ -13,8 +13,18 @@ option(COIO_EXAMPLES "whether to build examples" OFF)
 add_library(
     ${PROJECT_NAME}
     STATIC
-    src/linux.cpp
 )
+
+if (LINUX)
+    target_sources(
+        ${PROJECT_NAME}
+        PRIVATE
+        src/linux/epoll.cpp
+        src/linux/net/base.cpp
+        src/linux/net/socket.cpp
+        src/linux/src.cpp
+    )
+endif()
 
 target_include_directories(
     ${PROJECT_NAME}

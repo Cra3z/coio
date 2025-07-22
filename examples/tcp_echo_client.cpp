@@ -1,4 +1,5 @@
 #include <coio/core.h>
+#include <coio/async_io.h>
 #include <coio/net/socket.h>
 #include "common.h"
 
@@ -6,8 +7,8 @@ auto main() -> int {
     coio::io_context context;
     coio::sync_wait(coio::when_all(
         [&context]() -> coio::task<> {
-            coio::net::tcp_socket socket{context};
-            co_await socket.async_connect({coio::net::ipv4_address::loopback(), 8086});
+            coio::tcp_socket socket{context};
+            co_await socket.async_connect({coio::ipv4_address::loopback(), 8086});
             char buffer[256];
             std::uint8_t length;
             while (true) {

@@ -1,8 +1,9 @@
 #include <coio/core.h>
+#include <coio/async_io.h>
 #include <coio/net/socket.h>
 #include "common.h"
 
-auto handle_connection(coio::net::tcp_socket socket) -> coio::task<> {
+auto handle_connection(coio::tcp_socket socket) -> coio::task<> {
     auto remote_endpoint = socket.remote_endpoint();
     try {
         std::uint8_t length;
@@ -27,15 +28,12 @@ auto main() -> int {
     coio::sync_wait(coio::when_all(
         [&context]() -> coio::task<> {
             coio::async_scope scope;
-            coio::net::tcp_acceptor acceptor{context, {coio::net::ipv4_address::any(), 8086}};
+            coio::tcp_acceptor acceptor{context, {coio::ipv4_address::any(), 8086}};
             ::println("server \"{}\" start...", acceptor.local_endpoint());
-            try {
-                while (true) {
-                    coio::net::tcp_socket socket = co_await acceptor.async_accept();
-                    scope.spawn(handle_connection(std::move(socket)));
-                }
+            while (true) {
+                coio::tcp_socket socket = co_await acceptor.async_accept();
+                scope.spawn(handle_connection(std::move(socket)));
             }
-            catch (const coio::operation_stopped&) {}
             co_await scope;
         }(),
         [&context]() -> coio::task<> {

@@ -1,10 +1,11 @@
 #pragma once
+#include <stdexcept>
 #include <system_error>
 #include "utils/utility.h"
 
 namespace coio::error {
 
-    enum misc : int {
+    enum misc_errc : int {
         eof = 1,
         already_open,
         not_found,
@@ -46,7 +47,7 @@ namespace coio::error {
     }
 
     [[nodiscard]]
-    inline auto make_error_code(misc e) -> std::error_code {
+    inline auto make_error_code(misc_errc e) -> std::error_code {
         return {static_cast<int>(e), misc_category()};
     }
 
@@ -56,7 +57,39 @@ namespace coio::error {
         return instance;
     }
 
+    enum class task_errc {
+        no_state,
+        already_retrieved
+    };
+
+    class task_error : public std::exception {
+    public:
+        explicit task_error(task_errc ec) : ec(ec) {}
+
+        [[nodiscard]]
+        auto code() const noexcept -> task_errc {
+            return ec;
+        }
+
+        [[nodiscard]]
+        auto what() const noexcept -> const char* override {
+            switch (ec) {
+            case task_errc::no_state:
+                return "no associated coroutines for this task.";
+            case task_errc::already_retrieved:
+                return "the result of task has been retrieved.";
+            default:
+                unreachable();
+            }
+        }
+    private:
+        task_errc ec;
+    };
+
 }
 
+template <>
+struct std::is_error_code_enum<coio::error::task_errc> : std::true_type {};
+
 template<>
-struct std::is_error_code_enum<coio::error::misc> : std::true_type {};
+struct std::is_error_code_enum<coio::error::misc_errc> : std::true_type {};
