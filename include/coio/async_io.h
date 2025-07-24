@@ -83,7 +83,7 @@ namespace coio {
                 co_return total;
             }
 
-            template<valid_coroutine_alloctor_ Alloc>
+            template<typename Alloc>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc&, async_readable_file auto&& file, std::span<std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
                 const std::size_t total = buffer.size();
@@ -108,7 +108,7 @@ namespace coio {
                 co_return total;
             }
 
-            template<valid_coroutine_alloctor_ Alloc>
+            template<typename Alloc>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc&, async_writable_file auto&& file, std::span<const std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
                 const std::size_t total = buffer.size();

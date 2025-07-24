@@ -137,21 +137,22 @@ namespace coio {
 
         template<typename SharedTaskType>
         struct shared_task_awaiter : shared_task_node {
-
             shared_task_awaiter(std::coroutine_handle<task_promise_t<SharedTaskType>> coro) noexcept : coro(coro) {}
 
-            auto await_ready() noexcept -> bool {
-                COIO_DCHECK(coro != nullptr);
-                return coro.promise().step_ == 2;
+            static auto await_ready() noexcept -> bool {
+                return false;
             }
 
             auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> std::coroutine_handle<> {
                 waiter = this_coro;
-                next = coro.promise().head_.exchange(this, std::memory_order_acq_rel);
-                if (int zero = 0; coro.promise().step_.compare_exchange_strong(zero, 1)) {
-                    return coro;
+                std::coroutine_handle<> continuations[] {coro, std::noop_coroutine(), this_coro};
+                auto& step = coro.promise().step_;
+                auto index = step.load(std::memory_order_relaxed);
+                while (!step.compare_exchange_strong(index, index == 0 ? 1 : index, std::memory_order_relaxed)) {}
+                if (index < 2) {
+                    next = coro.promise().head_.exchange(this, std::memory_order_acq_rel);
                 }
-                return std::noop_coroutine();
+                return continuations[index];
             }
 
             auto await_resume() -> add_const_lvalue_ref_t<task_elem_t<SharedTaskType>> {
@@ -168,11 +169,11 @@ namespace coio {
 
             template<typename SharedTaskPromise>
             static auto await_suspend(std::coroutine_handle<SharedTaskPromise> this_coro) noexcept -> void {
-                shared_task_node* awaiter_ = this_coro.promise().head_.load(std::memory_order_acquire);
-                while (awaiter_) {
-                    auto next = awaiter_->next;
-                    awaiter_->waiter.resume();
-                    awaiter_ = next;
+                shared_task_node* node = this_coro.promise().head_.load(std::memory_order_acquire);
+                while (node) {
+                    auto next = node->next;
+                    node->waiter.resume();
+                    node = next;
                 }
             }
 
@@ -219,8 +220,7 @@ namespace coio {
             }
 
             auto final_suspend() noexcept -> shared_task_final_awaiter {
-                step_ = 2;
-                step_.notify_all();
+                step_.store(2, std::memory_order_relaxed);
                 return {};
             }
 
@@ -376,7 +376,7 @@ namespace coio {
         [[nodiscard]]
         auto ready() const noexcept -> bool {
             COIO_DCHECK(coro_ != nullptr);
-            return coro_.promise().step_ == 2;
+            return coro_.promise().step_.load(std::memory_order_relaxed) == 2;
         }
 
         auto swap(shared_task& other) noexcept -> void {

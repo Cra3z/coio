@@ -13,28 +13,22 @@ namespace coio {
     public:
         explicit steady_timer(execution_context& context) noexcept : context_(&context) {}
 
-        steady_timer(execution_context& context, time_point_type timeout) noexcept :
-            context_(&context), deadline_(timeout) {}
-
-        steady_timer(execution_context& context, duration_type duration) noexcept :
-            steady_timer(context, clock_type::now() + duration) {}
-
-        steady_timer(steady_timer&& other) noexcept :
-            context_(other.context_), deadline_(std::exchange(other.deadline_, {})) {}
-
-        auto operator= (steady_timer other) noexcept -> steady_timer& {
-            std::swap(other.deadline_, deadline_);
-            std::swap(other.context_, context_);
-            return *this;
+        auto wait(duration_type duration) const -> void {
+            std::this_thread::sleep_for(duration);
         }
 
-        auto wait() const -> void {
-            std::this_thread::sleep_until(deadline_);
+        auto wait_until(time_point_type deadline) const -> void {
+            std::this_thread::sleep_until(deadline);
         }
 
         [[nodiscard]]
-        auto async_wait() const noexcept -> sleep_operation {
-            return {*context_, deadline_};
+        auto async_wait(duration_type duration) const noexcept -> sleep_operation {
+            return async_wait_until(clock_type::now() + duration);
+        }
+
+        [[nodiscard]]
+        auto async_wait_until(time_point_type deadline) const noexcept -> sleep_operation {
+            return {*context_, deadline};
         }
 
         [[nodiscard]]
@@ -44,6 +38,5 @@ namespace coio {
 
     private:
         execution_context* context_; // not null
-        time_point_type deadline_;
     };
 }
