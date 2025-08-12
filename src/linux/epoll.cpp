@@ -269,20 +269,10 @@ namespace coio {
     }
 
     auto async_connect_operation::await_ready() noexcept -> bool {
-        auto sa = detail::endpoint_to_sockaddr_in(dest_);
-        auto [psa, len] = detail::to_sockaddr(sa);
-        if (::connect(native_handle_, psa, len) == -1) {
-            const auto er = errno;
-            if (er == EINPROGRESS) return false;
-            exception_ = std::make_exception_ptr(std::system_error(er, std::system_category(), "async_connect"));
-        }
-        else connected_ = true;
-        return true;
+        return false;
     }
 
     auto async_connect_operation::await_resume() -> void {
-        if (exception_) std::rethrow_exception(exception_);
-        if (connected_) return;
         auto sa = detail::endpoint_to_sockaddr_in(dest_);
         auto [psa, len] = detail::to_sockaddr(sa);
         detail::throw_last_error(::connect(native_handle_, psa, len), "async_connect");

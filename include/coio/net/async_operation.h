@@ -144,6 +144,5 @@ namespace coio {
 
     private:
         endpoint dest_;
-        bool connected_ = false;
     };
 }
