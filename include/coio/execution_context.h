@@ -34,8 +34,6 @@ namespace coio {
                 std::unique_lock lock{context_.op_queue_mtx_};
                 if (auto old_tail = std::exchange(context_.op_queue_tail_, this)) old_tail->next_ = this;
                 if (context_.op_queue_head_ == nullptr) context_.op_queue_head_ = this;
-                context_.op_queue_mtx_.unlock();
-                context_.op_queue_cv_.notify_one();
                 return true;
             }
 
@@ -214,7 +212,6 @@ namespace coio {
         std::stop_source stop_source_;
         std::mutex timer_queue_mtx_;
         timer_queue timer_queue_;
-        std::condition_variable op_queue_cv_;
         std::mutex op_queue_mtx_;
         async_operation* op_queue_head_{};
         async_operation* op_queue_tail_{};
