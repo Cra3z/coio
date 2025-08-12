@@ -68,7 +68,7 @@ namespace coio {
         return ::ntohl(net_u32_) == ::ntohl(other.net_u32_);
     }
 
-    auto ipv4_address::operator<=>(const ipv4_address& other) noexcept -> std::strong_ordering {
+    auto ipv4_address::operator<=>(const ipv4_address& other) const noexcept -> std::strong_ordering {
         return ::ntohl(net_u32_) <=> ::ntohl(other.net_u32_);
     }
 

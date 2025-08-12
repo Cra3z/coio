@@ -12,7 +12,6 @@
 namespace coio {
     class ipv4_address {
     public:
-
         ipv4_address() = default;
 
         explicit ipv4_address(std::uint32_t host_u32) noexcept;
@@ -26,7 +25,7 @@ namespace coio {
 
         auto operator== (const ipv4_address& other) const noexcept -> bool;
 
-        auto operator<=> (const ipv4_address& other) noexcept -> std::strong_ordering;
+        auto operator<=> (const ipv4_address& other) const noexcept -> std::strong_ordering;
 
         [[nodiscard]]
         static auto loopback() noexcept ->ipv4_address {
@@ -118,6 +117,12 @@ namespace coio {
             return lhs.v6() == rhs.v6();
         }
 
+        friend auto operator<=> (const ip_address& lhs, const ip_address& rhs) noexcept -> std::strong_ordering {
+            if (lhs.version_ != rhs.version_) return lhs.version_ <=> rhs.version_;
+            if (lhs.is_v4()) return lhs.v4() <=> rhs.v4();
+            return lhs.v6() <=> rhs.v6();
+        }
+
     private:
         union {
             ipv4_address v4_;
@@ -129,7 +134,6 @@ namespace coio {
 
     class endpoint {
     public:
-
         endpoint(const ipv4_address& ipv4_addr, std::uint16_t port) noexcept : ip_(ipv4_addr), port_(port) {}
 
         endpoint(const ipv6_address& ipv6_addr, std::uint16_t port) noexcept : ip_(ipv6_addr), port_(port) {}
