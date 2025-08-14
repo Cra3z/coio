@@ -7,13 +7,13 @@
 #include "config.h"
 #include "concepts.h"
 #include "error.h"
+#include "exec.h"
 #include "detail/co_memory.h"
+#include "detail/co_promise.h"
 #include "utils/retain_ptr.h"
 #include "utils/type_traits.h"
 
 namespace coio {
-    struct nothing {};
-
     template<typename T = void, typename Alloc = void>
     class [[nodiscard]] task;
 
@@ -46,48 +46,6 @@ namespace coio {
 
         template<typename T>
         using task_promise_t = typename task_traits<T>::promise_t;
-
-        template<typename T>
-        class promise_return_control {
-        public:
-            auto return_value(T value) noexcept(std::is_nothrow_constructible_v<wrap_ref_t<T>, T>) -> void {
-                result_.template emplace<1>(static_cast<T&&>(value));
-            }
-
-            auto unhandled_exception() noexcept -> void {
-                result_.template emplace<2>(std::current_exception());
-            }
-
-            auto get_result() -> T& {
-                COIO_ASSERT(result_.index() > 0);
-                if (result_.index() == 2) std::rethrow_exception(*std::get_if<2>(&result_));
-                return *std::get_if<1>(&result_);
-            }
-
-        private:
-            std::variant<std::monostate, wrap_ref_t<T>, std::exception_ptr> result_;
-        };
-
-        template<>
-        class promise_return_control<void> {
-        public:
-
-            auto return_void() noexcept -> void {
-                result_.emplace<1>();
-            }
-
-            auto unhandled_exception() noexcept -> void {
-                result_.emplace<2>(std::current_exception());
-            }
-
-            auto get_result() -> void {
-                COIO_ASSERT(result_.index() > 0);
-                if (result_.index() == 2) std::rethrow_exception(*std::get_if<2>(&result_));
-            }
-
-        private:
-            std::variant<std::monostate, nothing, std::exception_ptr> result_;
-        };
 
         template<typename TaskType>
         struct task_awaiter {
@@ -181,7 +139,11 @@ namespace coio {
         };
 
         template<typename TaskType>
-        struct task_promise : promise_return_control<task_elem_t<TaskType>>, promise_alloc_control<task_alloc_t<TaskType>> {
+        struct task_promise :
+            enable_await_senders<task_promise<TaskType>>,
+            promise_return_control<task_elem_t<TaskType>>,
+            promise_alloc_control<task_alloc_t<TaskType>>
+        {
             friend task_awaiter<TaskType>;
 
             task_promise() = default;
@@ -203,7 +165,11 @@ namespace coio {
         };
 
         template<typename SharedTaskType>
-        struct shared_task_promise : promise_return_control<task_elem_t<SharedTaskType>>, promise_alloc_control<task_alloc_t<SharedTaskType>> {
+        struct shared_task_promise :
+            enable_await_senders<shared_task_promise<SharedTaskType>>,
+            promise_return_control<task_elem_t<SharedTaskType>>,
+            promise_alloc_control<task_alloc_t<SharedTaskType>>
+        {
             friend shared_task_final_awaiter;
             friend shared_task_awaiter<SharedTaskType>;
 

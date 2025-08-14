@@ -3,20 +3,7 @@
 #include "execution_context.h"
 
 namespace coio {
-    template<awaiter T>
-    using await_result_t = decltype(std::declval<T>().await_resume());
-
-    template<awaitable T>
-    struct awaitable_traits {
-        using awaiter_type = typename detail::get_awaiter<T>::type;
-
-        using await_result_type = await_result_t<awaiter_type>;
-    };
-
     namespace detail {
-        template<typename T>
-        using awaitable_await_result_t = typename awaitable_traits<T>::await_result_type;
-
         template<typename T>
         using void_to_nothing = std::conditional_t<std::is_void_v<T>, nothing, T>;
 
@@ -395,29 +382,6 @@ namespace coio {
             }
         };
     }
-
-    struct fire_and_forget {
-        struct promise_type {
-            static auto get_return_object() noexcept -> fire_and_forget {
-                return {};
-            }
-
-            static auto initial_suspend() noexcept -> std::suspend_never {
-                return {};
-            }
-
-            static auto final_suspend() noexcept -> std::suspend_never {
-                return {};
-            }
-
-            static auto return_void() noexcept -> void {}
-
-            [[noreturn]]
-            static auto unhandled_exception() noexcept -> void {
-                std::terminate();
-            }
-        };
-    };
 
     class async_scope : retain_base<async_scope> {
         friend retain_base;
