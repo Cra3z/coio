@@ -1,7 +1,6 @@
 #pragma once
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <coroutine>
 #include <functional>
 #include <mutex>
@@ -15,6 +14,73 @@
 namespace coio {
     class execution_context {
     public:
+        class schedule_operation;;
+
+        class scheduler {
+            friend execution_context;
+        public:
+#ifdef COIO_ENABLE_SENDERS
+            using scheduler_concept = detail::scheduler_tag;
+#endif
+        public:
+            explicit scheduler(execution_context& ctx) noexcept : ctx_(&ctx) {}
+
+            auto schedule() const noexcept -> schedule_operation {
+                return schedule_operation{*ctx_};
+            }
+
+        public:
+            friend auto operator== (const scheduler& lhs, const scheduler& rhs) -> bool = default;
+
+        private:
+            execution_context* ctx_;
+        };
+
+#ifdef COIO_ENABLE_SENDERS
+        struct env {
+            template<typename T>
+            auto query(const detail::exec::get_completion_scheduler_t<T>&) const noexcept -> scheduler {
+                return scheduler{this->ctx_};
+            }
+
+            execution_context& ctx_;
+        };
+#endif
+
+        class schedule_operation {
+            friend execution_context;
+        public:
+            explicit schedule_operation(execution_context& context) noexcept : ctx_(&context) {}
+
+#ifdef COIO_ENABLE_SENDERS
+            auto get_env() const noexcept -> env {
+                return {*ctx_};
+            }
+#endif
+
+            auto operator co_await() const noexcept {
+                struct awaiter : async_operation {
+                    using async_operation::async_operation;
+
+                    static auto await_ready() noexcept -> bool {
+                        return false;
+                    }
+
+                    auto await_suspend(std::coroutine_handle<> this_coro) -> bool {
+                        coro_ = this_coro;
+                        return post();
+                    }
+
+                    static auto await_resume() noexcept -> void {}
+                };
+
+                return awaiter{*ctx_};
+            }
+
+        private:
+            execution_context* ctx_;
+        };
+
         class async_operation {
             friend execution_context;
         public:
@@ -41,24 +107,6 @@ namespace coio {
             execution_context& context_;
             std::coroutine_handle<> coro_;
             async_operation* next_{};
-        };
-
-        class schedule_operation : public async_operation {
-            friend execution_context;
-        protected:
-            using async_operation::async_operation;
-
-        public:
-            static auto await_ready() noexcept -> bool {
-                return false;
-            }
-
-            auto await_suspend(std::coroutine_handle<> this_coro) -> bool {
-                coro_ = this_coro;
-                return post();
-            }
-
-            static auto await_resume() noexcept -> void {}
         };
 
         class sleep_operation : public async_operation {
@@ -138,8 +186,13 @@ namespace coio {
         auto operator= (const execution_context&) -> execution_context& = delete;
 
         [[nodiscard]]
+        auto get_scheduler() noexcept -> scheduler {
+            return scheduler{*this};
+        }
+
+        [[nodiscard]]
         auto schedule() noexcept -> schedule_operation {
-            return *this;
+            return schedule_operation{*this};
         }
 
         template<typename Fn, typename... Args>

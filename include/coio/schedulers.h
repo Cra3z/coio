@@ -4,16 +4,9 @@
 #include <concepts>
 #include <type_traits>
 #include <utility>
-#include "core.h"
+#include "exec.h"
 
 namespace coio {
-
-    template<typename T>
-    concept scheduler = requires (T t) {
-        { t.schedule() } -> awaitable;
-    };
-
-
     struct noop_scheduler {
         using schedule_operation = std::suspend_never;
 
@@ -25,10 +18,8 @@ namespace coio {
     template<std::size_t N>
     class round_robin_scheduler {
     public:
-
         class schedule_operation {
         private:
-
             explicit schedule_operation(round_robin_scheduler& scheduler) noexcept : scheduler(scheduler) {}
 
         public:

@@ -26,8 +26,14 @@ namespace coio::detail {
 #ifdef COIO_ENABLE_SENDERS
     template<typename Promise>
     using enable_await_senders = exec::with_awaitable_senders<Promise>;
+    using scheduler_tag = exec::scheduler_t;
+    using sender_tag = exec::sender_t;
+    using operation_state_tag = exec::operation_state_t;
 #else
     template<typename Promise>
     using enable_await_senders = nothing;
+    using scheduler_tag = void;
+    using sender_tag = void;
+    using operation_state_tag = void;
 #endif
 }
