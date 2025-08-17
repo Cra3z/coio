@@ -7,9 +7,9 @@
 #include "config.h"
 #include "concepts.h"
 #include "error.h"
-#include "exec.h"
 #include "detail/co_memory.h"
 #include "detail/co_promise.h"
+#include "detail/exec.h"
 #include "utils/retain_ptr.h"
 #include "utils/type_traits.h"
 
@@ -53,9 +53,10 @@ namespace coio {
                 return false;
             }
 
-            auto await_suspend(std::coroutine_handle<> this_coro) const noexcept -> std::coroutine_handle<> {
+            template<typename Promise>
+            auto await_suspend(std::coroutine_handle<Promise> this_coro) const noexcept -> std::coroutine_handle<> {
                 COIO_DCHECK(coro != nullptr);
-                coro.promise().prev_coro_ = this_coro;
+                coro.promise().set_continuation(this_coro);
                 return coro;
             }
 
@@ -73,13 +74,13 @@ namespace coio {
             }
 
             auto await_suspend(std::coroutine_handle<>) const noexcept -> std::coroutine_handle<> {
-                if (prev_coro) return prev_coro;
+                if (continuation) return continuation;
                 return std::noop_coroutine();
             }
 
             static auto await_resume() noexcept -> void {}
 
-            std::coroutine_handle<> prev_coro;
+            std::coroutine_handle<> continuation;
         };
 
         struct shared_task_node {
@@ -157,11 +158,13 @@ namespace coio {
             }
 
             auto final_suspend() const noexcept -> task_final_awaiter {
-                return {prev_coro_};
+                auto continuation_ = this->continuation();
+#if defined(COIO_ENABLE_SENDERS) and defined(COIO_EXECUTION_USE_NVIDIA) // TODO: https://github.com/NVIDIA/stdexec/issues/1610
+                return {continuation_.handle()};
+#else
+                return {continuation_};
+#endif
             }
-
-        private:
-            std::coroutine_handle<> prev_coro_;
         };
 
         template<typename SharedTaskType>

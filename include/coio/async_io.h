@@ -73,14 +73,8 @@ namespace coio {
 
         struct async_read_fn {
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (async_readable_file auto&& file, std::span<std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
-                const std::size_t total = buffer.size();
-                std::size_t remain = total;
-                do {
-                    remain -= co_await file.async_read_some(buffer.subspan(total - remain, remain));
-                }
-                while (remain > 0);
-                co_return total;
+            COIO_STATIC_CALL_OP auto operator() (async_readable_file auto&& file, std::span<std::byte> buffer) COIO_STATIC_CALL_OP_CONST {
+                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, std::forward<decltype(file)>(file), buffer);
             }
 
             template<typename Alloc>
@@ -98,14 +92,8 @@ namespace coio {
 
         struct async_write_fn {
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (async_writable_file auto&& file, std::span<const std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
-                const std::size_t total = buffer.size();
-                std::size_t remain = total;
-                do {
-                    remain -= co_await file.async_write_some(buffer.subspan(total - remain, remain));
-                }
-                while (remain > 0);
-                co_return total;
+            COIO_STATIC_CALL_OP auto operator() (async_writable_file auto&& file, std::span<const std::byte> buffer) COIO_STATIC_CALL_OP_CONST {
+                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, std::forward<decltype(file)>(file), buffer);
             }
 
             template<typename Alloc>

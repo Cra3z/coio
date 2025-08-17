@@ -162,7 +162,7 @@ namespace coio {
         connect_(addr);
     }
 
-    auto tcp_socket::async_connect(const endpoint& addr) -> async_connect_operation {
+    auto tcp_socket::async_connect(const endpoint& addr) -> async_connect_t {
         if (not is_open()) open(addr.ip().is_v4() ? tcp::v4() : tcp::v6());
         return async_connect_(addr);
     }
@@ -172,7 +172,7 @@ namespace coio {
         connect_(addr);
     }
 
-    auto udp_socket::async_connect(const endpoint& addr) -> async_connect_operation {
+    auto udp_socket::async_connect(const endpoint& addr) -> async_connect_t {
         if (not is_open()) open(addr.ip().is_v4() ? udp::v4() : udp::v6());
         return async_connect_(addr);
     }

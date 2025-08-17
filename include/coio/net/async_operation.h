@@ -4,145 +4,246 @@
 
 namespace coio {
     namespace detail {
-        class async_io_operation : public execution_context::async_operation {
+        class async_io_sender_base {
             friend io_context;
             friend io_context::impl;
         public:
             enum class category : unsigned char {
-                input,
+                input = 1,
                 output
             };
 
-        public:
-            async_io_operation(execution_context& context, socket_native_handle_type native_handle, category category) noexcept : async_operation(context), native_handle_(native_handle), category_(category) {
-                context.work_started();
-            }
+            class pinned : public execution_context::node {
+                friend io_context;
+                friend io_context::impl;
+            public:
+                explicit pinned(const async_io_sender_base& io_sender) :
+                    node(*io_sender.context_),
+                    native_handle_(io_sender.native_handle_),
+                    category_(io_sender.category_),
+                    lazy_(io_sender.lazy_),
+                    work_guard_(*io_sender.context_) {}
 
-            ~async_io_operation() {
-                context_.work_finished();
-            }
+                auto await_suspend(std::coroutine_handle<>) -> void;
 
-            auto await_suspend(std::coroutine_handle<> this_coro) -> void;
+            private:
+                socket_native_handle_type native_handle_ = invalid_socket_handle_value;
+                category category_;
+                bool lazy_; // indicate that this operation's `await_ready` always returns false
+                execution_context::work_guard work_guard_;
+            };
 
         protected:
-            std::exception_ptr exception_;
+            async_io_sender_base(
+                execution_context& context, socket_native_handle_type native_handle, category category, bool lazy
+            ) noexcept : context_(&context), native_handle_(native_handle), category_(category), lazy_(lazy) {}
+
+            /// \note: after moved, this object will be in a valid but unspecified state.
+            async_io_sender_base(async_io_sender_base&& other) noexcept :
+                context_(std::exchange(other.context_, {})),
+                native_handle_(std::exchange(other.native_handle_, invalid_socket_handle_value)),
+                category_(std::exchange(other.category_, {})),
+                lazy_(std::exchange(other.lazy_, {})),
+                exception_(std::exchange(other.exception_, {}))
+            {}
+
+            /// \note: after moved, this object will be in a valid but unspecified state.
+            auto operator= (async_io_sender_base other) noexcept -> async_io_sender_base& {
+                swap(other);
+                return *this;
+            }
+
+            auto swap(async_io_sender_base& other) noexcept -> void {
+                std::ranges::swap(context_, other.context_);
+                std::ranges::swap(native_handle_, other.native_handle_);
+                std::ranges::swap(category_, other.category_);
+                std::ranges::swap(lazy_, other.lazy_);
+                std::ranges::swap(exception_, other.exception_);
+            }
+
+            friend auto swap(async_io_sender_base& lhs, async_io_sender_base& rhs) noexcept -> void {
+                lhs.swap(rhs);
+            }
+
+        protected:
+            execution_context* context_;
             socket_native_handle_type native_handle_ = invalid_socket_handle_value;
             category category_;
-            bool lazy_ = false; // indicate that this operation's `await_ready` always returns false
+            bool lazy_; // indicate that this operation's `await_ready` always returns false
+            std::exception_ptr exception_;
         };
 
 
-        class async_input_operation : public async_io_operation {
+        template<typename Customization>
+        class async_io_sender : public async_io_sender_base, private Customization {
         public:
-            async_input_operation(io_context& context, socket_native_handle_type native_handle) noexcept : async_io_operation(context, native_handle, async_io_operation::category::input) {}
-        };
+            class awaiter : pinned {
+                friend async_io_sender;
+            private:
+                awaiter(async_io_sender&& impl) noexcept : pinned(impl), impl_(std::move(impl)) {}
 
+            public:
+                auto await_ready() noexcept -> bool {
+                    return impl_.try_perform();
+                }
 
-        class async_output_operation : public async_io_operation {
+                using pinned::await_suspend;
+
+                auto await_resume() -> typename Customization::result_type {
+                    return impl_.on_completion();
+                }
+
+            private:
+                async_io_sender impl_;
+            };
+
         public:
-            async_output_operation(io_context& context, socket_native_handle_type native_handle) noexcept : async_io_operation(context, native_handle, async_io_operation::category::output) {}
+            async_io_sender(
+                io_context& context,
+                socket_native_handle_type native_handle,
+                Customization extra
+            ) noexcept :
+                async_io_sender_base(context, native_handle, Customization::category, Customization::is_lazy),
+                Customization(std::exchange(extra, {})) {}
+
+            async_io_sender(const async_io_sender&) = delete;
+
+            async_io_sender(async_io_sender&& other) noexcept :
+                async_io_sender_base(static_cast<async_io_sender_base&&>(other)),
+                Customization(std::exchange(static_cast<Customization&>(other), {}))
+            {}
+
+            auto operator= (async_io_sender other) -> async_io_sender& {
+                this->swap(other);
+                return *this;
+            }
+
+            auto operator co_await() && noexcept -> awaiter {
+                return {std::move(*this)};
+            }
+
+            auto swap(async_io_sender& other) noexcept -> void {
+                std::ranges::swap(static_cast<async_io_sender_base&>(*this), static_cast<async_io_sender_base&>(other));
+                std::ranges::swap(static_cast<Customization&>(*this), static_cast<Customization&>(other));
+            }
+
+            friend auto swap(async_io_sender& lhs, async_io_sender& rhs) noexcept -> void {
+                lhs.swap(rhs);
+            }
+
+        private:
+            auto try_perform() noexcept -> bool = delete; // NOLINT(*-use-equals-delete)
+
+            auto on_completion() -> typename Customization::result_type = delete; // NOLINT(*-use-equals-delete)
         };
 
+        struct async_receive {
+            using result_type = std::size_t;
+            static constexpr bool is_lazy = false;
+            static constexpr async_io_sender_base::category category = async_io_sender_base::category::input;
+
+            std::span<std::byte> buffer_;
+            bool zero_as_eof_;
+            std::size_t transferred_ = 0;
+        };
+
+        struct async_send {
+            using result_type = std::size_t;
+            static constexpr bool is_lazy = false;
+            static constexpr async_io_sender_base::category category = async_io_sender_base::category::output;
+
+            std::span<const std::byte> buffer_;
+            std::size_t transferred_ = 0;
+        };
+
+        struct async_receive_from {
+            using result_type = std::size_t;
+            static constexpr bool is_lazy = false;
+            static constexpr async_io_sender_base::category category = async_io_sender_base::category::input;
+
+            std::span<std::byte> buffer_;
+            endpoint src_;
+            bool zero_as_eof_;
+            std::size_t transferred_ = 0;
+        };
+
+        struct async_send_to {
+            using result_type = std::size_t;
+            static constexpr bool is_lazy = false;
+            static constexpr async_io_sender_base::category category = async_io_sender_base::category::output;
+
+            std::span<const std::byte> buffer_;
+            endpoint dest_;
+            std::size_t transferred_ = 0;
+        };
+
+        struct async_accept {
+            using result_type = socket_native_handle_type;
+            static constexpr bool is_lazy = true;
+            static constexpr async_io_sender_base::category category = async_io_sender_base::category::input;
+
+            socket_native_handle_type accepted_ = invalid_socket_handle_value;
+        };
+
+        struct async_connect {
+            using result_type = void;
+            static constexpr bool is_lazy = true;
+            static constexpr async_io_sender_base::category category = async_io_sender_base::category::output;
+
+            endpoint dest_;
+        };
+
+        template<>
+        auto async_io_sender<async_receive>::try_perform() noexcept -> bool;
+
+        template<>
+        auto async_io_sender<async_receive>::on_completion() -> result_type;
+
+
+        template<>
+        auto async_io_sender<async_send>::try_perform() noexcept -> bool;
+
+        template<>
+        auto async_io_sender<async_send>::on_completion() -> result_type;
+
+
+        template<>
+        auto async_io_sender<async_receive_from>::try_perform() noexcept -> bool;
+
+        template<>
+        auto async_io_sender<async_receive_from>::on_completion() -> result_type;
+
+
+        template<>
+        auto async_io_sender<async_send_to>::try_perform() noexcept -> bool;
+
+        template<>
+        auto async_io_sender<async_send_to>::on_completion() -> result_type;
+
+
+        template<>
+        auto async_io_sender<async_accept>::try_perform() noexcept -> bool;
+
+        template<>
+        auto async_io_sender<async_accept>::on_completion() -> result_type;
+
+
+        template<>
+        auto async_io_sender<async_connect>::try_perform() noexcept -> bool;
+
+        template<>
+        auto async_io_sender<async_connect>::on_completion() -> result_type;
     }
 
+    using async_receive_t = detail::async_io_sender<detail::async_receive>;
 
-    class async_receive_operation : public detail::async_input_operation {
-    public:
-        async_receive_operation(io_context& context, detail::socket_native_handle_type native_handle, std::span<std::byte> buffer, bool zero_as_eof) noexcept :
-            async_input_operation{context, native_handle}, buffer_(buffer), zero_as_eof_(zero_as_eof) {}
+    using async_send_t = detail::async_io_sender<detail::async_send>;
 
-        auto await_ready() noexcept -> bool;
+    using async_receive_from_t = detail::async_io_sender<detail::async_receive_from>;
 
-        auto await_resume() -> std::size_t;
+    using async_send_to_t = detail::async_io_sender<detail::async_send_to>;
 
-    private:
-        std::span<std::byte> buffer_;
-        /* const */ bool zero_as_eof_;
-        std::size_t transferred_ = 0;
-    };
+    using async_accept_t = detail::async_io_sender<detail::async_accept>;
 
-
-    class tcp_socket;
-
-
-    class async_send_operation : public detail::async_output_operation {
-    public:
-        async_send_operation(io_context& context, detail::socket_native_handle_type native_handle, std::span<const std::byte> buffer) noexcept :
-            async_output_operation{context, native_handle}, buffer_(buffer) {}
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> std::size_t;
-
-    private:
-        std::span<const std::byte> buffer_;
-        std::size_t transferred_ = 0;
-    };
-
-
-    class async_receive_from_operation : public detail::async_input_operation {
-    public:
-        async_receive_from_operation(io_context& context, detail::socket_native_handle_type native_handle, std::span<std::byte> buffer, const endpoint& src, bool zero_as_eof) noexcept :
-            async_input_operation{context, native_handle}, buffer_(buffer), src_(src), zero_as_eof_(zero_as_eof) {}
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> std::size_t;
-
-    private:
-        std::span<std::byte> buffer_;
-        endpoint src_;
-        bool zero_as_eof_;
-        std::size_t transferred_ = 0;
-    };
-
-
-    class async_send_to_operation : public detail::async_output_operation {
-    public:
-        async_send_to_operation(io_context& context, detail::socket_native_handle_type native_handle, std::span<const std::byte> buffer, const endpoint& dest) noexcept :
-            async_output_operation{context, native_handle}, buffer_(buffer), dest_(dest) {}
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> std::size_t;
-
-    private:
-        std::span<const std::byte> buffer_;
-        endpoint dest_;
-        std::size_t transferred_ = 0;
-    };
-
-
-    class async_accept_operation : public detail::async_input_operation {
-    public:
-        async_accept_operation(io_context& context, detail::socket_native_handle_type native_handle) noexcept : async_input_operation(context, native_handle) {
-            lazy_ = true;
-        }
-
-        static auto await_ready() noexcept -> bool {
-            return false;
-        }
-
-    protected:
-        auto on_resume_() -> detail::socket_native_handle_type;
-
-    private:
-        detail::socket_native_handle_type accepted_ = detail::invalid_socket_handle_value;
-    };
-
-
-    class async_connect_operation : public detail::async_output_operation {
-    public:
-        async_connect_operation(io_context& context, detail::socket_native_handle_type native_handle, const endpoint& dest_) noexcept :
-            async_output_operation(context, native_handle), dest_(dest_) {
-            lazy_ = true;
-        }
-
-        auto await_ready() noexcept -> bool;
-
-        auto await_resume() -> void;
-
-    private:
-        endpoint dest_;
-    };
+    using async_connect_t = detail::async_io_sender<detail::async_connect>;
 }

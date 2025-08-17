@@ -22,7 +22,6 @@ if (LINUX)
         src/linux/epoll.cpp
         src/linux/net/base.cpp
         src/linux/net/socket.cpp
-        src/linux/src.cpp
     )
 endif()
 

@@ -134,7 +134,7 @@ namespace coio {
             };
         }
 
-        auto sockaddr_to_endpoint(sockaddr* sa) noexcept -> endpoint  {
+        auto sockaddr_to_endpoint(::sockaddr* sa) noexcept -> endpoint  {
             switch (sa->sa_family) {
             case AF_INET: {
                 auto ipv4 = reinterpret_cast<::sockaddr_in*>(sa);
@@ -148,7 +148,7 @@ namespace coio {
             }
         }
 
-        auto sockaddr_storage_to_endpoint(sockaddr_storage& addr) noexcept -> endpoint {
+        auto sockaddr_storage_to_endpoint(::sockaddr_storage& addr) noexcept -> endpoint {
             switch (addr.ss_family) {
             case AF_INET: {
                 ::sockaddr_in ipv4{};
@@ -164,7 +164,7 @@ namespace coio {
             }
         }
 
-        auto to_sockaddr(std::variant<sockaddr_in, sockaddr_in6>& sa) -> std::pair<sockaddr*, socklen_t> {
+        auto to_sockaddr(std::variant<::sockaddr_in, ::sockaddr_in6>& sa) -> std::pair<::sockaddr*, ::socklen_t> {
             return std::visit([](auto& sai) noexcept -> std::pair<::sockaddr*, ::socklen_t> {
                 return {reinterpret_cast<::sockaddr*>(&sai), sizeof(sai)};
             }, sa);

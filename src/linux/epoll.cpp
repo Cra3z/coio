@@ -14,8 +14,8 @@
 namespace coio::detail {
     namespace {
         struct epoll_data {
-            async_io_operation* input_op = nullptr;
-            async_io_operation* output_op = nullptr;
+            async_io_sender_base::pinned* input_op = nullptr;
+            async_io_sender_base::pinned* output_op = nullptr;
         };
 
         class epoll_data_registry {
@@ -82,10 +82,10 @@ namespace coio {
             }
         }
 
-        auto register_op(detail::async_io_operation* op) -> void {
+        auto register_op(detail::async_io_sender_base::pinned* op) -> void {
             COIO_ASSERT(
-                op->category_ == detail::async_io_operation::category::input or
-                op->category_ == detail::async_io_operation::category::output
+                op->category_ == detail::async_io_sender_base::category::input or
+                op->category_ == detail::async_io_sender_base::category::output
             );
 
             std::uint32_t event_mask = EPOLLONESHOT; // oneshot
@@ -96,7 +96,7 @@ namespace coio {
             if (not ok) { // already registered
                 epoll_ctl_op = EPOLL_CTL_MOD;
             }
-            if (op->category_ == detail::async_io_operation::category::input) {
+            if (op->category_ == detail::async_io_sender_base::category::input) {
                 COIO_ASSERT(data.input_op == nullptr);
                 event_mask |= EPOLLIN;
                 data.input_op = op;
@@ -147,134 +147,149 @@ namespace coio {
     }
 
     namespace detail {
-        auto async_io_operation::await_suspend(std::coroutine_handle<> this_coro) -> void {
+        auto async_io_sender_base::pinned::await_suspend(std::coroutine_handle<> this_coro) -> void {
             coro_ = this_coro;
             io_context::impl::of(static_cast<io_context&>(context_)).register_op(this);
         }
-    }
 
-    auto async_receive_operation::await_ready() noexcept -> bool {
-        ::ssize_t n = ::recv(native_handle_, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
-        if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(detail::make_eof_error("async_receive"));
-        else if (n == -1) {
-            exception_ = coio::detail::make_system_error_from_nonblock_errno("async_receive");
-            if (not exception_) return false;
-        }
-        transferred_ = n;
-        return true;
-    }
-
-    auto async_receive_operation::await_resume() -> std::size_t {
-        if (exception_) std::rethrow_exception(exception_);
-        if (transferred_ > 0) return transferred_;
-        ::ssize_t n = ::recv(native_handle_, buffer_.data(), buffer_.size(), 0);
-        if (n == 0 and zero_as_eof_) throw detail::make_eof_error("async_receive");
-        if (n == -1) {
-            COIO_ASSERT(not detail::is_blocking_errno(errno));
-            throw std::system_error(errno, std::system_category(), "async_receive");
-        }
-        transferred_ = n;
-        return transferred_;
-    }
-
-
-    auto async_send_operation::await_ready() noexcept -> bool {
-        ::ssize_t n = ::send(native_handle_, buffer_.data(), buffer_.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
-        if (n == -1) {
-            exception_ = coio::detail::make_system_error_from_nonblock_errno("async_send");
-            if (not exception_) return false;
-        }
-        transferred_ = n;
-        return true;
-    }
-
-    auto async_send_operation::await_resume() -> std::size_t {
-        if (exception_) std::rethrow_exception(exception_);
-        if (transferred_ > 0) return transferred_;
-        ::ssize_t n = ::send(native_handle_, buffer_.data(), buffer_.size(), MSG_NOSIGNAL);
-        if (n == -1) {
-            COIO_ASSERT(not detail::is_blocking_errno(errno));
-            throw std::system_error(errno, std::system_category(), "async_send");
-        }
-        transferred_ = n;
-        return transferred_;
-    }
-
-
-    auto async_receive_from_operation::await_ready() noexcept -> bool {
-        auto sa = detail::endpoint_to_sockaddr_in(src_);
-        auto [psa, len] = detail::to_sockaddr(sa);
-        ::ssize_t n = ::recvfrom(native_handle_, buffer_.data(), buffer_.size(), MSG_DONTWAIT, psa, &len);
-        if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(detail::make_eof_error("async_receive_from"));
-        else if (n == -1) {
-            exception_ = coio::detail::make_system_error_from_nonblock_errno("async_receive_from");
-            if (not exception_) return false;
-        }
-        transferred_ = n;
-        return true;
-    }
-
-    auto async_receive_from_operation::await_resume() -> std::size_t {
-        if (exception_) std::rethrow_exception(exception_);
-        if (transferred_ > 0) return transferred_;
-        auto sa = detail::endpoint_to_sockaddr_in(src_);
-        auto [psa, len] = detail::to_sockaddr(sa);
-        ::ssize_t n = ::recvfrom(native_handle_, buffer_.data(), buffer_.size(), 0, psa, &len);
-        if (n == 0 and zero_as_eof_) throw detail::make_eof_error("async_receive_from");
-        if (n == -1) {
-            COIO_ASSERT(not detail::is_blocking_errno(errno));
-            throw std::system_error(errno, std::system_category(), "async_receive_from");
-        }
-        transferred_ = n;
-        return transferred_;
-    }
-
-
-    auto async_send_to_operation::await_ready() noexcept -> bool {
-        auto sa = detail::endpoint_to_sockaddr_in(dest_);
-        auto [psa, len] = detail::to_sockaddr(sa);
-        ::ssize_t n = ::sendto(native_handle_, buffer_.data(), buffer_.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
-        if (n == -1) {
-            exception_ = coio::detail::make_system_error_from_nonblock_errno("async_send_to");
-            if (not exception_) return false;
-        }
-        transferred_ = n;
-        return true;
-    }
-
-    auto async_send_to_operation::await_resume() -> std::size_t {
-        if (exception_) std::rethrow_exception(exception_);
-        if (transferred_ > 0) return transferred_;
-        auto sa = detail::endpoint_to_sockaddr_in(dest_);
-        auto [psa, len] = detail::to_sockaddr(sa);
-        ::ssize_t n = ::sendto(native_handle_, buffer_.data(), buffer_.size(), MSG_NOSIGNAL, psa, len);
-        if (n == -1) {
-            COIO_ASSERT(not detail::is_blocking_errno(errno));
-            throw std::system_error(errno, std::system_category(), "async_send_to");
-        }
-        transferred_ = n;
-        return transferred_;
-    }
-
-    auto async_accept_operation::on_resume_() -> detail::socket_native_handle_type {
-        if (exception_) std::rethrow_exception(exception_);
-        if (accepted_ == -1) {
-            accepted_ = ::accept4(native_handle_, nullptr, nullptr, 0);
-            if (accepted_ == -1) {
-                COIO_ASSERT(not detail::is_blocking_errno(errno));
-                throw std::system_error(errno, std::system_category(), "async_accept");
+        template<>
+        auto async_io_sender<async_receive>::try_perform() noexcept -> bool {
+            ::ssize_t n = ::recv(native_handle_, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
+            if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(make_eof_error("async_receive"));
+            else if (n == -1) {
+                exception_ = make_system_error_from_nonblock_errno("async_receive");
+                if (not exception_) return false;
             }
+            transferred_ = n;
+            return true;
         }
-        return accepted_;
-    }
 
-    auto async_connect_operation::await_ready() noexcept -> bool {
-        return false;
-    }
+        template<>
+        auto async_io_sender<async_receive>::on_completion() -> std::size_t {
+            if (exception_) std::rethrow_exception(exception_);
+            if (transferred_ > 0) return transferred_;
+            ::ssize_t n = ::recv(native_handle_, buffer_.data(), buffer_.size(), 0);
+            if (n == 0 and zero_as_eof_) throw make_eof_error("async_receive");
+            if (n == -1) {
+                COIO_ASSERT(not is_blocking_errno(errno));
+                throw std::system_error(errno, std::system_category(), "async_receive");
+            }
+            transferred_ = n;
+            return transferred_;
+        }
 
-    auto async_connect_operation::await_resume() -> void {
-        auto sa = detail::endpoint_to_sockaddr_in(dest_);
-        auto [psa, len] = detail::to_sockaddr(sa);
-        detail::throw_last_error(::connect(native_handle_, psa, len), "async_connect");
+        template<>
+        auto async_io_sender<async_send>::try_perform() noexcept -> bool {
+            ::ssize_t n = ::send(native_handle_, buffer_.data(), buffer_.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+            if (n == -1) {
+                exception_ = coio::detail::make_system_error_from_nonblock_errno("async_send");
+                if (not exception_) return false;
+            }
+            transferred_ = n;
+            return true;
+        }
+
+        template<>
+        auto async_io_sender<async_send>::on_completion() -> std::size_t {
+            if (exception_) std::rethrow_exception(exception_);
+            if (transferred_ > 0) return transferred_;
+            ::ssize_t n = ::send(native_handle_, buffer_.data(), buffer_.size(), MSG_NOSIGNAL);
+            if (n == -1) {
+                COIO_ASSERT(not is_blocking_errno(errno));
+                throw std::system_error(errno, std::system_category(), "async_send");
+            }
+            transferred_ = n;
+            return transferred_;
+        }
+
+
+        template<>
+        auto async_io_sender<async_receive_from>::try_perform() noexcept -> bool {
+            auto sa = endpoint_to_sockaddr_in(src_);
+            auto [psa, len] = to_sockaddr(sa);
+            ::ssize_t n = ::recvfrom(native_handle_, buffer_.data(), buffer_.size(), MSG_DONTWAIT, psa, &len);
+            if (n == 0 and zero_as_eof_) exception_ = std::make_exception_ptr(make_eof_error("async_receive_from"));
+            else if (n == -1) {
+                exception_ = make_system_error_from_nonblock_errno("async_receive_from");
+                if (not exception_) return false;
+            }
+            transferred_ = n;
+            return true;
+        }
+
+        template<>
+        auto async_io_sender<async_receive_from>::on_completion() -> std::size_t {
+            if (exception_) std::rethrow_exception(exception_);
+            if (transferred_ > 0) return transferred_;
+            auto sa = endpoint_to_sockaddr_in(src_);
+            auto [psa, len] = to_sockaddr(sa);
+            ::ssize_t n = ::recvfrom(native_handle_, buffer_.data(), buffer_.size(), 0, psa, &len);
+            if (n == 0 and zero_as_eof_) throw make_eof_error("async_receive_from");
+            if (n == -1) {
+                COIO_ASSERT(not is_blocking_errno(errno));
+                throw std::system_error(errno, std::system_category(), "async_receive_from");
+            }
+            transferred_ = n;
+            return transferred_;
+        }
+
+
+        template<>
+        auto async_io_sender<async_send_to>::try_perform() noexcept -> bool {
+            auto sa = endpoint_to_sockaddr_in(dest_);
+            auto [psa, len] = to_sockaddr(sa);
+            ::ssize_t n = ::sendto(native_handle_, buffer_.data(), buffer_.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
+            if (n == -1) {
+                exception_ = make_system_error_from_nonblock_errno("async_send_to");
+                if (not exception_) return false;
+            }
+            transferred_ = n;
+            return true;
+        }
+
+        template<>
+        auto async_io_sender<async_send_to>::on_completion() -> std::size_t {
+            if (exception_) std::rethrow_exception(exception_);
+            if (transferred_ > 0) return transferred_;
+            auto sa = endpoint_to_sockaddr_in(dest_);
+            auto [psa, len] = to_sockaddr(sa);
+            ::ssize_t n = ::sendto(native_handle_, buffer_.data(), buffer_.size(), MSG_NOSIGNAL, psa, len);
+            if (n == -1) {
+                COIO_ASSERT(not is_blocking_errno(errno));
+                throw std::system_error(errno, std::system_category(), "async_send_to");
+            }
+            transferred_ = n;
+            return transferred_;
+        }
+
+        template<>
+        auto async_io_sender<async_accept>::try_perform() noexcept -> bool {
+            return false;
+        }
+
+        template<>
+        auto async_io_sender<async_accept>::on_completion() -> socket_native_handle_type {
+            if (exception_) std::rethrow_exception(exception_);
+            if (accepted_ == -1) {
+                accepted_ = ::accept4(native_handle_, nullptr, nullptr, 0);
+                if (accepted_ == -1) {
+                    COIO_ASSERT(not is_blocking_errno(errno));
+                    throw std::system_error(errno, std::system_category(), "async_accept");
+                }
+            }
+            return accepted_;
+        }
+
+        template<>
+        auto async_io_sender<async_connect>::try_perform() noexcept -> bool {
+            return false;
+        }
+
+        template<>
+        auto async_io_sender<async_connect>::on_completion() -> void {
+            auto sa = endpoint_to_sockaddr_in(dest_);
+            auto [psa, len] = detail::to_sockaddr(sa);
+            throw_last_error(::connect(native_handle_, psa, len), "async_connect");
+        }
     }
 }

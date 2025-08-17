@@ -5,10 +5,10 @@
 namespace coio {
     class steady_timer {
     public:
-        using sleep_operation = execution_context::sleep_operation;
-        using clock_type = sleep_operation::clock_type;
-        using duration_type = sleep_operation::duration_type;
-        using time_point_type = sleep_operation::time_point_type;
+        using sleep_sender = execution_context::sleep_sender;
+        using clock_type = sleep_sender::clock_type;
+        using duration_type = sleep_sender::duration_type;
+        using time_point_type = sleep_sender::time_point_type;
 
     public:
         explicit steady_timer(execution_context& context) noexcept : context_(&context) {}
@@ -22,12 +22,12 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto async_wait(duration_type duration) const noexcept -> sleep_operation {
+        auto async_wait(duration_type duration) const noexcept -> sleep_sender {
             return async_wait_until(clock_type::now() + duration);
         }
 
         [[nodiscard]]
-        auto async_wait_until(time_point_type deadline) const noexcept -> sleep_operation {
+        auto async_wait_until(time_point_type deadline) const noexcept -> sleep_sender {
             return {*context_, deadline};
         }
 

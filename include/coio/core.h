@@ -165,10 +165,10 @@ namespace coio {
             when_all_counter counter_;
         };
 
-        template<typename... Types>
-        class when_all_ready_awaiter<std::tuple<when_all_task<Types>...>> {
+        template<typename... Types, typename... Allocs>
+        class when_all_ready_awaiter<std::tuple<when_all_task<Types, Allocs>...>> {
         public:
-            when_all_ready_awaiter(std::tuple<when_all_task<Types>...> when_all_tasks) : when_all_tasks_(std::move(when_all_tasks)) {}
+            when_all_ready_awaiter(std::tuple<when_all_task<Types, Allocs>...> when_all_tasks) : when_all_tasks_(std::move(when_all_tasks)) {}
 
             auto await_ready() const noexcept -> bool {
                 return bool(counter_.prev_coro);
@@ -183,26 +183,17 @@ namespace coio {
             }
 
             [[nodiscard]]
-            auto await_resume() noexcept(std::is_nothrow_move_constructible_v<std::tuple<when_all_task<Types>...>>) -> std::tuple<when_all_task<Types>...> {
+            auto await_resume() noexcept(std::is_nothrow_move_constructible_v<std::tuple<when_all_task<Types, Allocs>...>>) -> std::tuple<when_all_task<Types, Allocs>...> {
                 return std::move(when_all_tasks_);
             }
 
         private:
-            std::tuple<when_all_task<Types>...> when_all_tasks_;
+            std::tuple<when_all_task<Types, Allocs>...> when_all_tasks_;
             when_all_counter counter_{sizeof...(Types)};
         };
 
-        template<typename... Types>
-        when_all_ready_awaiter(std::tuple<when_all_task<Types>...>) -> when_all_ready_awaiter<std::tuple<when_all_task<Types>...>>;
-
-        template<typename Awaitable>
-        auto do_when_all_task(Awaitable awaitable) -> when_all_task<awaitable_await_result_t<Awaitable>> {
-            if constexpr (std::is_void_v<awaitable_await_result_t<Awaitable>>) {
-                co_await awaitable;
-                co_return;
-            }
-            else co_return co_await awaitable;
-        }
+        template<typename... Types, typename... Allocs>
+        when_all_ready_awaiter(std::tuple<when_all_task<Types, Allocs>...>) -> when_all_ready_awaiter<std::tuple<when_all_task<Types, Allocs>...>>;
 
         template<typename Alloc, typename Awaitable>
         auto do_when_all_task(std::allocator_arg_t, const Alloc&, Awaitable awaitable) -> when_all_task<awaitable_await_result_t<Awaitable>, Alloc> {
@@ -211,6 +202,11 @@ namespace coio {
                 co_return;
             }
             else co_return co_await awaitable;
+        }
+
+        template<typename Awaitable>
+        auto do_when_all_task(Awaitable awaitable) {
+            return (do_when_all_task)(std::allocator_arg, std::allocator<void>{}, std::move(awaitable));
         }
 
         template<typename ResultStorageRange>
@@ -250,7 +246,7 @@ namespace coio {
                 >;
                 when_all_task_container_t result;
                 while (first != last) {
-                    void(result.push_back(do_when_all_task(*(first++))));
+                    void(result.push_back((do_when_all_task)(*(first++))));
                 }
                 return when_all_ready_awaiter<when_all_task_container_t>{std::move(result)};
             }
@@ -267,14 +263,7 @@ namespace coio {
             template<awaitable... Awaitables>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) and (... and std::constructible_from<std::decay_t<Awaitables>, Awaitables&&>) {
-                return transform_awaiter{
-                    when_all_ready_fn{}(std::forward<Awaitables>(awaitables)...),
-                    []<typename... Types>(std::tuple<when_all_task<Types>...> when_all_tasks_) {
-                        return [&when_all_tasks_]<std::size_t... I>(std::index_sequence<I...>) {
-                            return std::tuple<void_to_nothing<Types>...>{std::get<I>(when_all_tasks_).get_non_void_result()...};
-                        }(std::make_index_sequence<sizeof...(Types)>{});
-                    }
-                };
+                return when_all_fn{}(std::allocator_arg, std::allocator<void>{}, std::forward<Awaitables>(awaitables)...);
             }
 
             template<typename Alloc, awaitable... Awaitables>
@@ -282,7 +271,7 @@ namespace coio {
             COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) and (... and std::constructible_from<std::decay_t<Awaitables>, Awaitables&&>) {
                 return transform_awaiter{
                     when_all_ready_fn{}(std::allocator_arg, alloc, std::forward<Awaitables>(awaitables)...),
-                    []<typename... Types>(std::tuple<when_all_task<Types>...> when_all_tasks_) {
+                    []<typename... Types, typename... Allocs>(std::tuple<when_all_task<Types, Allocs>...> when_all_tasks_) {
                         return [&when_all_tasks_]<std::size_t... I>(std::index_sequence<I...>) {
                             return std::tuple<void_to_nothing<Types>...>{std::get<I>(when_all_tasks_).get_non_void_result()...};
                         }(std::make_index_sequence<sizeof...(Types)>{});

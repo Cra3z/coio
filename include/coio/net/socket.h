@@ -15,9 +15,9 @@ namespace coio {
         auto send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
     }
 
-    class async_accept_operation_1;
+    class async_accept_1_t;
 
-    class async_accept_operation_2;
+    class async_accept_2_t;
 
     namespace detail {
 
@@ -164,8 +164,8 @@ namespace coio {
 
             auto connect_(const endpoint& addr) -> void;
 
-            auto async_connect_(const endpoint& addr) noexcept -> async_connect_operation {
-                return {*context_, handle_, addr};
+            auto async_connect_(const endpoint& addr) noexcept -> async_connect_t {
+                return {*context_, handle_, {addr}};
             }
 
         protected:
@@ -173,6 +173,8 @@ namespace coio {
             native_handle_type handle_;
         };
     }
+
+    class tcp_socket;
 
     class tcp_acceptor : detail::socket_base {
     public:
@@ -252,7 +254,7 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.\n
          */
         [[nodiscard]]
-        auto async_accept(tcp_socket& peer) noexcept -> async_accept_operation_1;
+        auto async_accept(tcp_socket& peer) noexcept -> async_accept_1_t;
 
         /**
          * \brief start an asynchronous accept.
@@ -264,7 +266,7 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.\n
          */
         [[nodiscard]]
-        auto async_accept(io_context& context_of_peer) noexcept -> async_accept_operation_2;
+        auto async_accept(io_context& context_of_peer) noexcept -> async_accept_2_t;
 
         /**
          * \brief start an asynchronous accept.
@@ -275,13 +277,13 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.\n
          */
         [[nodiscard]]
-        auto async_accept() noexcept -> async_accept_operation_2;
+        auto async_accept() noexcept -> async_accept_2_t;
     };
 
     class tcp_socket : detail::socket_base {
         friend tcp_acceptor;
-        friend async_accept_operation_1;
-        friend async_accept_operation_2;
+        friend async_accept_1_t;
+        friend async_accept_2_t;
 
     public:
         using socket_base::native_handle_type;
@@ -326,7 +328,7 @@ namespace coio {
          * \throw std::system_error on failure.
          */
         [[nodiscard]]
-        auto async_connect(const endpoint& addr) -> async_connect_operation;
+        auto async_connect(const endpoint& addr) -> async_connect_t;
 
         /**
          * \brief read some data to the socket.
@@ -380,8 +382,8 @@ namespace coio {
          * 3) consider using `async_read` if you need to ensure that the requested amount of data is read before the asynchronous operation completes.
         */
         [[nodiscard]]
-        auto async_read_some(std::span<std::byte> buffer) noexcept -> async_receive_operation {
-            return {*context_, handle_, buffer, true};
+        auto async_read_some(std::span<std::byte> buffer) noexcept -> async_receive_t {
+            return {*context_, handle_, {buffer, true}};
         }
 
         /**
@@ -396,15 +398,15 @@ namespace coio {
          * 3) consider using the async_write function if you need to ensure that all data is written before the asynchronous operation completes.
         */
         [[nodiscard]]
-        auto async_write_some(std::span<const std::byte> buffer) noexcept -> async_send_operation {
-            return {*context_, handle_, buffer};
+        auto async_write_some(std::span<const std::byte> buffer) noexcept -> async_send_t {
+            return {*context_, handle_, {buffer}};
         }
 
         /**
          * \brief same as `async_read_some`
          */
         [[nodiscard]]
-        auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_operation {
+        auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_t {
             return async_read_some(buffer);
         }
 
@@ -412,35 +414,99 @@ namespace coio {
          * \brief same as `async_write_some`
          */
         [[nodiscard]]
-        auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_operation {
+        auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_t {
             return async_write_some(buffer);
         }
     };
 
-    class async_accept_operation_1 : public async_accept_operation {
+    class async_accept_1_t {
     public:
-        async_accept_operation_1(io_context& context, detail::socket_native_handle_type native_handle, tcp_socket& out) noexcept :
-           async_accept_operation(context, native_handle), peer_(out) {}
+        async_accept_1_t(io_context& context, detail::socket_native_handle_type native_handle, tcp_socket& out) noexcept :
+           impl_(context, native_handle, {}), peer_(&out) {}
 
-        auto await_resume() -> void {
-            peer_.reset_(on_resume_());
+        async_accept_1_t(const async_accept_1_t&) = delete;
+
+        async_accept_1_t(async_accept_1_t&& other) noexcept : impl_(std::move(other.impl_)), peer_(std::exchange(other.peer_, {})) {}
+
+        auto operator= (const async_accept_1_t& other) -> async_accept_1_t& = delete;
+
+        auto operator= (async_accept_1_t&& other) noexcept -> async_accept_1_t& {
+            impl_ = std::move(other.impl_);
+            peer_ = std::exchange(other.peer_, {});
+            return *this;
         }
+
+        auto operator co_await() && noexcept {
+            struct awaiter {
+                auto await_ready() noexcept -> bool {
+                    return base.await_ready();
+                }
+
+                auto await_suspend(std::coroutine_handle<> this_coro) {
+                    return base.await_suspend(this_coro);
+                }
+
+                auto await_resume() -> void {
+                    auto native_handle = base.await_resume();
+                    peer.reset_(native_handle);
+                }
+
+                async_accept_t::awaiter base;
+                tcp_socket& peer;
+            };
+
+            COIO_ASSERT(peer_ != nullptr);
+            return awaiter{std::move(impl_).operator co_await(), *std::exchange(peer_, {})};
+        }
+
     private:
-        tcp_socket& peer_;
+        async_accept_t impl_;
+        tcp_socket* peer_;
     };
 
-    class async_accept_operation_2 : public async_accept_operation {
+    class async_accept_2_t {
     public:
-        async_accept_operation_2(io_context& context, detail::socket_native_handle_type native_handle, io_context& context_of_peer) noexcept :
-            async_accept_operation(context, native_handle), peer_(context_of_peer) {}
+        async_accept_2_t(io_context& context, detail::socket_native_handle_type native_handle, io_context& context_of_peer) noexcept :
+           impl_(context, native_handle, {}), context_of_peer_(&context_of_peer) {}
 
-        [[nodiscard]]
-        auto await_resume() -> tcp_socket {
-            peer_.reset_(on_resume_());
-            return std::move(peer_);
+        async_accept_2_t(const async_accept_2_t&) = delete;
+
+        async_accept_2_t(async_accept_2_t&& other) noexcept :
+            impl_(std::move(other.impl_)), context_of_peer_(std::exchange(other.context_of_peer_, {})) {}
+
+        auto operator= (const async_accept_2_t&) -> async_accept_2_t& = delete;
+
+        auto operator= (async_accept_2_t&& other) noexcept -> async_accept_2_t& {
+            impl_ = std::move(other.impl_);
+            context_of_peer_ = std::exchange(other.context_of_peer_, {});
+            return *this;
         }
+
+        auto operator co_await() && noexcept {
+            struct awaiter {
+                auto await_ready() noexcept -> bool {
+                    return base.await_ready();
+                }
+
+                auto await_suspend(std::coroutine_handle<> this_coro) {
+                    return base.await_suspend(this_coro);
+                }
+
+                auto await_resume() -> tcp_socket {
+                    return {context_of_peer, base.await_resume()};
+                }
+
+                async_accept_t::awaiter base;
+                io_context& context_of_peer; // not null
+            };
+
+            COIO_ASSERT(context_of_peer_ != nullptr);
+            return awaiter{std::move(impl_).operator co_await(), *std::exchange(context_of_peer_, {})};
+        }
+
     private:
-        tcp_socket peer_;
+        async_accept_t impl_;
+        io_context* context_of_peer_;
     };
 
     inline auto tcp_acceptor::accept(io_context& context_of_peer) -> tcp_socket {
@@ -453,15 +519,15 @@ namespace coio {
         return accept(*context_);
     }
 
-    inline auto tcp_acceptor::async_accept(tcp_socket& peer) noexcept -> async_accept_operation_1 {
+    inline auto tcp_acceptor::async_accept(tcp_socket& peer) noexcept -> async_accept_1_t {
         return {*context_, handle_, peer};
     }
 
-    inline auto tcp_acceptor::async_accept(io_context& context_of_peer) noexcept -> async_accept_operation_2 {
+    inline auto tcp_acceptor::async_accept(io_context& context_of_peer) noexcept -> async_accept_2_t {
         return {*context_, handle_, context_of_peer};
     }
 
-    inline auto tcp_acceptor::async_accept() noexcept -> async_accept_operation_2 {
+    inline auto tcp_acceptor::async_accept() noexcept -> async_accept_2_t {
         return async_accept(*context_);
     }
 
@@ -509,7 +575,7 @@ namespace coio {
          * \throw std::system_error on failure.
          */
         [[nodiscard]]
-        auto async_connect(const endpoint& addr) -> async_connect_operation;
+        auto async_connect(const endpoint& addr) -> async_connect_t;
 
         /**
          * \brief read data to the socket.
@@ -568,8 +634,8 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
         */
         [[nodiscard]]
-        auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_operation {
-            return {*context_, handle_, buffer, false};
+        auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_t {
+            return {*context_, handle_, {buffer, false}};
         }
 
         /**
@@ -583,8 +649,8 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
         */
         [[nodiscard]]
-        auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_operation {
-            return {*context_, handle_, buffer};
+        auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_t {
+            return {*context_, handle_, {buffer}};
         }
 
         /**
@@ -599,8 +665,8 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
          */
         [[nodiscard]]
-        auto async_receive_from(std::span<std::byte> buffer, const endpoint& src) noexcept -> async_receive_from_operation {
-            return {*context_, handle_, buffer, src, false};
+        auto async_receive_from(std::span<std::byte> buffer, const endpoint& src) noexcept -> async_receive_from_t {
+            return {*context_, handle_, {buffer, src, false}};
         }
 
         /**
@@ -615,8 +681,8 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
          */
         [[nodiscard]]
-        auto async_send_to(std::span<const std::byte> buffer, const endpoint& dest) noexcept -> async_send_to_operation {
-            return {*context_, handle_, buffer, dest};
+        auto async_send_to(std::span<const std::byte> buffer, const endpoint& dest) noexcept -> async_send_to_t {
+            return {*context_, handle_, {buffer, dest}};
         }
     };
 

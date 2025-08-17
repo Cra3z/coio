@@ -10,11 +10,12 @@
 #include <vector>
 #include "config.h"
 #include "task.h"
+#include "schedulers.h"
 
 namespace coio {
     class execution_context {
     public:
-        class schedule_operation;;
+        class schedule_sender;;
 
         class scheduler {
             friend execution_context;
@@ -25,8 +26,8 @@ namespace coio {
         public:
             explicit scheduler(execution_context& ctx) noexcept : ctx_(&ctx) {}
 
-            auto schedule() const noexcept -> schedule_operation {
-                return schedule_operation{*ctx_};
+            auto schedule() const noexcept -> schedule_sender {
+                return schedule_sender{*ctx_};
             }
 
         public:
@@ -36,21 +37,21 @@ namespace coio {
             execution_context* ctx_;
         };
 
-#ifdef COIO_ENABLE_SENDERS
-        struct env {
-            template<typename T>
-            auto query(const detail::exec::get_completion_scheduler_t<T>&) const noexcept -> scheduler {
-                return scheduler{this->ctx_};
-            }
 
-            execution_context& ctx_;
-        };
-#endif
-
-        class schedule_operation {
+        class schedule_sender {
             friend execution_context;
+#ifdef COIO_ENABLE_SENDERS
+            struct env {
+                template<typename T>
+                auto query(const detail::exec::get_completion_scheduler_t<T>&) const noexcept -> scheduler {
+                    return scheduler{ctx_};
+                }
+
+                execution_context& ctx_; // NOLINT(*-avoid-const-or-ref-data-members)
+            };
+#endif
         public:
-            explicit schedule_operation(execution_context& context) noexcept : ctx_(&context) {}
+            explicit schedule_sender(execution_context& context) noexcept : ctx_(&context) {}
 
 #ifdef COIO_ENABLE_SENDERS
             auto get_env() const noexcept -> env {
@@ -59,8 +60,8 @@ namespace coio {
 #endif
 
             auto operator co_await() const noexcept {
-                struct awaiter : async_operation {
-                    using async_operation::async_operation;
+                struct awaiter : node {
+                    using node::node;
 
                     static auto await_ready() noexcept -> bool {
                         return false;
@@ -81,14 +82,14 @@ namespace coio {
             execution_context* ctx_;
         };
 
-        class async_operation {
+        class node {
             friend execution_context;
         public:
-            async_operation(execution_context& context) noexcept : context_(context) {}
+            node(execution_context& context) noexcept : context_(context) {}
 
-            async_operation(const async_operation&) = delete;
+            node(const node&) = delete;
 
-            auto operator= (const async_operation&) -> async_operation& = delete;
+            auto operator= (const node&) -> node& = delete;
 
             auto context() const noexcept -> execution_context& {
                 return context_;
@@ -106,41 +107,53 @@ namespace coio {
         protected:
             execution_context& context_;
             std::coroutine_handle<> coro_;
-            async_operation* next_{};
+            node* next_{};
         };
 
-        class sleep_operation : public async_operation {
+        class sleep_sender {
             friend execution_context;
         public:
             using clock_type = std::chrono::steady_clock;
             using duration_type = clock_type::duration;
             using time_point_type = clock_type::time_point;
 
+            struct awaiter : node {
+                friend sleep_sender;
+            private:
+                awaiter(execution_context& context, time_point_type deadline) noexcept:
+                    node(context), deadline(deadline) {}
+
+            public:
+                auto await_ready() noexcept -> bool {
+                    return deadline <= clock_type::now();
+                }
+
+                auto await_suspend(std::coroutine_handle<> this_coro) -> void {
+                    coro_ = this_coro;
+                    std::scoped_lock _{context_.timer_queue_mtx_};
+                    context_.timer_queue_.push(this);
+                }
+
+                static auto await_resume() noexcept -> void {}
+
+                time_point_type deadline;
+            };
+
         public:
-            sleep_operation(execution_context& context, time_point_type deadline) noexcept :
-                async_operation(context),
-                deadline_(deadline)
-            {
-                context_.work_started();
+            sleep_sender(execution_context& context, time_point_type deadline) noexcept : ctx_(&context), deadline_(deadline) {
+                ctx_->work_started();
             }
 
-            ~sleep_operation() {
-                context_.work_finished();
+            ~sleep_sender() {
+                ctx_->work_finished();
             }
 
-            auto await_ready() noexcept -> bool {
-                return deadline_ <= clock_type::now();
+            auto operator co_await() const noexcept {
+                return awaiter{*ctx_, deadline_};
             }
-
-            auto await_suspend(std::coroutine_handle<> this_coro) -> void {
-                coro_ = this_coro;
-                std::scoped_lock _{context_.timer_queue_mtx_};
-                context_.timer_queue_.push(this);
-            }
-
-            static auto await_resume() noexcept -> void {}
 
         private:
+            execution_context* ctx_;
             time_point_type deadline_;
         };
 
@@ -171,12 +184,12 @@ namespace coio {
     private:
         struct timer_compare {
             COIO_STATIC_CALL_OP
-            auto operator() (sleep_operation* lhs, sleep_operation* rhs) COIO_STATIC_CALL_OP_CONST noexcept -> bool {
-                return rhs->deadline_ < lhs->deadline_;
+            auto operator() (sleep_sender::awaiter* lhs, sleep_sender::awaiter* rhs) COIO_STATIC_CALL_OP_CONST noexcept -> bool {
+                return rhs->deadline < lhs->deadline;
             }
         };
 
-        using timer_queue = std::priority_queue<sleep_operation*, std::vector<sleep_operation*>, timer_compare>;
+        using timer_queue = std::priority_queue<sleep_sender::awaiter*, std::vector<sleep_sender::awaiter*>, timer_compare>;
 
     public:
         execution_context() = default;
@@ -191,8 +204,8 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto schedule() noexcept -> schedule_operation {
-            return schedule_operation{*this};
+        auto schedule() noexcept -> schedule_sender {
+            return schedule_sender{*this};
         }
 
         template<typename Fn, typename... Args>
@@ -225,7 +238,7 @@ namespace coio {
                 std::unique_lock lock{timer_queue_mtx_, std::adopt_lock};
                 if (timer_queue_.empty()) break;
                 auto sleep_op = timer_queue_.top();
-                if (sleep_op->deadline_ <= std::chrono::steady_clock::now()) {
+                if (sleep_op->deadline <= std::chrono::steady_clock::now()) {
                     timer_queue_.pop();
                     lock.unlock();
                     sleep_op->post();
@@ -266,8 +279,8 @@ namespace coio {
         std::mutex timer_queue_mtx_;
         timer_queue timer_queue_;
         std::mutex op_queue_mtx_;
-        async_operation* op_queue_head_{};
-        async_operation* op_queue_tail_{};
+        node* op_queue_head_{};
+        node* op_queue_tail_{};
         std::atomic<std::size_t> work_count_{0};
     };
 

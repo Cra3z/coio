@@ -55,14 +55,14 @@ namespace coio {
         friend auto operator<=> (const ipv6_address& lhs, const ipv6_address& rhs) noexcept = default;
 
         [[nodiscard]]
-        static auto loopback() noexcept ->ipv6_address {
+        static auto loopback() noexcept -> ipv6_address {
             ipv6_address result;
             result.val_[15] = std::byte(1);
             return result;
         }
 
         [[nodiscard]]
-        static auto any() noexcept ->ipv6_address {
+        static auto any() noexcept -> ipv6_address {
             return {};
         }
 
@@ -82,6 +82,8 @@ namespace coio {
 
     class ip_address {
     public:
+        ip_address() noexcept : ip_address(ipv4_address::any()) {}
+
         ip_address(const ipv4_address& v4) noexcept : v4_(v4), version_(4) {}
 
         ip_address(const ipv6_address& v6) noexcept : v6_(v6), version_(6) {}
@@ -134,6 +136,8 @@ namespace coio {
 
     class endpoint {
     public:
+        endpoint() = default;
+
         endpoint(const ipv4_address& ipv4_addr, std::uint16_t port) noexcept : ip_(ipv4_addr), port_(port) {}
 
         endpoint(const ipv6_address& ipv6_addr, std::uint16_t port) noexcept : ip_(ipv6_addr), port_(port) {}
@@ -184,7 +188,7 @@ namespace coio {
 
     private:
         ip_address ip_;
-        std::uint16_t port_;
+        std::uint16_t port_{};
     };
 
 
