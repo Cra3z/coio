@@ -10,9 +10,11 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
 
 option(COIO_EXAMPLES "whether to build examples" OFF)
 
+file(GLOB_RECURSE COIO_HEADERS CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/*.h")
 add_library(
     ${PROJECT_NAME}
     STATIC
+    ${COIO_HEADERS}
 )
 
 if (LINUX)

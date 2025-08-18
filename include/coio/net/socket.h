@@ -247,7 +247,7 @@ namespace coio {
         /**
          * \brief start an asynchronous accept.
          * \param peer the socket into which the new connection will be accepted.
-         * \return the awaiter - `async_accept_operation_1`.
+         * \return the awaitable - `async_accept_1_t`.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
@@ -259,7 +259,7 @@ namespace coio {
         /**
          * \brief start an asynchronous accept.
          * \param context_of_peer the io_context object to be used for the newly accepted socket.
-         * \return the awaiter - `async_accept_operation_2`.
+         * \return the awaitable - `async_accept_2_t`.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
@@ -270,7 +270,7 @@ namespace coio {
 
         /**
          * \brief start an asynchronous accept.
-         * \return the awaiter - `async_accept_operation_2`.
+         * \return the awaitable - `async_accept_2_t`.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
@@ -324,7 +324,7 @@ namespace coio {
         /**
          * \brief start an asynchronous connect.
          * \param addr the remote endpoint to which the socket will be connected.
-         * \return the awaiter - `async_connect_operation`.
+         * \return the awaitable - `async_connect_t`.
          * \throw std::system_error on failure.
          */
         [[nodiscard]]
@@ -373,7 +373,7 @@ namespace coio {
         /**
          * \brief receive some message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
-         * \return the awaiter - `async_receive_operation`.
+         * \return the awaitable - `async_receive_t`.
          * \note
          * 1) the program must ensure that no other calls to `read`, `read_some`, `receive`,
          * `async_read`, `async_read_some` or `async_receive` are performed until this operation completes.\n
@@ -389,7 +389,7 @@ namespace coio {
         /**
          * \brief send some message data asynchronously.
          * \param buffer the buffers containing the message part to send.
-         * \return the awaiter - `async_send_operation`.
+         * \return the awaitable - `async_send_t`.
          * \note
          * 1) the program must ensure that no other calls to `write`, `write_some`, `send`,
          * `async_write`, `async_write_some`, or `async_send` are performed until this operation completes.\n
@@ -571,7 +571,7 @@ namespace coio {
         /**
          * \brief start an asynchronous connect.
          * \param addr the remote endpoint to which the socket will be connected.
-         * \return the awaiter - `async_connect_operation`.
+         * \return the awaitable - `async_connect_t`.
          * \throw std::system_error on failure.
          */
         [[nodiscard]]
@@ -626,7 +626,7 @@ namespace coio {
         /**
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
-         * \return the awaiter - `async_receive_operation`.
+         * \return the awaitable - `async_receive_t`.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
          * `async_receive_from` are performed until this operation completes.\n
@@ -641,7 +641,7 @@ namespace coio {
         /**
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
-         * \return the awaiter - `async_send_operation`.
+         * \return the awaitable - `async_send_t`.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
          * `async_send_to` are performed until this operation completes.\n
@@ -657,7 +657,7 @@ namespace coio {
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
          * \param src an endpoint object that receives the endpoint of the remote sender of the datagram.
-         * \return the awaiter - `async_receive_from_operation`.
+         * \return the awaitable - `async_receive_from_t`.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
          * `async_receive_from` are performed until this operation completes.\n
@@ -673,7 +673,7 @@ namespace coio {
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
          * \param dest the remote endpoint to which the data will be sent.
-         * \return the awaiter - `async_send_to_operation`.
+         * \return the awaitable - `async_send_to_t`.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
          * `async_send_to` are performed until this operation completes.\n

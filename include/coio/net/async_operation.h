@@ -113,7 +113,7 @@ namespace coio {
                 Customization(std::exchange(static_cast<Customization&>(other), {}))
             {}
 
-            auto operator= (async_io_sender other) -> async_io_sender& {
+            auto operator= (async_io_sender other) noexcept -> async_io_sender& {
                 this->swap(other);
                 return *this;
             }

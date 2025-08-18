@@ -15,7 +15,7 @@ auto main() -> int {
         using namespace std::chrono_literals;
         auto _ = context.make_work_guard();
         for (std::size_t i = 0; i < 5; ++i) {
-            coio::async_lock_guard _ = co_await mutex.make_lock_guard();
+            coio::async_lock_guard _ = co_await mutex.lock_guard();
             for (auto str : strings) {
                 co_await coio::steady_timer{context, 200ms}.async_wait();
                 ::debug("{}", str);

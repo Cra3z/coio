@@ -335,8 +335,9 @@ namespace coio {
         template<typename T, typename Alloc = void>
         using sync_wait_task = task_wrapper<T, on_sync_wait_final_suspend_fn, Alloc>;
 
-        template<typename Awaitable>
-        auto do_sync_wait_task(Awaitable awaitable) COIO_STATIC_CALL_OP -> sync_wait_task<awaitable_await_result_t<Awaitable>> {
+        // TODO(FIXME): sync_wait: It should be possible to call overload 1 within overload 2 to avoid code duplication, but for some reason it triggered an ICE (Internal Compiler Error) in GCC.
+        template<typename Alloc, typename Awaitable>
+        auto do_sync_wait_task(std::allocator_arg_t, const Alloc&, Awaitable awaitable) -> sync_wait_task<awaitable_await_result_t<Awaitable>, Alloc> {
             if constexpr (std::is_void_v<awaitable_await_result_t<Awaitable>>) {
                 co_await awaitable;
                 co_return;
@@ -344,8 +345,8 @@ namespace coio {
             else co_return co_await awaitable;
         }
 
-        template<typename Awaitable, typename Alloc>
-        auto do_sync_wait_task(std::allocator_arg_t, const Alloc&, Awaitable awaitable) COIO_STATIC_CALL_OP -> sync_wait_task<awaitable_await_result_t<Awaitable>, Alloc> {
+        template<typename Awaitable>
+        auto do_sync_wait_task(Awaitable awaitable) -> sync_wait_task<awaitable_await_result_t<Awaitable>> {
             if constexpr (std::is_void_v<awaitable_await_result_t<Awaitable>>) {
                 co_await awaitable;
                 co_return;
@@ -354,20 +355,20 @@ namespace coio {
         }
 
         struct sync_wait_fn {
-            template<awaitable Awaitable>
-            COIO_STATIC_CALL_OP auto operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> awaitable_await_result_t<decltype(awt)> {
-                auto sync_ = (do_sync_wait_task)(std::forward<decltype(awt)>(awt));
+            template<typename Alloc, awaitable Awaitable>
+            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> awaitable_await_result_t<Awaitable> {
+                auto sync_ = (do_sync_wait_task)(std::allocator_arg, alloc, std::forward<Awaitable>(awt));
                 sync_.coro_.resume();
                 sync_.coro_.promise().on_final_suspend_.finished_.wait(0);
-                return static_cast<std::add_rvalue_reference_t<awaitable_await_result_t<decltype(awt)>>>(sync_.get_result());
+                return static_cast<std::add_rvalue_reference_t<awaitable_await_result_t<Awaitable>>>(sync_.get_result());
             }
 
-            template<typename Alloc, awaitable Awaitable>
-            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> awaitable_await_result_t<decltype(awt)> {
-                auto sync_ = (do_sync_wait_task)(std::allocator_arg, alloc, std::forward<decltype(awt)>(awt));
+            template<awaitable Awaitable>
+            COIO_STATIC_CALL_OP auto operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> awaitable_await_result_t<Awaitable> {
+                auto sync_ = (do_sync_wait_task)(std::forward<Awaitable>(awt));
                 sync_.coro_.resume();
                 sync_.coro_.promise().on_final_suspend_.finished_.wait(0);
-                return static_cast<std::add_rvalue_reference_t<awaitable_await_result_t<decltype(awt)>>>(sync_.get_result());
+                return static_cast<std::add_rvalue_reference_t<awaitable_await_result_t<Awaitable>>>(sync_.get_result());
             }
         };
     }
