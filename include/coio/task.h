@@ -55,7 +55,7 @@ namespace coio {
 
             template<typename Promise>
             auto await_suspend(std::coroutine_handle<Promise> this_coro) const noexcept -> std::coroutine_handle<> {
-                COIO_DCHECK(coro != nullptr);
+                COIO_ASSERT(coro != nullptr);
                 coro.promise().set_continuation(this_coro);
                 return coro;
             }
@@ -286,7 +286,7 @@ namespace coio {
 
         [[nodiscard]]
         auto ready() const noexcept -> bool {
-            COIO_DCHECK(coro_ != nullptr);
+            COIO_ASSERT(coro_ != nullptr);
             return coro_.done();
         }
 
@@ -344,7 +344,7 @@ namespace coio {
 
         [[nodiscard]]
         auto ready() const noexcept -> bool {
-            COIO_DCHECK(coro_ != nullptr);
+            COIO_ASSERT(coro_ != nullptr);
             return coro_.promise().step_.load(std::memory_order_relaxed) == 2;
         }
 

@@ -357,7 +357,7 @@ namespace coio {
         template<typename... Args> requires std::constructible_from<value_type, Args...>
         constexpr auto unchecked_emplace_back(Args&&... args) ->reference {
             auto p = try_emplace_back(std::forward<Args>(args)...);
-            COIO_DCHECK(p != nullptr);
+            COIO_ASSERT(p != nullptr);
             return *p;
         }
 
@@ -474,7 +474,7 @@ namespace coio {
         }
 
         constexpr auto pop_back() ->void {
-            COIO_DCHECK(not empty());
+            COIO_ASSERT(not empty());
             void(erase(std::ranges::prev(end())));
         }
 

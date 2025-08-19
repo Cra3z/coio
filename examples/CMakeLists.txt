@@ -15,4 +15,17 @@ foreach(EXAMPLE_FILE ${EXAMPLE_FILES})
         PRIVATE
         coio
     )
+    target_compile_definitions(
+        example-${EXAMPLE_FILE_NAME}
+        PRIVATE
+        -DCOIO_ENABLE_SENDERS
+        -DCOIO_EXECUTION_USE_NVIDIA
+    )
+
+    target_include_directories(
+        example-${EXAMPLE_FILE_NAME}
+        PRIVATE
+        "/mnt/d/coding/cpp/stdexec/include"
+    )
 endforeach()
+

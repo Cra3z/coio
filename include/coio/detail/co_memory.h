@@ -11,12 +11,12 @@ namespace coio::detail {
     };
 
     COIO_ALWAYS_INLINE constexpr auto ceiling_division(std::size_t n, std::size_t m) noexcept ->std::size_t {
-        COIO_DCHECK(m != 0);
+        COIO_ASSERT(m != 0);
         return (n + m - 1) / m;
     }
 
     COIO_ALWAYS_INLINE constexpr auto ceiling_align(std::size_t n, std::size_t m) noexcept ->std::size_t {
-        COIO_DCHECK(m != 0);
+        COIO_ASSERT(m != 0);
         return ceiling_division(n, m) * m;
     }
 

@@ -61,7 +61,7 @@ namespace coio {
              */
             [[nodiscard]]
             auto context() const noexcept -> io_context& {
-                COIO_DCHECK(context_);
+                COIO_ASSERT(context_);
                 return *context_;
             }
 

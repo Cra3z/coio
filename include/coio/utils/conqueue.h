@@ -98,17 +98,17 @@ namespace coio {
             return this->emplace(std::move(value));
         }
 
-        template<typename... Args>  requires std::constructible_from<value_type, Args...>
-        auto emplace(Args&&... args) {
-            return this->emplace(std::allocator_arg, get_allocator(), std::forward<Args>(args)...);
+        template<typename... Args>  requires std::constructible_from<value_type, Args...> and (... and std::move_constructible<Args>)
+        auto emplace(Args... args) {
+            return this->emplace(std::allocator_arg, get_allocator(), std::move(args)...);
         }
 
-        template<typename OtherAlloc, typename... Args> requires std::constructible_from<value_type, Args...>
-        auto emplace(std::allocator_arg_t, const OtherAlloc&, Args&&... args) -> task<void, OtherAlloc> {
+        template<typename OtherAlloc, typename... Args> requires std::constructible_from<value_type, Args...> and (... and std::move_constructible<Args>)
+        auto emplace(std::allocator_arg_t, const OtherAlloc&, Args... args) -> task<void, OtherAlloc> {
             co_await full_sema_.acquire();
             {
                 auto _ = co_await mtx_.lock_guard();
-                container_.emplace_back(std::forward<Args>(args)...);
+                container_.emplace_back(std::move(args)...);
             }
             empty_sema_.release();
         }
@@ -159,8 +159,6 @@ namespace coio {
             co_return result;
         }
 
-
-
     private:
         Container container_;
         const size_type capacity_;
@@ -183,7 +181,7 @@ namespace coio {
         using allocator_type = Alloc;
 
     public:
-        explicit ring_buffer(std::size_t capacity) : capacity_(capacity), full_sema_(capacity), empty_sema_(0) {
+        explicit ring_buffer(size_type capacity) : capacity_(capacity), full_sema_(capacity), empty_sema_(0) {
             COIO_ASSERT(capacity > 0 and capacity <= max_capacity());
             container_.resize(capacity);
         }
@@ -231,16 +229,16 @@ namespace coio {
             this->emplace(std::move(value));
         }
 
-        template<typename... Args> requires std::constructible_from<value_type, Args...>
-        auto emplace(Args&&... args) {
-            return this->emplace(std::allocator_arg, get_allocator(), std::forward<Args>(args)...);
+        template<typename... Args> requires std::constructible_from<value_type, Args...> and (... and std::move_constructible<Args>)
+        auto emplace(Args... args) {
+            return this->emplace(std::allocator_arg, get_allocator(), std::move(args)...);
         }
 
-        template<typename OtherAlloc, typename... Args> requires std::constructible_from<value_type, Args...>
-        auto emplace(std::allocator_arg_t, const OtherAlloc&, Args&&... args) -> task<void, OtherAlloc> {
+        template<typename OtherAlloc, typename... Args> requires std::constructible_from<value_type, Args...> and (... and std::move_constructible<Args>)
+        auto emplace(std::allocator_arg_t, const OtherAlloc&, Args... args) -> task<void, OtherAlloc> {
             co_await full_sema_.acquire(); // wait: not full
             auto index = tail_.load(std::memory_order_relaxed);
-            std::ranges::begin(container_)[index] = value_type(std::forward<Args>(args)...);
+            std::ranges::begin(container_)[index] = value_type(std::move(args)...);
             tail_.store((index + 1) % capacity_, std::memory_order_release);
             empty_sema_.release();
         }
@@ -265,17 +263,17 @@ namespace coio {
 
         template<typename OtherAlloc>
         auto try_pop(std::allocator_arg_t, const OtherAlloc&) -> task<std::optional<value_type>, OtherAlloc> {
-            if (empty()) return std::nullopt;
+            if (not empty_sema_.try_acquire()) co_return std::nullopt;
             auto index = head_.load(std::memory_order_relaxed);
             value_type result = std::move(std::ranges::begin(container_)[index]);
             head_.store((index + 1) % capacity_, std::memory_order_release);
             full_sema_.release(); // notify: not full
-            return std::optional<value_type>(std::move(result));
+            co_return result;
         }
 
     private:
         Container container_;
-        /* const */ size_type capacity_{};
+        const size_type capacity_;
         std::atomic<async_semaphore<>::count_type> head_{0}, tail_{0};
         mutable async_semaphore<> full_sema_;
         mutable async_semaphore<> empty_sema_;

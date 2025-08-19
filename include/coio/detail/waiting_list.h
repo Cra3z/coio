@@ -20,11 +20,14 @@ namespace coio::detail {
         [[nodiscard]]
         auto pop() -> value_type {
             auto node = head_.load(std::memory_order::acquire);
+            do {
+                if (node == nullptr) return nullptr;
+            }
             while (not head_.compare_exchange_weak(
                 node,
                 node->*next_,
                 std::memory_order_acq_rel
-            )) {}
+            ));
             return node;
         }
 

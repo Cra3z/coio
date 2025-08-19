@@ -1,4 +1,5 @@
 #define COIO_ENABLE_SENDERS
+#define COIO_EXECUTION_USE_NVIDIA
 #include <stdexec/execution.hpp>
 #include <coio/core.h>
 #include <coio/steady_timer.h>

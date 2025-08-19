@@ -82,37 +82,37 @@ namespace coio {
 
         [[nodiscard]]
         constexpr auto operator[](size_type index) noexcept -> reference {
-            COIO_DCHECK(index < N);
+            COIO_ASSERT(index < N);
             return internal_[index];
         }
 
         [[nodiscard]]
         constexpr auto operator[](size_type index) const noexcept -> const_reference {
-            COIO_DCHECK(index < N);
+            COIO_ASSERT(index < N);
             return internal_[index];
         }
 
         [[nodiscard]]
         constexpr auto front() noexcept -> reference {
-            COIO_DCHECK(not empty());
+            COIO_ASSERT(not empty());
             return internal_[0];
         }
 
         [[nodiscard]]
         constexpr auto front() const noexcept -> const_reference {
-            COIO_DCHECK(not empty());
+            COIO_ASSERT(not empty());
             return internal_[0];
         }
 
         [[nodiscard]]
         constexpr auto back() noexcept -> reference {
-            COIO_DCHECK(not empty());
+            COIO_ASSERT(not empty());
             return internal_[size() - 1];
         }
 
         [[nodiscard]]
         constexpr auto back() const noexcept -> const_reference {
-            COIO_DCHECK(not empty());
+            COIO_ASSERT(not empty());
             return internal_[size() - 1];
         }
 

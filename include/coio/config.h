@@ -69,12 +69,6 @@
 #define COIO_ASSUME(expr) __assume(expr)
 #endif
 
-#ifdef NDEBUG
-#define COIO_DCHECK(expr) COIO_ASSERT(expr)
-#else
-#define COIO_DCHECK(expr) COIO_ASSUME(expr)
-#endif
-
 #ifdef COIO_USE_MODULE
 #define COIO_MODULE_EXPORT export
 #define COIO_MODULE_EXPORT_BEGIN export {

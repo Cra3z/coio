@@ -24,4 +24,14 @@ namespace coio {
         return static_cast<std::underlying_type_t<E>>(e);
     }
 
+    template<typename T>
+    constexpr auto to_signed(T x) noexcept -> std::make_signed_t<T> {
+        return static_cast<std::make_signed_t<T>>(x);
+    }
+
+    template<typename T>
+    constexpr auto to_unsigned(T x) noexcept -> std::make_unsigned_t<T> {
+        return static_cast<std::make_unsigned_t<T>>(x);
+    }
+
 }

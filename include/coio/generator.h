@@ -31,42 +31,42 @@ namespace coio {
                 node_handle_t_(Promise& promise) noexcept : ptr_(std::addressof(promise)), coro_(std::coroutine_handle<Promise>::from_promise(promise)) {}
 
                 auto get_yielded() ->Yielded {
-                    COIO_DCHECK(ptr_ != nullptr);
+                    COIO_ASSERT(ptr_ != nullptr);
                     return ptr_->get_yielded();
                 }
 
                 auto try_rethrow() ->void {
-                    COIO_DCHECK(ptr_ != nullptr);
+                    COIO_ASSERT(ptr_ != nullptr);
                     ptr_->try_rethrow();
                 }
 
                 auto get_yielded_or_throw() ->Yielded {
-                    COIO_DCHECK(ptr_ != nullptr);
+                    COIO_ASSERT(ptr_ != nullptr);
                     return ptr_->get_yielded_or_rethrow();
                 }
 
                 auto done() const noexcept ->bool {
-                    COIO_DCHECK(coro_ != nullptr and ptr_ != nullptr);
+                    COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
                     return coro_.done();
                 }
 
                 auto prev() noexcept ->node_handle_t_& {
-                    COIO_DCHECK(coro_ != nullptr and ptr_ != nullptr);
+                    COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
                     return ptr_->prev_;
                 }
 
                 auto prev() const noexcept ->const node_handle_t_& {
-                    COIO_DCHECK(coro_ != nullptr and ptr_ != nullptr);
+                    COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
                     return ptr_->prev_;
                 }
 
                 auto top() noexcept ->node_handle_t_& {
-                    COIO_DCHECK(coro_ != nullptr and ptr_ != nullptr);
+                    COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
                     return ptr_->top_;
                 }
 
                 auto top() const noexcept ->const node_handle_t_& {
-                    COIO_DCHECK(coro_ != nullptr and ptr_ != nullptr);
+                    COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
                     return ptr_->top_;
                 }
 
@@ -75,18 +75,18 @@ namespace coio {
                 }
 
                 auto resume() ->void {
-                    COIO_DCHECK(coro_ != nullptr and ptr_ != nullptr);
+                    COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
                     coro_.resume();
                 }
 
                 auto destroy() ->void {
-                    COIO_DCHECK(coro_ != nullptr and ptr_ != nullptr);
+                    COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
                     coro_.destroy();
                 }
 
                 explicit operator bool() const noexcept {
                     // assume: `coro == nullptr` if and only if `ptr == nullptr`
-                    COIO_DCHECK((coro_ == nullptr) == (ptr_ == nullptr));
+                    COIO_ASSERT((coro_ == nullptr) == (ptr_ == nullptr));
                     return coro_ != nullptr;
                 }
 
@@ -130,7 +130,7 @@ namespace coio {
 
                 template<typename OtherGenerator>
                 auto await_suspend(std::coroutine_handle<OtherGenerator> this_coro) ->std::coroutine_handle<> {
-                    COIO_DCHECK(new_top_);
+                    COIO_ASSERT(new_top_);
                     node_handle_t_ h = this_coro.promise();
                     new_top_.top() = new_top_;
                     new_top_.prev() = h;
@@ -198,12 +198,12 @@ namespace coio {
             }
 
             auto get_yielded() ->Yielded {
-                COIO_DCHECK(value_or_error_.index() == 1);
+                COIO_ASSERT(value_or_error_.index() == 1);
                 return static_cast<Yielded>(**std::get_if<1>(&value_or_error_));
             }
 
             auto get_yielded_or_rethrow() ->Yielded {
-                COIO_DCHECK(value_or_error_.index() > 0);
+                COIO_ASSERT(value_or_error_.index() > 0);
                 try_rethrow();
                 return static_cast<Yielded>(**std::get_if<1>(&value_or_error_));
             }
@@ -348,7 +348,7 @@ namespace coio {
 
         [[nodiscard]]
         auto begin() ->iterator {
-            COIO_DCHECK(coro_ != nullptr);
+            COIO_ASSERT(coro_ != nullptr);
             auto& promise = coro_.promise();
             promise.top_ = promise;
             coro_.resume();

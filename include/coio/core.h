@@ -46,7 +46,7 @@ namespace coio {
             using count_type = std::atomic_unsigned_lock_free::value_type;
 
             explicit when_all_counter(std::size_t count) noexcept : count(count) {
-                COIO_DCHECK(count > 0);
+                COIO_ASSERT(count > 0);
             }
 
             [[nodiscard]]
@@ -126,7 +126,7 @@ namespace coio {
 
         struct on_when_all_task_final_suspend_fn {
             COIO_STATIC_CALL_OP auto operator() () COIO_STATIC_CALL_OP_CONST noexcept -> std::coroutine_handle<> {
-                COIO_DCHECK(counter_ != nullptr);
+                COIO_ASSERT(counter_ != nullptr);
                 return counter_->decrease();
             }
             when_all_counter* counter_ = nullptr;

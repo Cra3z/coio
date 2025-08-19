@@ -90,7 +90,7 @@ namespace coio {
         }
 
         constexpr auto operator* () const noexcept -> element_type& {
-            COIO_DCHECK(ptr_ != nullptr);
+            COIO_ASSERT(ptr_ != nullptr);
             return *ptr_;
         }
 
@@ -101,7 +101,7 @@ namespace coio {
 
         [[nodiscard]]
         constexpr auto use_count() const noexcept requires retainable<T> {
-            COIO_DCHECK(ptr_ != nullptr);
+            COIO_ASSERT(ptr_ != nullptr);
             return ptr_->use_count();
         }
 
