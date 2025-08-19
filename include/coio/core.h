@@ -259,6 +259,46 @@ namespace coio {
 
         };
 
+        template<typename OutTypeList, typename OutIndexSeq, typename TypeList, typename IndexSeq>
+        struct non_void_impl;
+
+        template<typename... OutTypes, std::size_t... OutIdx, typename First, typename... Rest, std::size_t I, std::size_t... Idx>
+        struct non_void_impl<type_list<OutTypes...>, std::index_sequence<OutIdx...>, type_list<First, Rest...>, std::index_sequence<I, Idx...>> :
+            non_void_impl<type_list<OutTypes..., First>, std::index_sequence<OutIdx..., I>, type_list<Rest...>, std::index_sequence<Idx...>> {};
+
+        template<typename... OutTypes, std::size_t... OutIdx, typename... Rest, std::size_t I, std::size_t... Idx>
+        struct non_void_impl<type_list<OutTypes...>, std::index_sequence<OutIdx...>, type_list<void, Rest...>, std::index_sequence<I, Idx...>> :
+            non_void_impl<type_list<OutTypes...>, std::index_sequence<OutIdx...>, type_list<Rest...>, std::index_sequence<Idx...>> {};
+
+        template<typename... OutTypes, std::size_t... Idx>
+        struct non_void_impl<type_list<OutTypes...>, std::index_sequence<Idx...>, type_list<>, std::index_sequence<>> {
+            using types = std::tuple<OutTypes...>;
+            using indices = std::index_sequence<Idx...>;
+        };
+
+        template<typename... Types>
+        using non_void = non_void_impl<type_list<>, std::index_sequence<>, type_list<Types...>, std::make_index_sequence<sizeof...(Types)>>;
+
+        struct get_when_all_result {
+            template<typename ReturnType, std::size_t... I, typename RefTuple>
+            static auto filter_(std::index_sequence<I...>, RefTuple tpl) -> ReturnType {
+                return ReturnType(std::get<I>(std::move(tpl))...);
+            }
+
+            template<typename... Types, typename... Allocs>
+            COIO_STATIC_CALL_OP auto operator()(std::tuple<when_all_task<Types, Allocs>...> when_all_tasks_) COIO_STATIC_CALL_OP_CONST {
+                using NonVoidTypes = typename non_void<Types...>::types;
+                using NonVoidIndices = typename non_void<Types...>::indices;
+                using ReturnType = std::conditional_t<std::same_as<NonVoidTypes, std::tuple<>>, void, NonVoidTypes>;
+                return [&when_all_tasks_]<std::size_t... I>(std::index_sequence<I...>) {
+                    return (filter_<ReturnType>)(
+                        NonVoidIndices{},
+                        std::forward_as_tuple(std::get<I>(when_all_tasks_).get_non_void_result()...)
+                    );
+                }(std::index_sequence_for<Types...>{});
+            }
+        };
+
         struct when_all_fn {
             template<awaitable... Awaitables>
             [[nodiscard]]
@@ -271,11 +311,7 @@ namespace coio {
             COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) and (... and std::constructible_from<std::decay_t<Awaitables>, Awaitables&&>) {
                 return transform_awaiter{
                     when_all_ready_fn{}(std::allocator_arg, alloc, std::forward<Awaitables>(awaitables)...),
-                    []<typename... Types, typename... Allocs>(std::tuple<when_all_task<Types, Allocs>...> when_all_tasks_) {
-                        return [&when_all_tasks_]<std::size_t... I>(std::index_sequence<I...>) {
-                            return std::tuple<void_to_nothing<Types>...>{std::get<I>(when_all_tasks_).get_non_void_result()...};
-                        }(std::make_index_sequence<sizeof...(Types)>{});
-                    }
+                    get_when_all_result{}
                 };
             }
 
@@ -335,16 +371,6 @@ namespace coio {
         template<typename T, typename Alloc = void>
         using sync_wait_task = task_wrapper<T, on_sync_wait_final_suspend_fn, Alloc>;
 
-        // TODO(FIXME): sync_wait: It should be possible to call overload 1 within overload 2 to avoid code duplication, but for some reason it triggered an ICE (Internal Compiler Error) in GCC.
-        template<typename Alloc, typename Awaitable>
-        auto do_sync_wait_task(std::allocator_arg_t, const Alloc&, Awaitable awaitable) -> sync_wait_task<awaitable_await_result_t<Awaitable>, Alloc> {
-            if constexpr (std::is_void_v<awaitable_await_result_t<Awaitable>>) {
-                co_await awaitable;
-                co_return;
-            }
-            else co_return co_await awaitable;
-        }
-
         template<typename Awaitable>
         auto do_sync_wait_task(Awaitable awaitable) -> sync_wait_task<awaitable_await_result_t<Awaitable>> {
             if constexpr (std::is_void_v<awaitable_await_result_t<Awaitable>>) {
@@ -355,14 +381,6 @@ namespace coio {
         }
 
         struct sync_wait_fn {
-            template<typename Alloc, awaitable Awaitable>
-            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> awaitable_await_result_t<Awaitable> {
-                auto sync_ = (do_sync_wait_task)(std::allocator_arg, alloc, std::forward<Awaitable>(awt));
-                sync_.coro_.resume();
-                sync_.coro_.promise().on_final_suspend_.finished_.wait(0);
-                return static_cast<std::add_rvalue_reference_t<awaitable_await_result_t<Awaitable>>>(sync_.get_result());
-            }
-
             template<awaitable Awaitable>
             COIO_STATIC_CALL_OP auto operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> awaitable_await_result_t<Awaitable> {
                 auto sync_ = (do_sync_wait_task)(std::forward<Awaitable>(awt));

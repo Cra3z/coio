@@ -1,9 +1,8 @@
 #pragma once
-#include <algorithm>
 #include <span>
-#include <stop_token>
+#include <stop_token>  // IWYU pragma: keep
 #include "task.h"
-#include "error.h"
+#include "error.h" // IWYU pragma: keep
 
 namespace coio {
 

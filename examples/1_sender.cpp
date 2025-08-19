@@ -15,9 +15,6 @@ auto main() -> int {
 
     auto tick = std::chrono::steady_clock::now();
     auto [i, j, k] = stdexec::sync_wait(stdexec::when_all(
-        stdexec::just() | stdexec::continues_on(io_context.get_scheduler()) | stdexec::then([] {
-            ::println("start...");
-        }),
         emit_after(1),
         emit_after(2),
         emit_after(3),
