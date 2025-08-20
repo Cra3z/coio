@@ -212,7 +212,8 @@ namespace coio {
 
         [[nodiscard]]
         auto max_capacity() const noexcept -> size_type {
-            return std::numeric_limits<std::atomic_unsigned_lock_free::value_type>::max();
+            using int_type = std::common_type_t<async_semaphore<>::count_type, size_type>;
+            return std::min<int_type>(async_semaphore<>::max(), container_.max_size());
         }
 
         [[nodiscard]]

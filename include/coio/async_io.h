@@ -21,14 +21,14 @@ namespace coio {
 
     template<typename T>
     concept async_readable_file = requires (T t, std::span<std::byte> buffer) {
-        { t.async_read_some(buffer) } -> awaitable;
-        requires std::integral<detail::awaitable_await_result_t<decltype(t.async_read_some(buffer))>>;
+        { t.async_read_some(buffer) } -> awaitable_value;
+        requires std::integral<detail::await_result_t<decltype(t.async_read_some(buffer))>>;
     };
 
     template<typename T>
     concept async_writable_file = requires (T t, std::span<const std::byte> buffer) {
-        { t.async_write_some(buffer) } -> awaitable;
-        requires std::integral<detail::awaitable_await_result_t<decltype(t.async_write_some(buffer))>>;
+        { t.async_write_some(buffer) } -> awaitable_value;
+        requires std::integral<detail::await_result_t<decltype(t.async_write_some(buffer))>>;
     };
 
     template<typename T>

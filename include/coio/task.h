@@ -210,19 +210,6 @@ namespace coio {
             std::atomic_unsigned_lock_free step_{0}; // 0: not started, 1: started, 2: finished
         };
 
-        struct to_awaiter_fn {
-            template<awaitable Awaitable>
-            COIO_STATIC_CALL_OP awaiter decltype(auto) operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST noexcept(get_awaiter<Awaitable>::nothrow) {
-                if constexpr (requires { operator co_await(std::declval<Awaitable>()); }) {
-                    return operator co_await(std::forward<Awaitable>(awt));
-                }
-                else if constexpr (requires {std::declval<Awaitable>().operator co_await(); }) {
-                    return std::forward<Awaitable>(awt).operator co_await();
-                }
-                else return std::forward<Awaitable>(awt);
-            }
-        };
-
     }
 
     template<typename T, typename Alloc>

@@ -5,31 +5,116 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <utility>
 #include "config.h"
 #include "detail/waiting_list.h"
 
 namespace coio {
+    template<typename Mutex>
+    concept basic_async_lockable = requires (Mutex&& mtx) {
+        { mtx.lock() } -> awaitable_value;
+        { mtx.unlock() } -> std::same_as<void>;
+        requires std::same_as<detail::await_result_t<decltype(mtx.lock())>, void>;
+    };
+
+    template<typename Mutex>
+    concept async_lockable = basic_async_lockable<Mutex> and requires (Mutex&& mtx) {
+        { mtx.try_lock() } -> boolean_testable;
+    };
+
+    template<typename AsyncMutex>
+    class async_unique_lock {
+        static_assert(basic_async_lockable<AsyncMutex>, "type `AsyncMutex` shall model `coio::basic_async_lockable`");
+    public:
+        using mutex_type = AsyncMutex;
+
+    public:
+        async_unique_lock() = default;
+
+        async_unique_lock(mutex_type& mtx, std::adopt_lock_t) noexcept : mtx_(&mtx), owned_(true) {}
+
+        async_unique_lock(mutex_type& mtx, std::defer_lock_t) noexcept : mtx_(&mtx), owned_(false) {}
+
+        async_unique_lock(mutex_type& mtx, std::try_to_lock_t) requires async_lockable<AsyncMutex> : mtx_(&mtx), owned_(mtx.try_lock()) {}
+
+        async_unique_lock(const async_unique_lock&) = delete;
+
+        async_unique_lock(async_unique_lock&& other) noexcept : mtx_(std::exchange(other.mtx_, {})), owned_(std::exchange(other.owned_, {})) {};
+
+        ~async_unique_lock() {
+            if (owned_) [[likely]] {
+                COIO_ASSERT(mtx_ != nullptr);
+                mtx_->unlock();
+            }
+        }
+
+        auto operator= (async_unique_lock other) noexcept -> async_unique_lock& {
+            this->swap(other);
+            return *this;
+        }
+
+        auto swap(async_unique_lock& other) noexcept -> void {
+            std::swap(mtx_, other.mtx_);
+            std::swap(owned_, other.owned_);
+        }
+
+        friend auto swap(async_unique_lock& lhs, async_unique_lock& rhs) noexcept -> void {
+            lhs.swap(rhs);
+        }
+
+        auto lock() {
+            validate_();
+            return then(mtx_->lock(), [this]() noexcept {
+                owned_ = true;
+            });
+        }
+
+        [[nodiscard]]
+        auto try_lock() -> bool requires async_lockable<AsyncMutex> {
+            validate_();
+            return owned_ = bool(mtx_->try_lock());
+        }
+
+        auto unlock() -> void {
+            validate_();
+            mtx_->unlock();
+            owned_ = false;
+        }
+
+        [[nodiscard]]
+        auto mutex() noexcept -> mutex_type* {
+            return mtx_;
+        }
+
+        [[nodiscard]]
+        auto owns_lock() const noexcept -> bool {
+            return owned_;
+        }
+
+        explicit operator bool() const noexcept {
+            return owns_lock();
+        }
+
+        [[nodiscard]]
+        auto release() noexcept -> mutex_type* {
+            owned_ = false;
+            return std::exchange(mtx_, nullptr);
+        }
+
+    private:
+        auto validate_() const noexcept {
+            COIO_ASSERT(mtx_ != nullptr);
+            COIO_ASSERT(not owned_);
+        }
+
+    private:
+        mutex_type* mtx_ = nullptr;
+        bool owned_ = false;
+    };
+
     class async_mutex {
     public:
-        class guard {
-            friend async_mutex;
-        private:
-            explicit guard(async_mutex& mtx) noexcept : mtx_(mtx) {}
-
-        public:
-            guard(const guard&) = delete;
-
-            auto operator= (const guard&) -> guard& = delete;
-
-            ~guard() {
-                mtx_.unlock();
-            }
-
-        private:
-            async_mutex& mtx_;
-        };
-
         class lock_guard_sender;
 
         class lock_sender {
@@ -94,27 +179,6 @@ namespace coio {
             async_mutex* mtx_;
         };
 
-        class lock_guard_sender : private lock_sender {
-            friend async_mutex;
-        private:
-            using lock_sender::lock_sender;
-
-        public:
-            auto operator co_await() && noexcept {
-                struct lock_guard_awaiter : lock_sender::awaiter {
-                    using awaiter::awaiter;
-
-                    [[nodiscard]]
-                    auto await_resume() noexcept -> guard {
-                        return guard{mtx_};
-                    }
-                };
-
-                COIO_ASSUME(mtx_ != nullptr);
-                return lock_guard_awaiter{*std::exchange(mtx_, {})};
-            }
-        };
-
     public:
         async_mutex() = default;
 
@@ -128,8 +192,10 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto lock_guard() noexcept -> lock_guard_sender {
-            return lock_guard_sender{*this};
+        auto lock_guard() noexcept {
+            return then(lock(), [this]() noexcept {
+                return async_unique_lock{*this, std::adopt_lock};
+            });
         };
 
         [[nodiscard]]

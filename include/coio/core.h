@@ -8,37 +8,62 @@ namespace coio {
         using void_to_nothing = std::conditional_t<std::is_void_v<T>, nothing, T>;
 
         template<typename T>
-        using awaitable_non_void_await_result_t = void_to_nothing<awaitable_await_result_t<T>>;
-    }
+        using awaitable_non_void_await_result_t = void_to_nothing<await_result_t<T>>;
 
-    template<typename Awaiter, typename Fn>
-    struct transform_awaiter {
+        template<typename Awaiter, typename Fn>
+        struct then_awaiter {
+            decltype(auto) await_ready() noexcept(noexcept(std::declval<Awaiter&>().await_ready())) {
+                return inner_.await_ready();
+            }
 
-        static_assert(awaiter<Awaiter>);
-        static_assert(std::invocable<Fn, await_result_t<Awaiter>>);
+            template<typename Promise> requires requires (Awaiter inner, std::coroutine_handle<Promise> coro) { inner.await_suspend(coro); }
+            decltype(auto) await_suspend(std::coroutine_handle<Promise> this_coro) noexcept(noexcept(std::declval<Awaiter&>().await_suspend(this_coro))) {
+                return inner_.await_suspend(this_coro);
+            }
 
-        auto await_ready() noexcept(noexcept(std::declval<Awaiter&>().await_ready())) {
-            return inner_awaiter.await_ready();
-        }
+            decltype(auto) await_resume() noexcept(
+                noexcept(std::declval<Awaiter&>().await_resume()) and
+                std::is_nothrow_invocable_v<Fn, await_result_t<Awaiter&>>
+            ) requires (not std::is_void_v<await_result_t<Awaiter&>>) {
+                return std::invoke(std::move(fn_), inner_.await_resume());
+            }
 
-        auto await_suspend(std::coroutine_handle<> this_coro) noexcept(noexcept(std::declval<Awaiter&>().await_suspend(std::declval<std::coroutine_handle<>>()))) {
-            return inner_awaiter.await_suspend(this_coro);
-        }
+            decltype(auto) await_resume() noexcept(
+                noexcept(std::declval<Awaiter&>().await_resume()) and
+                std::is_nothrow_invocable_v<Fn>
+            ) {
+                inner_.await_resume();
+                return std::invoke(std::move(fn_));
+            }
 
-        decltype(auto) await_resume() noexcept(noexcept(std::invoke(std::declval<Fn>(), std::declval<Awaiter&>().await_resume()))) {
-            return std::invoke(transform, inner_awaiter.await_resume());
-        }
+            Awaiter inner_;
+            Fn fn_;
+        };
 
-        Awaiter inner_awaiter;
-        Fn transform;
-    };
+        template<typename Fn, typename T>
+        concept callable_ = (std::is_void_v<T> and std::invocable<Fn>) or std::invocable<Fn, T>;
 
-    namespace detail {
-        struct make_transform_awaiter_fn {
-            template<awaiter Awaiter, std::invocable<await_result_t<Awaiter>> Fn> requires std::move_constructible<Awaiter> and std::move_constructible<Fn>
-            [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (Awaiter awaiter, Fn fn) COIO_STATIC_CALL_OP_CONST noexcept(std::is_nothrow_move_constructible_v<Awaiter> and std::is_nothrow_move_constructible_v<Fn>) ->transform_awaiter<Awaiter, Fn> {
-                return transform_awaiter{std::move(awaiter), std::move(fn)};
+        template<typename Awaitable, typename Fn>
+        struct then_awaitable {
+            auto operator co_await() && noexcept(std::is_nothrow_invocable_v<get_awaiter_fn, Awaitable> and std::is_nothrow_move_constructible_v<Fn>) {
+                return then_awaiter{
+                    get_awaiter(std::move(awt_)),
+                    std::move(fn_)
+                };
+            }
+
+            Awaitable awt_;
+            Fn fn_;
+        };
+
+        struct then_fn {
+            template<awaitable_value Awaitable, callable_<await_result_t<Awaitable>> Fn>
+                requires std::move_constructible<Fn>
+            COIO_STATIC_CALL_OP auto operator() (Awaitable awt, Fn fn) COIO_STATIC_CALL_OP_CONST {
+                return then_awaitable{
+                    std::move(awt),
+                    std::move(fn)
+                };
             }
         };
 
@@ -196,12 +221,8 @@ namespace coio {
         when_all_ready_awaiter(std::tuple<when_all_task<Types, Allocs>...>) -> when_all_ready_awaiter<std::tuple<when_all_task<Types, Allocs>...>>;
 
         template<typename Alloc, typename Awaitable>
-        auto do_when_all_task(std::allocator_arg_t, const Alloc&, Awaitable awaitable) -> when_all_task<awaitable_await_result_t<Awaitable>, Alloc> {
-            if constexpr (std::is_void_v<awaitable_await_result_t<Awaitable>>) {
-                co_await awaitable;
-                co_return;
-            }
-            else co_return co_await awaitable;
+        auto do_when_all_task(std::allocator_arg_t, const Alloc&, Awaitable awaitable) -> when_all_task<await_result_t<Awaitable>, Alloc> {
+            co_return co_await std::move(awaitable);
         }
 
         template<typename Awaitable>
@@ -216,9 +237,9 @@ namespace coio {
         inline constexpr store_results_in_t<TaskStorageRange> store_results_in{};
 
         struct when_all_ready_fn {
-            template<awaitable... Awaitables>
+            template<awaitable_value... Awaitables>
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) and (... and std::constructible_from<std::decay_t<Awaitables>, Awaitables&&>) {
+            COIO_STATIC_CALL_OP auto operator() (Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) {
                 return when_all_ready_awaiter{
                     std::tuple{
                         (do_when_all_task)(std::forward<Awaitables>(awaitables))...
@@ -226,9 +247,9 @@ namespace coio {
                 };
             }
 
-            template<typename Alloc, awaitable... Awaitables>
+            template<typename Alloc, awaitable_value... Awaitables>
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) and (... and std::constructible_from<std::decay_t<Awaitables>, Awaitables&&>) {
+            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) {
                 return when_all_ready_awaiter{
                     std::tuple{
                         (do_when_all_task)(std::allocator_arg, alloc, std::forward<Awaitables>(awaitables))...
@@ -236,12 +257,12 @@ namespace coio {
                 };
             }
 
-            template<std::forward_iterator It, std::sentinel_for<It> St> requires awaitable<std::iter_value_t<It>> and std::constructible_from<std::iter_value_t<It>, std::iter_reference_t<It>>
+            template<std::forward_iterator It, std::sentinel_for<It> St> requires awaitable_value<std::iter_value_t<It>> and std::constructible_from<std::iter_value_t<It>, std::iter_reference_t<It>>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (It first, St last) COIO_STATIC_CALL_OP_CONST {
                 using when_all_task_container_t = std::vector<
                     when_all_task<
-                        awaitable_await_result_t<std::iter_value_t<It>>
+                        await_result_t<std::iter_value_t<It>>
                     >
                 >;
                 when_all_task_container_t result;
@@ -251,7 +272,7 @@ namespace coio {
                 return when_all_ready_awaiter<when_all_task_container_t>{std::move(result)};
             }
 
-            template<borrowed_forward_range TaskRange> requires awaitable<std::ranges::range_value_t<TaskRange>> and std::constructible_from<std::ranges::range_value_t<TaskRange>, std::ranges::range_reference_t<TaskRange>>
+            template<borrowed_forward_range TaskRange> requires awaitable_value<std::ranges::range_value_t<TaskRange>> and std::constructible_from<std::ranges::range_value_t<TaskRange>, std::ranges::range_reference_t<TaskRange>>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (TaskRange&& rng) COIO_STATIC_CALL_OP_CONST {
                 return (*this)(std::ranges::begin(rng), std::ranges::end(rng));
@@ -300,30 +321,30 @@ namespace coio {
         };
 
         struct when_all_fn {
-            template<awaitable... Awaitables>
+            template<awaitable_value... Awaitables>
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) and (... and std::constructible_from<std::decay_t<Awaitables>, Awaitables&&>) {
+            COIO_STATIC_CALL_OP auto operator() (Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) {
                 return when_all_fn{}(std::allocator_arg, std::allocator<void>{}, std::forward<Awaitables>(awaitables)...);
             }
 
-            template<typename Alloc, awaitable... Awaitables>
+            template<typename Alloc, awaitable_value... Awaitables>
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) and (... and std::constructible_from<std::decay_t<Awaitables>, Awaitables&&>) {
-                return transform_awaiter{
+            COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) {
+                return then_fn{}(
                     when_all_ready_fn{}(std::allocator_arg, alloc, std::forward<Awaitables>(awaitables)...),
                     get_when_all_result{}
-                };
+                );
             }
 
             template<std::forward_iterator It, std::sentinel_for<It> St, elements_move_insertable_range ResultStorageRange>
-                requires awaitable<std::iter_value_t<It>> and
+                requires awaitable_value<std::iter_value_t<It>> and
                         std::constructible_from<std::iter_value_t<It>, std::iter_reference_t<It>> and
                         std::default_initializable<ResultStorageRange> and
                         std::move_constructible<ResultStorageRange> and
                         std::convertible_to<awaitable_non_void_await_result_t<std::iter_value_t<It>>, std::ranges::range_value_t<ResultStorageRange>>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (It first, St last, store_results_in_t<ResultStorageRange>) COIO_STATIC_CALL_OP_CONST {
-                return transform_awaiter{
+                return then_fn{}(
                     when_all_ready_fn{}(first, last),
                     []<typename T>(std::vector<when_all_task<T>> when_all_tasks_) {
                         ResultStorageRange result_storage_range;
@@ -332,17 +353,17 @@ namespace coio {
                         }
                         return result_storage_range;
                     }
-                };
+                );
             }
 
-            template<std::forward_iterator It, std::sentinel_for<It> St> requires awaitable<std::iter_value_t<It>> and std::constructible_from<std::iter_value_t<It>, std::iter_reference_t<It>>
+            template<std::forward_iterator It, std::sentinel_for<It> St> requires awaitable_value<std::iter_value_t<It>> and std::constructible_from<std::iter_value_t<It>, std::iter_reference_t<It>>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (It first, St last) COIO_STATIC_CALL_OP_CONST {
                 return (*this)(first, last, store_results_in<std::vector<awaitable_non_void_await_result_t<std::iter_value_t<It>>>>);
             }
 
             template<borrowed_forward_range TaskRange, elements_move_insertable_range ResultStorageRange>
-                requires awaitable<std::ranges::range_value_t<TaskRange>> and
+                requires awaitable_value<std::ranges::range_value_t<TaskRange>> and
                         std::constructible_from<std::ranges::range_value_t<TaskRange>, std::ranges::range_reference_t<TaskRange>> and
                         std::default_initializable<ResultStorageRange> and
                         std::move_constructible<ResultStorageRange> and
@@ -352,7 +373,7 @@ namespace coio {
                 return (*this)(std::ranges::begin(rng), std::ranges::end(rng), store_results_in<ResultStorageRange>);
             }
 
-            template<borrowed_forward_range TaskRange> requires awaitable<std::ranges::range_value_t<TaskRange>> and std::constructible_from<std::ranges::range_value_t<TaskRange>, std::ranges::range_reference_t<TaskRange>>
+            template<borrowed_forward_range TaskRange> requires awaitable_value<std::ranges::range_value_t<TaskRange>> and std::constructible_from<std::ranges::range_value_t<TaskRange>, std::ranges::range_reference_t<TaskRange>>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (TaskRange&& rng) COIO_STATIC_CALL_OP_CONST {
                 return (*this)(std::ranges::begin(rng), std::ranges::end(rng));
@@ -372,21 +393,17 @@ namespace coio {
         using sync_wait_task = task_wrapper<T, on_sync_wait_final_suspend_fn, Alloc>;
 
         template<typename Awaitable>
-        auto do_sync_wait_task(Awaitable awaitable) -> sync_wait_task<awaitable_await_result_t<Awaitable>> {
-            if constexpr (std::is_void_v<awaitable_await_result_t<Awaitable>>) {
-                co_await awaitable;
-                co_return;
-            }
-            else co_return co_await awaitable;
+        auto do_sync_wait_task(Awaitable&& awaitable) -> sync_wait_task<await_result_t<Awaitable>> {
+            co_return co_await std::forward<Awaitable>(awaitable);
         }
 
         struct sync_wait_fn {
-            template<awaitable Awaitable>
-            COIO_STATIC_CALL_OP auto operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> awaitable_await_result_t<Awaitable> {
+            template<awaitable_value Awaitable>
+            COIO_STATIC_CALL_OP auto operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> await_result_t<Awaitable> {
                 auto sync_ = (do_sync_wait_task)(std::forward<Awaitable>(awt));
                 sync_.coro_.resume();
                 sync_.coro_.promise().on_final_suspend_.finished_.wait(0);
-                return static_cast<std::add_rvalue_reference_t<awaitable_await_result_t<Awaitable>>>(sync_.get_result());
+                return static_cast<std::add_rvalue_reference_t<await_result_t<Awaitable>>>(sync_.get_result());
             }
         };
     }
@@ -397,7 +414,7 @@ namespace coio {
     public:
         async_scope() noexcept : retain_base(1) {}
 
-        template<awaitable Awaitable>
+        template<awaitable_value Awaitable>
         auto spawn(Awaitable&& awt) -> void {
             [](std::decay_t<Awaitable> awt_, retain_ptr<async_scope>) -> fire_and_forget {
                 void(co_await awt_);
@@ -426,12 +443,12 @@ namespace coio {
 
     template<typename T>
     class awaitable_reference_wrapper {
-         static_assert(std::is_object_v<T> and awaitable<T>, "type `T` shall be an awaitable-type.");
+         static_assert(std::is_object_v<T> and awaitable_value<T>, "type `T` shall be an awaitable-type.");
     public:
         constexpr awaitable_reference_wrapper(T& obj) noexcept : ptr_(std::addressof(obj)) {}
 
-        decltype(auto) operator co_await() const noexcept(noexcept(detail::to_awaiter_fn{}(std::declval<T&>()))) {
-            return detail::to_awaiter_fn{}(*ptr_);
+        decltype(auto) operator co_await() const noexcept(noexcept(detail::get_awaiter_fn{}(std::declval<T&>()))) {
+            return get_awaiter(*ptr_);
         }
 
     private:
@@ -440,7 +457,7 @@ namespace coio {
 
     namespace detail {
         struct awaitable_ref_fn {
-            template<awaitable Awaitable>
+            template<awaitable_value Awaitable>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (Awaitable& awt) COIO_STATIC_CALL_OP_CONST noexcept -> awaitable_reference_wrapper<Awaitable> {
                 return {awt};
@@ -453,8 +470,7 @@ namespace coio {
 
     inline constexpr detail::when_all_ready_fn           when_all_ready{};
     inline constexpr detail::when_all_fn                 when_all{};
-    inline constexpr detail::make_transform_awaiter_fn   make_transform_awaiter{};
     inline constexpr detail::sync_wait_fn                sync_wait{};
     inline constexpr detail::awaitable_ref_fn            awaitable_ref{};
-    inline constexpr detail::to_awaiter_fn               to_awaiter{};
+    inline constexpr detail::then_fn                     then{};
 }

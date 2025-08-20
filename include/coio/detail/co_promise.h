@@ -6,21 +6,7 @@
 namespace coio {
     struct nothing {};
 
-    template<awaiter T>
-    using await_result_t = decltype(std::declval<T>().await_resume());
-
-    template<awaitable T>
-    struct awaitable_traits {
-        using awaiter_type = typename detail::get_awaiter<T>::type;
-
-        using await_result_type = await_result_t<awaiter_type>;
-    };
-
-
     namespace detail {
-        template<awaitable T>
-        using awaitable_await_result_t = typename awaitable_traits<T>::await_result_type;
-
         template<typename T>
         class promise_return_control {
         public:

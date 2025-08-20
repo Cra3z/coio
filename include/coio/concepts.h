@@ -21,24 +21,6 @@ namespace coio {
         template<typename T, typename U>
         concept different_from_impl = not std::is_same_v<T, U>;
 
-        template<typename Awaitable>
-        struct get_awaiter {
-            using type = Awaitable;
-            static constexpr bool nothrow = true;
-        };
-
-        template<typename Awaitable> requires requires { std::declval<Awaitable>().operator co_await(); }
-        struct get_awaiter<Awaitable> {
-            using type = decltype(std::declval<Awaitable>().operator co_await());
-            static constexpr bool nothrow = noexcept(std::declval<Awaitable>().operator co_await());
-        };
-
-        template<typename Awaitable> requires requires { operator co_await(std::declval<Awaitable>()); }
-        struct get_awaiter<Awaitable> {
-            using type = decltype(operator co_await(std::declval<Awaitable>()));
-            static constexpr bool nothrow = noexcept(operator co_await(std::declval<Awaitable>()));
-        };
-
         template<typename T, template<typename...> typename Templ>
         struct template_spec_helper : std::false_type {};
 
@@ -49,31 +31,88 @@ namespace coio {
         using can_reference_helper = T&;
 
         template<typename T>
-        concept can_reference = requires {
+        concept can_reference_ = requires {
             typename can_reference_helper<T>;
         };
+
+        template<typename T>
+        concept boolean_testable = detail::boolean_testable_impl<T> and requires (T&& t) {
+            { not static_cast<T&&>(t) } -> detail::boolean_testable_impl;
+        };
+
+        template<typename Awaiter, typename PromiseType>
+        concept almost_awaiter_ = requires(Awaiter awaiter, std::coroutine_handle<PromiseType> coro) {
+            { awaiter.await_ready() } -> boolean_testable;
+            { awaiter.await_suspend(coro) } -> detail::valid_await_suspend_result;
+            awaiter.await_resume();
+        };
+
+        template<typename Promise>
+        concept almost_promise_ = std::is_class_v<Promise> and requires (Promise promise) {
+            promise.get_return_object();
+            promise.unhandled_exception();
+            promise.initial_suspend();
+            { promise.final_suspend() } noexcept;
+        };
+
+        struct get_awaiter_fn {
+            template<typename Awaitable> requires requires { operator co_await(std::declval<Awaitable>()); }
+            COIO_STATIC_CALL_OP decltype(auto) operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST noexcept(noexcept(operator co_await(std::declval<Awaitable>()))) {
+                return operator co_await(std::forward<Awaitable>(awt));
+            }
+
+            template<typename Awaitable> requires requires { std::declval<Awaitable>().operator co_await(); }
+            COIO_STATIC_CALL_OP decltype(auto) operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST noexcept(noexcept(std::declval<Awaitable>().operator co_await())) {
+                return std::forward<Awaitable>(awt).operator co_await();
+            }
+
+            template<typename Awaitable>
+            COIO_STATIC_CALL_OP decltype(auto) operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST noexcept {
+                return std::forward<Awaitable>(awt);
+            }
+
+            // TODO: handle `promise_type::await_transform`
+        };
+
+        inline constexpr get_awaiter_fn get_awaiter{};
+
+        template<typename Awaitable, typename Promise = void>
+        struct awaitable_traits;
+
+        template<typename Awaitable, typename Promise> requires requires {
+            { get_awaiter(std::declval<Awaitable>()) } -> almost_awaiter_<Promise>;
+        }
+        struct awaitable_traits<Awaitable, Promise> {
+            using awaiter_type = decltype(get_awaiter(std::declval<Awaitable>()));
+            using result_type = decltype(std::declval<awaiter_type>().await_resume());
+        };
+
+        template<typename T, typename Promise = void>
+        using await_result_t = typename awaitable_traits<T, Promise>::result_type;
     }
 
-    template<typename T>
-    concept boolean_testable = detail::boolean_testable_impl<T> and requires (T&& t) {
-        { not static_cast<T&&>(t) } -> detail::boolean_testable_impl;
+    using detail::get_awaiter;
+    using detail::boolean_testable;
+
+    template<typename Promise>
+    concept simple_promise = detail::almost_promise_<Promise>;
+
+    template<typename Promise>
+    concept stoppable_promise = simple_promise<Promise> and requires (Promise promise) {
+        { promise.unhandled_stop() } noexcept -> std::convertible_to<std::coroutine_handle<>>;
     };
 
-    template<typename Awaiter, typename PromiseType>
-    concept awaiter_for = requires(Awaiter awaiter, std::coroutine_handle<PromiseType> coro) {
-        { awaiter.await_ready() } -> boolean_testable;
-        { awaiter.await_suspend(coro) } -> detail::valid_await_suspend_result;
-        awaiter.await_resume();
-    };
+    template<typename Awaiter, typename PromiseType = void>
+    concept awaiter = (std::same_as<PromiseType, void> or simple_promise<PromiseType>) and detail::almost_awaiter_<Awaiter, PromiseType>;
 
-    template<typename Awaiter>
-    concept awaiter = awaiter_for<Awaiter, void>;
+    template<typename Awaitable, typename PromiseType = void>
+    concept awaitable = awaiter<typename detail::awaitable_traits<Awaitable>::awaiter_type, PromiseType>;
 
-    template<typename Awaitable, typename PromiseType>
-    concept awaitable_for = awaiter_for<typename detail::get_awaiter<Awaitable>::type, PromiseType>;
-
-    template<typename Awaitable>
-    concept awaitable = awaitable_for<Awaitable, void>;
+    template<typename Awaitable, typename Promise = void>
+    concept awaitable_value =
+        std::move_constructible<std::remove_cvref_t<Awaitable>> and
+        std::constructible_from<std::remove_cvref_t<Awaitable>, Awaitable> and
+        awaitable<Awaitable, Promise>;
 
     template<typename Range>
     concept elements_move_insertable_range = std::ranges::forward_range<Range> and std::move_constructible<std::ranges::range_value_t<Range>> and requires (Range range, std::ranges::iterator_t<Range> it) {
@@ -99,9 +138,9 @@ namespace coio {
 
     template<typename T>
     concept cpp17_iterator = std::copyable<T> and requires(T t) {
-        {   *t } -> detail::can_reference;
+        {   *t } -> detail::can_reference_;
         {  ++t } -> std::same_as<T&>;
-        { *t++ } -> detail::can_reference;
+        { *t++ } -> detail::can_reference_;
     };
 
     template<typename T>
