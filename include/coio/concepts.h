@@ -89,9 +89,22 @@ namespace coio {
                 return (get_awaiter_impl<Promise>)(promise.await_transform(std::forward<Expr>(expr)));
             }
 
+            template<typename Expr, simple_promise Promise> requires requires {
+                requires not requires {
+                    std::declval<Promise&>().await_transform(std::declval<Expr>());
+                };
+                (get_awaiter_impl<Promise>)(std::declval<Expr>());
+            }
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP awaiter<Promise> decltype(auto) operator() (Expr&& expr, Promise&) COIO_STATIC_CALL_OP_CONST
+                noexcept(noexcept((get_awaiter_impl<Promise>)(std::declval<Expr>())))
+            {
+                return (get_awaiter_impl<Promise>)(std::forward<Expr>(expr));
+            }
+
             template<typename Expr> requires requires { (get_awaiter_impl<void>)(std::declval<Expr>()); }
             [[nodiscard]]
-            COIO_STATIC_CALL_OP decltype(auto) operator() (Expr&& expr) COIO_STATIC_CALL_OP_CONST
+            COIO_STATIC_CALL_OP awaiter decltype(auto) operator() (Expr&& expr) COIO_STATIC_CALL_OP_CONST
                 noexcept(noexcept((get_awaiter_impl<void>)(std::declval<Expr>())))
             {
                 return (get_awaiter_impl<void>)(std::forward<Expr>(expr));
