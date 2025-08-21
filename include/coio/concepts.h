@@ -34,68 +34,20 @@ namespace coio {
         concept can_reference_ = requires {
             typename can_reference_helper<T>;
         };
-
-        template<typename T>
-        concept boolean_testable = detail::boolean_testable_impl<T> and requires (T&& t) {
-            { not static_cast<T&&>(t) } -> detail::boolean_testable_impl;
-        };
-
-        template<typename Awaiter, typename PromiseType>
-        concept almost_awaiter_ = requires(Awaiter awaiter, std::coroutine_handle<PromiseType> coro) {
-            { awaiter.await_ready() } -> boolean_testable;
-            { awaiter.await_suspend(coro) } -> detail::valid_await_suspend_result;
-            awaiter.await_resume();
-        };
-
-        template<typename Promise>
-        concept almost_promise_ = std::is_class_v<Promise> and requires (Promise promise) {
-            promise.get_return_object();
-            promise.unhandled_exception();
-            promise.initial_suspend();
-            { promise.final_suspend() } noexcept;
-        };
-
-        struct get_awaiter_fn {
-            template<typename Awaitable> requires requires { operator co_await(std::declval<Awaitable>()); }
-            COIO_STATIC_CALL_OP decltype(auto) operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST noexcept(noexcept(operator co_await(std::declval<Awaitable>()))) {
-                return operator co_await(std::forward<Awaitable>(awt));
-            }
-
-            template<typename Awaitable> requires requires { std::declval<Awaitable>().operator co_await(); }
-            COIO_STATIC_CALL_OP decltype(auto) operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST noexcept(noexcept(std::declval<Awaitable>().operator co_await())) {
-                return std::forward<Awaitable>(awt).operator co_await();
-            }
-
-            template<typename Awaitable>
-            COIO_STATIC_CALL_OP decltype(auto) operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST noexcept {
-                return std::forward<Awaitable>(awt);
-            }
-
-            // TODO: handle `promise_type::await_transform`
-        };
-
-        inline constexpr get_awaiter_fn get_awaiter{};
-
-        template<typename Awaitable, typename Promise = void>
-        struct awaitable_traits;
-
-        template<typename Awaitable, typename Promise> requires requires {
-            { get_awaiter(std::declval<Awaitable>()) } -> almost_awaiter_<Promise>;
-        }
-        struct awaitable_traits<Awaitable, Promise> {
-            using awaiter_type = decltype(get_awaiter(std::declval<Awaitable>()));
-            using result_type = decltype(std::declval<awaiter_type>().await_resume());
-        };
-
-        template<typename T, typename Promise = void>
-        using await_result_t = typename awaitable_traits<T, Promise>::result_type;
     }
 
-    using detail::get_awaiter;
-    using detail::boolean_testable;
+    template<typename T>
+    concept boolean_testable = detail::boolean_testable_impl<T> and requires (T&& t) {
+        { not static_cast<T&&>(t) } -> detail::boolean_testable_impl;
+    };
 
     template<typename Promise>
-    concept simple_promise = detail::almost_promise_<Promise>;
+    concept simple_promise = std::is_class_v<Promise> and requires (Promise promise) {
+        promise.get_return_object();
+        promise.unhandled_exception();
+        promise.initial_suspend();
+        { promise.final_suspend() } noexcept;
+    };
 
     template<typename Promise>
     concept stoppable_promise = simple_promise<Promise> and requires (Promise promise) {
@@ -103,7 +55,73 @@ namespace coio {
     };
 
     template<typename Awaiter, typename PromiseType = void>
-    concept awaiter = (std::same_as<PromiseType, void> or simple_promise<PromiseType>) and detail::almost_awaiter_<Awaiter, PromiseType>;
+    concept awaiter = (std::same_as<PromiseType, void> or simple_promise<PromiseType>) and requires(Awaiter awaiter, std::coroutine_handle<PromiseType> coro) {
+        { awaiter.await_ready() } -> boolean_testable;
+        { awaiter.await_suspend(coro) } -> detail::valid_await_suspend_result;
+        awaiter.await_resume();
+    };
+
+    namespace detail {
+        template<typename Promise, typename Expr> requires awaiter<decltype(operator co_await(std::declval<Expr>())), Promise>
+        static decltype(auto) get_awaiter_impl(Expr&& expr) noexcept(noexcept(operator co_await(std::declval<Expr>()))) {
+            return operator co_await(std::forward<Expr>(expr));
+        }
+
+        template<typename Promise, typename Expr> requires awaiter<decltype(std::declval<Expr>().operator co_await()), Promise>
+        static decltype(auto) get_awaiter_impl(Expr&& expr) noexcept(noexcept(std::declval<Expr>().operator co_await())) {
+            return std::forward<Expr>(expr).operator co_await();
+        }
+
+        template<typename Promise, awaiter<Promise> Expr>
+        static decltype(auto) get_awaiter_impl(Expr&& expr) noexcept {
+            return std::forward<Expr>(expr);
+        }
+
+        class get_awaiter_fn {
+        public:
+            template<typename Expr, simple_promise Promise> requires requires {
+                (get_awaiter_impl<Promise>)(std::declval<Promise&>().await_transform(std::declval<Expr>()));
+            }
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP awaiter<Promise> decltype(auto) operator() (Expr&& expr, Promise& promise) COIO_STATIC_CALL_OP_CONST
+                noexcept(noexcept((get_awaiter_impl<Promise>)(std::declval<Promise&>().await_transform(std::declval<Expr>()))))
+            {
+                return (get_awaiter_impl<Promise>)(promise.await_transform(std::forward<Expr>(expr)));
+            }
+
+            template<typename Expr> requires requires { (get_awaiter_impl<void>)(std::declval<Expr>()); }
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP decltype(auto) operator() (Expr&& expr) COIO_STATIC_CALL_OP_CONST
+                noexcept(noexcept((get_awaiter_impl<void>)(std::declval<Expr>())))
+            {
+                return (get_awaiter_impl<void>)(std::forward<Expr>(expr));
+            }
+        };
+
+        template<typename Awaitable, typename Promise = void>
+        struct awaitable_traits;
+
+        template<typename Awaitable> requires requires {
+            { get_awaiter_fn{}(std::declval<Awaitable>()) } -> awaiter;
+        }
+        struct awaitable_traits<Awaitable, void> {
+            using awaiter_type = decltype(get_awaiter_fn{}(std::declval<Awaitable>()));
+            using result_type = decltype(std::declval<awaiter_type>().await_resume());
+        };
+
+        template<typename Awaitable, simple_promise Promise> requires requires {
+            { get_awaiter_fn{}(std::declval<Awaitable>(), std::declval<Promise&>()) } -> awaiter<Promise>;
+        }
+        struct awaitable_traits<Awaitable, Promise> {
+            using awaiter_type = decltype(get_awaiter_fn{}(std::declval<Awaitable>(), std::declval<Promise&>()));
+            using result_type = decltype(std::declval<awaiter_type>().await_resume());
+        };
+
+        template<typename T, typename Promise = void>
+        using await_result_t = typename awaitable_traits<T, Promise>::result_type;
+    }
+
+    inline constexpr detail::get_awaiter_fn get_awaiter{};
 
     template<typename Awaitable, typename PromiseType = void>
     concept awaitable = awaiter<typename detail::awaitable_traits<Awaitable>::awaiter_type, PromiseType>;
