@@ -1,6 +1,7 @@
 #pragma once
 #include <ranges>
 #include "execution_context.h"
+#include "detail/intrusive_list.h"
 
 namespace coio {
     namespace detail {
@@ -412,33 +413,94 @@ namespace coio {
         friend retain_base;
         friend retain_ptr<async_scope>;
     public:
+        struct token {}; // TODO: adaptation to p3149 (https://www.open-std.org/JTC1/SC22/WG21/docs/papers/2025/p3149r11.html)
+
+        class join_sender {
+            friend async_scope;
+        private:
+            class awaiter {
+                friend join_sender;
+                friend async_scope;
+            public:
+                awaiter(async_scope& scope) noexcept : scope_(scope) {}
+
+                awaiter(const awaiter&) = delete;
+
+                auto operator= (const awaiter&) -> awaiter& = delete;
+
+                auto await_ready() noexcept -> bool {
+                    return scope_.ref_count_.load(std::memory_order_acquire) == 0;
+                }
+
+                auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> bool {
+                    coro_ = this_coro;
+                    scope_.list_.push(*this);
+                    return scope_.ref_count_.fetch_sub(1, std::memory_order_acq_rel) > 1;
+                }
+
+                static auto await_resume() noexcept -> void {}
+
+            private:
+                async_scope& scope_;
+                std::coroutine_handle<> coro_;
+                awaiter* next_ = nullptr;
+            };
+
+        private:
+            join_sender(async_scope& scope) noexcept : scope_(&scope) {}
+
+        public:
+            join_sender(const join_sender&) = delete;
+
+            join_sender(join_sender&& other) noexcept : scope_(std::exchange(other.scope_, {})) {};
+
+            auto operator= (const join_sender&) -> join_sender& = delete;
+
+            auto operator= (join_sender&& other) noexcept -> join_sender& {
+                scope_ = std::exchange(other.scope_, {});
+                return *this;
+            }
+
+            auto operator co_await() && noexcept -> awaiter {
+                return awaiter{*std::exchange(scope_, nullptr)};
+            }
+
+        private:
+            async_scope* scope_;
+        };
+
+    public:
         async_scope() noexcept : retain_base(1) {}
 
         template<awaitable_value Awaitable>
         auto spawn(Awaitable&& awt) -> void {
             [](std::decay_t<Awaitable> awt_, retain_ptr<async_scope>) -> fire_and_forget {
-                void(co_await awt_);
+                void(co_await std::forward<Awaitable>(awt_));
             }(std::forward<Awaitable>(awt), retain_ptr{this});
         }
 
-        auto await_ready() noexcept -> bool {
-            return ref_count_.load(std::memory_order_acquire) == 0;
+        [[nodiscard]]
+        auto get_token() noexcept -> token {
+            return {};
         }
 
-        auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> bool {
-            continuation_ = this_coro;
-            return ref_count_.fetch_sub(1, std::memory_order_acq_rel) > 1;
+        [[nodiscard]]
+        auto join() noexcept -> join_sender {
+            return join_sender{*this};
         }
-
-        static auto await_resume() noexcept -> void {}
 
     private:
         auto do_lose() noexcept -> void {
-            continuation_.resume();
+            auto node = list_.pop_all();
+            while (node) {
+                auto next = node->next_;
+                node->coro_.resume();
+                node = next;
+            }
         }
 
     private:
-        std::coroutine_handle<> continuation_;
+        detail::intrusive_list<join_sender::awaiter> list_{&join_sender::awaiter::next_};
     };
 
     template<typename T>

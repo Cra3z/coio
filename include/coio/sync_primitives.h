@@ -8,7 +8,7 @@
 #include <mutex>
 #include <utility>
 #include "config.h"
-#include "detail/waiting_list.h"
+#include "detail/intrusive_list.h"
 
 namespace coio {
     template<typename Mutex>
@@ -239,7 +239,7 @@ namespace coio {
             friend async_semaphore;
         private:
             class awaiter {
-                friend detail::waiting_list<awaiter>;
+                friend detail::intrusive_list<awaiter>;
                 friend async_semaphore;
                 friend acquire_sender;
             private:
@@ -268,7 +268,7 @@ namespace coio {
                 awaiter* next_ = nullptr;
             };
 
-            using waiting_list = detail::waiting_list<awaiter>;
+            using waiting_list = detail::intrusive_list<awaiter>;
 
         private:
             acquire_sender(async_semaphore& sema) noexcept : sema_{&sema} {}

@@ -34,7 +34,7 @@ auto main() -> int {
                 coio::tcp_socket socket = co_await acceptor.async_accept();
                 scope.spawn(handle_connection(std::move(socket)));
             }
-            co_await scope;
+            co_await scope.join();
         }(),
         [&context]() -> coio::task<> {
             co_return context.run();

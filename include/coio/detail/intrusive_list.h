@@ -3,22 +3,25 @@
 #include "../concepts.h"
 
 namespace coio::detail {
-    template<typename Awaiter>
-    class waiting_list {
-        static_assert(awaiter<Awaiter>);
-        static_assert(not std::movable<Awaiter>);
+    template<typename T>
+    class intrusive_list {
+        static_assert(unqualified_object<T> and not std::is_array_v<T>);
     public:
-        using value_type = Awaiter*;
+        using value_type = T;
+        using pointer = T*;
+        using const_pointer = const T*;
+        using reference = T&;
+        using const_reference = T&;
 
     public:
-        explicit waiting_list(Awaiter* (Awaiter::* next)) noexcept : next_(next) {}
+        explicit intrusive_list(pointer (T::* next)) noexcept : next_(next) {}
 
-        auto push(Awaiter& awt) -> void {
-            awt.*next_ = head_.exchange(&awt, std::memory_order_acq_rel);
+        auto push(reference object) noexcept -> void {
+            object.*next_ = head_.exchange(&object, std::memory_order_acq_rel);
         }
 
         [[nodiscard]]
-        auto pop() -> value_type {
+        auto pop() noexcept -> pointer {
             auto node = head_.load(std::memory_order::acquire);
             do {
                 if (node == nullptr) return nullptr;
@@ -32,7 +35,7 @@ namespace coio::detail {
         }
 
         [[nodiscard]]
-        auto pop_all() -> value_type {
+        auto pop_all() noexcept -> pointer {
             return head_.exchange(nullptr, std::memory_order_acq_rel);
         }
 
@@ -42,7 +45,7 @@ namespace coio::detail {
         }
 
     private:
-        std::atomic<Awaiter*> head_{nullptr};
-        Awaiter* (Awaiter::* next_);
+        std::atomic<pointer> head_{nullptr};
+        pointer (T::* next_);
     };
 }
