@@ -77,8 +77,7 @@ namespace coio {
             return std::forward<Expr>(expr);
         }
 
-        class get_awaiter_fn {
-        public:
+        struct get_awaiter_fn {
             template<typename Expr, simple_promise Promise> requires requires {
                 (get_awaiter_impl<Promise>)(std::declval<Promise&>().await_transform(std::declval<Expr>()));
             }

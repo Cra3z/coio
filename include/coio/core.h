@@ -11,6 +11,85 @@ namespace coio {
         template<typename T>
         using awaitable_non_void_await_result_t = void_to_nothing<await_result_t<T>>;
 
+        struct just_base {
+            static auto await_ready() noexcept -> bool {
+                return true;
+            }
+
+            static auto await_suspend(std::coroutine_handle<>) noexcept -> void {}
+        };
+
+        template<typename T>
+        class just_awaitable : public just_base {
+        public:
+            explicit just_awaitable(T value) noexcept(std::is_nothrow_move_constructible_v<T>) : value_(std::move(value)) {}
+
+            auto await_resume() noexcept(std::is_nothrow_move_constructible_v<T>) -> T {
+                return std::move(value_);
+            }
+
+        private:
+            T value_;
+        };
+
+        template<typename E>
+        class just_error_awaitable : public just_base {
+        public:
+            explicit just_error_awaitable(E error) noexcept(std::is_nothrow_move_constructible_v<E>) : error_(std::move(error)) {}
+
+            auto await_resume() noexcept(false) -> void {
+                if constexpr (std::same_as<E, std::error_code>) {
+                    throw std::system_error{error_};
+                }
+                if constexpr (std::same_as<E, std::exception_ptr>) {
+                    COIO_ASSERT(error_ != nullptr);
+                    std::rethrow_exception(std::move(error_));
+                }
+                else {
+                    throw error_;
+                }
+            }
+
+        private:
+            E error_;
+        };
+
+        struct just_stop_awaitable {
+            static auto await_ready() noexcept -> bool {
+                return false;
+            }
+
+            template<stoppable_promise Promise>
+            static auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> std::coroutine_handle<> {
+                return this_coro.promise().unhandled_stop();
+            }
+
+            static auto await_resume() noexcept -> void {}
+        };
+
+        struct just_fn {
+            template<std::move_constructible T>
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP auto operator() (T value) COIO_STATIC_CALL_OP_CONST noexcept(std::is_nothrow_move_constructible_v<T>) {
+                return just_awaitable{std::move(value)};
+            }
+        };
+
+        struct just_error_fn {
+            template<std::move_constructible E>
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP auto operator() (E error) COIO_STATIC_CALL_OP_CONST noexcept(std::is_nothrow_move_constructible_v<E>) {
+                return just_error_awaitable{std::move(error)};
+            }
+        };
+
+        struct just_stop_fn {
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP auto operator() () COIO_STATIC_CALL_OP_CONST noexcept {
+                return just_stop_awaitable{};
+            }
+        };
+
         template<typename Awaiter, typename Fn>
         struct then_awaiter {
             decltype(auto) await_ready() noexcept(noexcept(std::declval<Awaiter&>().await_ready())) {
@@ -503,36 +582,13 @@ namespace coio {
         detail::intrusive_list<join_sender::awaiter> list_{&join_sender::awaiter::next_};
     };
 
-    template<typename T>
-    class awaitable_reference_wrapper {
-         static_assert(std::is_object_v<T> and awaitable_value<T>, "type `T` shall be an awaitable-type.");
-    public:
-        constexpr awaitable_reference_wrapper(T& obj) noexcept : ptr_(std::addressof(obj)) {}
-
-        decltype(auto) operator co_await() const noexcept(noexcept(detail::get_awaiter_fn{}(std::declval<T&>()))) {
-            return get_awaiter(*ptr_);
-        }
-
-    private:
-        std::add_pointer_t<T> ptr_;
-    };
-
-    namespace detail {
-        struct awaitable_ref_fn {
-            template<awaitable_value Awaitable>
-            [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (Awaitable& awt) COIO_STATIC_CALL_OP_CONST noexcept -> awaitable_reference_wrapper<Awaitable> {
-                return {awt};
-            }
-            COIO_STATIC_CALL_OP auto operator() (const auto&& awt) COIO_STATIC_CALL_OP_CONST -> void = delete;
-        };
-    }
-
     using detail::store_results_in;
 
     inline constexpr detail::when_all_ready_fn           when_all_ready{};
     inline constexpr detail::when_all_fn                 when_all{};
     inline constexpr detail::sync_wait_fn                sync_wait{};
-    inline constexpr detail::awaitable_ref_fn            awaitable_ref{};
     inline constexpr detail::then_fn                     then{};
+    inline constexpr detail::just_fn                     just{};
+    inline constexpr detail::just_error_fn               just_error{};
+    inline constexpr detail::just_stop_fn                just_stop{};
 }
