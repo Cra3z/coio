@@ -20,9 +20,9 @@ namespace coio {
         };
 
         template<typename T>
-        class just_awaitable : public just_base {
+        class just_t : public just_base {
         public:
-            explicit just_awaitable(T value) noexcept(std::is_nothrow_move_constructible_v<T>) : value_(std::move(value)) {}
+            explicit just_t(T value) noexcept(std::is_nothrow_move_constructible_v<T>) : value_(std::move(value)) {}
 
             auto await_resume() noexcept(std::is_nothrow_move_constructible_v<T>) -> T {
                 return std::move(value_);
@@ -33,9 +33,9 @@ namespace coio {
         };
 
         template<typename E>
-        class just_error_awaitable : public just_base {
+        class just_error_t : public just_base {
         public:
-            explicit just_error_awaitable(E error) noexcept(std::is_nothrow_move_constructible_v<E>) : error_(std::move(error)) {}
+            explicit just_error_t(E error) noexcept(std::is_nothrow_move_constructible_v<E>) : error_(std::move(error)) {}
 
             auto await_resume() noexcept(false) -> void {
                 if constexpr (std::same_as<E, std::error_code>) {
@@ -54,7 +54,7 @@ namespace coio {
             E error_;
         };
 
-        struct just_stop_awaitable {
+        struct just_stopped_t {
             static auto await_ready() noexcept -> bool {
                 return false;
             }
@@ -71,7 +71,7 @@ namespace coio {
             template<std::move_constructible T>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (T value) COIO_STATIC_CALL_OP_CONST noexcept(std::is_nothrow_move_constructible_v<T>) {
-                return just_awaitable{std::move(value)};
+                return just_t{std::move(value)};
             }
         };
 
@@ -79,14 +79,14 @@ namespace coio {
             template<std::move_constructible E>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (E error) COIO_STATIC_CALL_OP_CONST noexcept(std::is_nothrow_move_constructible_v<E>) {
-                return just_error_awaitable{std::move(error)};
+                return just_error_t{std::move(error)};
             }
         };
 
-        struct just_stop_fn {
+        struct just_stopped_fn {
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() () COIO_STATIC_CALL_OP_CONST noexcept {
-                return just_stop_awaitable{};
+                return just_stopped_t{};
             }
         };
 
@@ -120,18 +120,20 @@ namespace coio {
             Fn fn_;
         };
 
-        template<typename Fn, typename T>
-        concept callable_ = (std::is_void_v<T> and std::invocable<Fn>) or std::invocable<Fn, T>;
-
         template<typename Awaitable, typename Fn>
-        struct then_awaitable {
+        class then_t {
+        public:
+            then_t(Awaitable awt, Fn fn) noexcept(std::is_nothrow_move_constructible_v<Awaitable> and std::is_nothrow_move_constructible_v<Fn>) :
+                awt_(std::move(awt)), fn_(std::move(fn)) {}
+
             auto operator co_await() && noexcept(std::is_nothrow_invocable_v<get_awaiter_fn, Awaitable> and std::is_nothrow_move_constructible_v<Fn>) {
-                return then_awaiter{
-                    get_awaiter(std::move(awt_)),
-                    std::move(fn_)
+                return then_awaiter<Awaitable, Fn>{
+                    get_awaiter(std::move(this->awt_)),
+                    std::move(this->fn_)
                 };
             }
 
+        private:
             Awaitable awt_;
             Fn fn_;
         };
@@ -140,7 +142,7 @@ namespace coio {
             template<awaitable_value Awaitable, callable_<await_result_t<Awaitable>> Fn>
                 requires std::move_constructible<Fn>
             COIO_STATIC_CALL_OP auto operator() (Awaitable awt, Fn fn) COIO_STATIC_CALL_OP_CONST {
-                return then_awaitable{
+                return then_t<Awaitable, Fn>{
                     std::move(awt),
                     std::move(fn)
                 };
@@ -241,12 +243,12 @@ namespace coio {
         using when_all_task = task_wrapper<T, on_when_all_task_final_suspend_fn, Alloc>;
 
         template<typename>
-        class when_all_ready_awaiter;
+        class when_all_ready_t;
 
         template<elements_move_insertable_range WhenAllTasks> requires std::move_constructible<WhenAllTasks> and specialization_of<std::ranges::range_value_t<WhenAllTasks>, task_wrapper>
-        class when_all_ready_awaiter<WhenAllTasks> {
+        class when_all_ready_t<WhenAllTasks> {
         public:
-            when_all_ready_awaiter(WhenAllTasks when_all_tasks) : when_all_tasks_(std::move(when_all_tasks)), counter_(std::ranges::distance(when_all_tasks_)) {}
+            when_all_ready_t(WhenAllTasks when_all_tasks) : when_all_tasks_(std::move(when_all_tasks)), counter_(std::ranges::distance(when_all_tasks_)) {}
 
             auto await_ready() const noexcept -> bool {
                 return bool(counter_.prev_coro);
@@ -257,7 +259,7 @@ namespace coio {
                 for (auto& task : when_all_tasks_) {
                     task.coro_.promise().on_final_suspend_.counter_ = &counter_;
                     task.coro_.resume();
-                };
+                }
             }
 
             [[nodiscard]]
@@ -271,9 +273,9 @@ namespace coio {
         };
 
         template<typename... Types, typename... Allocs>
-        class when_all_ready_awaiter<std::tuple<when_all_task<Types, Allocs>...>> {
+        class when_all_ready_t<std::tuple<when_all_task<Types, Allocs>...>> {
         public:
-            when_all_ready_awaiter(std::tuple<when_all_task<Types, Allocs>...> when_all_tasks) : when_all_tasks_(std::move(when_all_tasks)) {}
+            when_all_ready_t(std::tuple<when_all_task<Types, Allocs>...> when_all_tasks) : when_all_tasks_(std::move(when_all_tasks)) {}
 
             auto await_ready() const noexcept -> bool {
                 return bool(counter_.prev_coro);
@@ -298,7 +300,7 @@ namespace coio {
         };
 
         template<typename... Types, typename... Allocs>
-        when_all_ready_awaiter(std::tuple<when_all_task<Types, Allocs>...>) -> when_all_ready_awaiter<std::tuple<when_all_task<Types, Allocs>...>>;
+        when_all_ready_t(std::tuple<when_all_task<Types, Allocs>...>) -> when_all_ready_t<std::tuple<when_all_task<Types, Allocs>...>>;
 
         template<typename Alloc, typename Awaitable>
         auto do_when_all_task(std::allocator_arg_t, const Alloc&, Awaitable awaitable) -> when_all_task<await_result_t<Awaitable>, Alloc> {
@@ -320,7 +322,7 @@ namespace coio {
             template<awaitable_value... Awaitables>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) {
-                return when_all_ready_awaiter{
+                return when_all_ready_t{
                     std::tuple{
                         (do_when_all_task)(std::forward<Awaitables>(awaitables))...
                     }
@@ -330,7 +332,7 @@ namespace coio {
             template<typename Alloc, awaitable_value... Awaitables>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST requires (sizeof...(awaitables) > 0) {
-                return when_all_ready_awaiter{
+                return when_all_ready_t{
                     std::tuple{
                         (do_when_all_task)(std::allocator_arg, alloc, std::forward<Awaitables>(awaitables))...
                     }
@@ -349,7 +351,7 @@ namespace coio {
                 while (first != last) {
                     void(result.push_back((do_when_all_task)(*(first++))));
                 }
-                return when_all_ready_awaiter<when_all_task_container_t>{std::move(result)};
+                return when_all_ready_t<when_all_task_container_t>{std::move(result)};
             }
 
             template<borrowed_forward_range TaskRange> requires awaitable_value<std::ranges::range_value_t<TaskRange>> and std::constructible_from<std::ranges::range_value_t<TaskRange>, std::ranges::range_reference_t<TaskRange>>
@@ -590,5 +592,5 @@ namespace coio {
     inline constexpr detail::then_fn                     then{};
     inline constexpr detail::just_fn                     just{};
     inline constexpr detail::just_error_fn               just_error{};
-    inline constexpr detail::just_stop_fn                just_stop{};
+    inline constexpr detail::just_stopped_fn             just_stopped{};
 }

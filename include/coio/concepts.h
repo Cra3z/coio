@@ -34,6 +34,9 @@ namespace coio {
         concept can_reference_ = requires {
             typename can_reference_helper<T>;
         };
+
+        template<typename Fn, typename T>
+        concept callable_ = (std::is_void_v<T> and std::invocable<Fn>) or std::invocable<Fn, T>;
     }
 
     template<typename T>
