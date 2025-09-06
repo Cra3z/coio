@@ -25,19 +25,16 @@ auto handle_connection(coio::tcp_socket socket) -> coio::task<> {
 
 auto main() -> int {
     coio::io_context context;
-    coio::sync_wait(coio::when_all(
-        [&context]() -> coio::task<> {
-            coio::async_scope scope;
-            coio::tcp_acceptor acceptor{context, {coio::ipv4_address::any(), 8086}};
-            ::println("server \"{}\" start...", acceptor.local_endpoint());
-            while (true) {
-                coio::tcp_socket socket = co_await acceptor.async_accept();
-                scope.spawn(handle_connection(std::move(socket)));
-            }
-            co_await scope.join();
-        }(),
-        [&context]() -> coio::task<> {
-            co_return context.run();
-        }()
-    ));
+    coio::async_scope scope;
+    scope.spawn([&context]() -> coio::task<> {
+        coio::async_scope sub_scope;
+        coio::tcp_acceptor acceptor{context, {coio::ipv4_address::any(), 8086}};
+        ::println("server \"{}\" start...", acceptor.local_endpoint());
+        while (true) {
+            coio::tcp_socket socket = co_await acceptor.async_accept();
+            sub_scope.spawn(handle_connection(std::move(socket)));
+        }
+        co_await sub_scope.join();
+    }());
+    context.run();
 }

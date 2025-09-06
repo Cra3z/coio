@@ -6,12 +6,13 @@
 #include <variant>
 #include "config.h"
 #include "concepts.h"
-#include "error.h"
 #include "detail/co_memory.h"
 #include "detail/co_promise.h"
 #include "detail/exec.h"
+#include "detail/intrusive_stack.h"
 #include "utils/retain_ptr.h"
 #include "utils/type_traits.h"
+#include "utils/utility.h"
 
 namespace coio {
     template<typename T = void, typename Alloc = void>
@@ -47,25 +48,55 @@ namespace coio {
         template<typename T>
         using task_promise_t = typename task_traits<T>::promise_t;
 
+        [[noreturn]]
+        inline auto default_unhandled_stopped_(std::coroutine_handle<>) noexcept -> std::coroutine_handle<> {
+            std::terminate();
+        }
+
+        template<stoppable_promise Promise>
+        [[nodiscard]]
+        auto stop_stoppable_coroutine_(std::coroutine_handle<> coro) noexcept -> std::coroutine_handle<> {
+            auto& promise = std::coroutine_handle<Promise>::from_address(coro.address()).promise();
+            return promise.unhandled_stopped();
+        }
+
+        using unhandled_stopped_fn = std::coroutine_handle<>(*)(std::coroutine_handle<>);
+
         template<typename TaskType>
-        struct task_awaiter {
+        class task_awaiter {
+        private:
+            using promise_t = task_promise_t<TaskType>;
+
+        public:
+            task_awaiter(std::coroutine_handle<promise_t> coro, bool owned) noexcept : coro_(coro), owned_(owned) {}
+
+            task_awaiter(const task_awaiter&) = delete;
+
+            ~task_awaiter() {
+                if (owned_ and coro_) coro_.destroy();
+            }
+
+            auto operator= (const task_awaiter&) -> task_awaiter& = delete;
+
             static auto await_ready() noexcept -> bool {
                 return false;
             }
 
-            template<typename Promise>
-            auto await_suspend(std::coroutine_handle<Promise> this_coro) const noexcept -> std::coroutine_handle<> {
-                COIO_ASSERT(coro != nullptr);
-                coro.promise().set_continuation(this_coro);
-                return coro;
+            template<typename OtherPromise>
+            auto await_suspend(std::coroutine_handle<OtherPromise> this_coro) const noexcept -> std::coroutine_handle<> {
+                COIO_ASSERT(coro_ != nullptr);
+                coro_.promise().set_continuation(this_coro);
+                return coro_;
             }
 
             auto await_resume() const -> task_elem_t<TaskType> {
-                auto& promise = coro.promise();
+                auto& promise = coro_.promise();
                 return static_cast<std::add_rvalue_reference_t<task_elem_t<TaskType>>>(promise.get_result());
             }
 
-            std::coroutine_handle<task_promise_t<TaskType>> coro;
+        private:
+            std::coroutine_handle<promise_t> coro_;
+            const bool owned_;
         };
 
         struct task_final_awaiter {
@@ -83,42 +114,45 @@ namespace coio {
             std::coroutine_handle<> continuation;
         };
 
-        struct shared_task_node {
-            shared_task_node() = default;
+        struct shared_task_base {
+            shared_task_base() = default;
 
-            shared_task_node(const shared_task_node&) = delete;
+            shared_task_base(const shared_task_base&) = delete;
 
-            auto operator=(const shared_task_node&) -> shared_task_node& = delete;
+            auto operator=(const shared_task_base&) -> shared_task_base& = delete;
 
-            std::coroutine_handle<> waiter;
-            shared_task_node* next = nullptr;
+            std::coroutine_handle<> continuation;
         };
 
         template<typename SharedTaskType>
-        struct shared_task_awaiter : shared_task_node {
+        struct shared_task_awaiter : shared_task_base {
             shared_task_awaiter(std::coroutine_handle<task_promise_t<SharedTaskType>> coro) noexcept : coro(coro) {}
 
             static auto await_ready() noexcept -> bool {
                 return false;
             }
 
-            auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> std::coroutine_handle<> {
-                waiter = this_coro;
-                std::coroutine_handle<> continuations[] {coro, std::noop_coroutine(), this_coro};
-                auto& step = coro.promise().step_;
-                auto index = step.load(std::memory_order_relaxed);
-                while (!step.compare_exchange_strong(index, index == 0 ? 1 : index, std::memory_order_relaxed)) {}
-                if (index < 2) {
-                    next = coro.promise().head_.exchange(this, std::memory_order_acq_rel);
+            template<typename Promise>
+            auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> std::coroutine_handle<> {
+                COIO_ASSERT(continuation == nullptr);
+                continuation = this_coro;
+                if constexpr (stoppable_promise<Promise>) {
+                    stopped_callback_ = &stop_stoppable_coroutine_<Promise>;
                 }
-                return continuations[index];
+                return coro.promise().add_listener(*this);
             }
 
             auto await_resume() -> add_const_lvalue_ref_t<task_elem_t<SharedTaskType>> {
                 return coro.promise().get_result();
             }
 
+            auto cancel() noexcept -> void {
+                stopped_callback_(continuation).resume();
+            }
+
             std::coroutine_handle<task_promise_t<SharedTaskType>> coro;
+            shared_task_awaiter* next = nullptr;
+            unhandled_stopped_fn stopped_callback_ = &default_unhandled_stopped_;
         };
 
         struct shared_task_final_awaiter {
@@ -128,10 +162,10 @@ namespace coio {
 
             template<typename SharedTaskPromise>
             static auto await_suspend(std::coroutine_handle<SharedTaskPromise> this_coro) noexcept -> void {
-                shared_task_node* node = this_coro.promise().head_.load(std::memory_order_acquire);
+                auto node = this_coro.promise().continuations_.pop_all();
                 while (node) {
                     auto next = node->next;
-                    node->waiter.resume();
+                    node->continuation.resume();
                     node = next;
                 }
             }
@@ -139,14 +173,42 @@ namespace coio {
             static auto await_resume() noexcept -> void {}
         };
 
+        class task_promise_base {
+        protected:
+            task_promise_base() = default;
+
+        public:
+            template<typename OtherPromise>
+            auto set_continuation(std::coroutine_handle<OtherPromise> continuation) noexcept -> void {
+                continuation_ = continuation;
+                if constexpr (stoppable_promise<OtherPromise>) {
+                    stopped_callback_ = &stop_stoppable_coroutine_<OtherPromise>;
+                }
+                else {
+                    stopped_callback_ = &default_unhandled_stopped_;
+                }
+            }
+
+            [[nodiscard]]
+            auto continuation() const noexcept -> std::coroutine_handle<> {
+                return continuation_;
+            }
+
+            [[nodiscard]]
+            auto unhandled_stopped() noexcept -> std::coroutine_handle<> {
+                return stopped_callback_(continuation_);
+            }
+
+        private:
+            std::coroutine_handle<> continuation_;
+            unhandled_stopped_fn stopped_callback_ = &default_unhandled_stopped_;
+        };
         template<typename TaskType>
         struct task_promise :
-            enable_await_senders<task_promise<TaskType>>,
+            task_promise_base,
             promise_return_control<task_elem_t<TaskType>>,
             promise_alloc_control<task_alloc_t<TaskType>>
         {
-            friend task_awaiter<TaskType>;
-
             task_promise() = default;
 
             auto get_return_object() noexcept -> TaskType {
@@ -158,18 +220,22 @@ namespace coio {
             }
 
             auto final_suspend() const noexcept -> task_final_awaiter {
-                auto continuation_ = this->continuation();
-#if defined(COIO_ENABLE_SENDERS) and defined(COIO_EXECUTION_USE_NVIDIA) // TODO: https://github.com/NVIDIA/stdexec/issues/1610
-                return {continuation_.handle()};
-#else
-                return {continuation_};
-#endif
+                return {this->continuation()};
             }
+#ifdef COIO_ENABLE_SENDERS
+            template<typename Sender> requires requires {
+                execution::as_awaitable(std::declval<Sender>(), std::declval<task_promise&>());
+            }
+            decltype(auto) await_transform(Sender&& sender) noexcept(
+                noexcept(execution::as_awaitable(std::declval<Sender>(), std::declval<task_promise&>()))
+            ) {
+                return execution::as_awaitable(std::forward<Sender>(sender), *this);
+            }
+#endif
         };
 
         template<typename SharedTaskType>
         struct shared_task_promise :
-            enable_await_senders<shared_task_promise<SharedTaskType>>,
             promise_return_control<task_elem_t<SharedTaskType>>,
             promise_alloc_control<task_alloc_t<SharedTaskType>>
         {
@@ -188,11 +254,19 @@ namespace coio {
                 return {};
             }
 
-            auto final_suspend() noexcept -> shared_task_final_awaiter {
-                step_.store(2, std::memory_order_relaxed);
+            static auto final_suspend() noexcept -> shared_task_final_awaiter {
                 return {};
             }
-
+#ifdef COIO_ENABLE_SENDERS
+            template<typename Sender> requires requires {
+                execution::as_awaitable(std::declval<Sender>(), std::declval<shared_task_promise&>());
+            }
+            decltype(auto) await_transform(Sender&& sender) noexcept(
+                noexcept(execution::as_awaitable(std::declval<Sender>(), std::declval<shared_task_promise&>()))
+            ) {
+                return execution::as_awaitable(std::forward<Sender>(sender), *this);
+            }
+#endif
             auto retain() noexcept -> void {
                 ref_count_.fetch_add(1, std::memory_order_relaxed);
             }
@@ -204,10 +278,31 @@ namespace coio {
                 }
             }
 
+            auto add_listener(shared_task_awaiter<SharedTaskType>& awaiter) noexcept -> std::coroutine_handle<> {
+                const auto this_coro = std::coroutine_handle<shared_task_promise>::from_promise(*this);
+                COIO_ASSERT(awaiter.coro == this_coro);
+                switch (continuations_.push(awaiter)) {
+                    using enum stack_status;
+                    case empty_and_never_pushed: return this_coro;
+                    case empty_but_pushed: return awaiter.continuation;
+                    case not_empty: return std::noop_coroutine();
+                    default: unreachable();
+                }
+            }
+
+            auto unhandled_stopped() noexcept -> std::coroutine_handle<> {
+                auto node = continuations_.pop_all();
+                while (node) {
+                    auto next = node->next;
+                    node->cancel();
+                    node = next;
+                }
+                return std::noop_coroutine();
+            }
+
         private:
-            std::atomic<shared_task_node*> head_{nullptr};
+            intrusive_stack<shared_task_awaiter<SharedTaskType>> continuations_{&shared_task_awaiter<SharedTaskType>::next};
             std::atomic<std::size_t> ref_count_{0};
-            std::atomic_unsigned_lock_free step_{0}; // 0: not started, 1: started, 2: finished
         };
 
     }
@@ -235,7 +330,6 @@ namespace coio {
         task(std::coroutine_handle<promise_type> coro) noexcept : coro_{coro} {}
 
     public:
-
         task() = default;
 
         task(const task&) = delete;
@@ -257,10 +351,9 @@ namespace coio {
             return coro_ != nullptr;
         }
 
-        auto operator co_await() const -> detail::task_awaiter<task> {
-            if (coro_ == nullptr) [[unlikely]] throw error::task_error{error::task_errc::no_state};
-            if (coro_.done()) [[unlikely]] throw error::task_error{error::task_errc::already_retrieved};
-            return {coro_};
+        auto operator co_await() && noexcept -> detail::task_awaiter<task> {
+            COIO_ASSERT(coro_ != nullptr);
+            return {std::exchange(coro_, {}), true};
         }
 
         auto swap(task& other) noexcept -> void {
@@ -269,16 +362,6 @@ namespace coio {
 
         friend auto swap(task& lhs, task& rhs) noexcept -> void {
             lhs.swap(rhs);
-        }
-
-        [[nodiscard]]
-        auto ready() const noexcept -> bool {
-            COIO_ASSERT(coro_ != nullptr);
-            return coro_.done();
-        }
-
-        auto reset() noexcept -> void {
-            task{}.swap(*this);
         }
 
     private:
@@ -324,15 +407,9 @@ namespace coio {
             return coro_ != nullptr;
         }
 
-        auto operator co_await() const -> detail::shared_task_awaiter<shared_task> {
-            if (coro_ == nullptr) [[unlikely]] throw error::task_error{error::task_errc::no_state};
-            return {coro_};
-        }
-
-        [[nodiscard]]
-        auto ready() const noexcept -> bool {
+        auto operator co_await() const noexcept -> detail::shared_task_awaiter<shared_task> {
             COIO_ASSERT(coro_ != nullptr);
-            return coro_.promise().step_.load(std::memory_order_relaxed) == 2;
+            return {coro_};
         }
 
         auto swap(shared_task& other) noexcept -> void {
@@ -342,10 +419,6 @@ namespace coio {
 
         friend auto swap(shared_task& lhs, shared_task& rhs) noexcept -> void {
             lhs.swap(rhs);
-        }
-
-        auto reset() noexcept -> void {
-            shared_task{}.swap(*this);
         }
 
     private:

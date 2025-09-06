@@ -13,7 +13,8 @@ namespace coio {
     public:
         explicit steady_timer(execution_context& context) noexcept : context_(&context) {}
 
-        auto wait(duration_type duration) const -> void {
+        template<typename Rep, typename Period>
+        auto wait(std::chrono::duration<Rep, Period> duration) const -> void {
             std::this_thread::sleep_for(duration);
         }
 
@@ -21,9 +22,10 @@ namespace coio {
             std::this_thread::sleep_until(deadline);
         }
 
+        template<typename Rep, typename Period>
         [[nodiscard]]
-        auto async_wait(duration_type duration) const noexcept -> sleep_sender {
-            return async_wait_until(clock_type::now() + duration);
+        auto async_wait(std::chrono::duration<Rep, Period> duration) const noexcept -> sleep_sender {
+            return {*context_, clock_type::now() + std::chrono::duration_cast<duration_type>(duration)};
         }
 
         [[nodiscard]]

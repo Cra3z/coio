@@ -7,8 +7,7 @@
 #include <limits>
 #include <mutex>
 #include <utility>
-#include "config.h"
-#include "detail/intrusive_list.h"
+#include "task.h"
 
 namespace coio {
     template<typename Mutex>
@@ -77,7 +76,8 @@ namespace coio {
         }
 
         auto unlock() -> void {
-            validate_();
+            COIO_ASSERT(mtx_ != nullptr);
+            COIO_ASSERT(owned_);
             mtx_->unlock();
             owned_ = false;
         }
@@ -234,64 +234,39 @@ namespace coio {
     class async_semaphore {
     public:
         using count_type = std::atomic_signed_lock_free::value_type;
-
-        class acquire_sender {
+        using acquire_sender = task<>;
+        using release_sender = task<>;
+    private:
+        class acquire_awaiter {
             friend async_semaphore;
         private:
-            class awaiter {
-                friend detail::intrusive_list<awaiter>;
-                friend async_semaphore;
-                friend acquire_sender;
-            private:
-                awaiter(async_semaphore& sema) noexcept : sema_(sema) {}
-
-            public:
-                awaiter(const awaiter&) = delete;
-
-                auto operator= (const awaiter&) -> awaiter& = delete;
-
-                auto await_ready() const noexcept -> bool {
-                    return sema_.try_acquire();
-                }
-
-                auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> bool {
-                    coro_ = this_coro;
-                    sema_.waiting_list_.push(*this);
-                    return true;
-                }
-
-                static auto await_resume() noexcept -> void {}
-
-            private:
-                async_semaphore& sema_;
-                std::coroutine_handle<> coro_;
-                awaiter* next_ = nullptr;
-            };
-
-            using waiting_list = detail::intrusive_list<awaiter>;
-
-        private:
-            acquire_sender(async_semaphore& sema) noexcept : sema_{&sema} {}
+            acquire_awaiter(async_semaphore& sema) noexcept : sema_(sema) {}
 
         public:
-            acquire_sender(const acquire_sender&) = delete;
+            acquire_awaiter(const acquire_awaiter&) = delete;
 
-            acquire_sender(acquire_sender&& other) noexcept : sema_(std::exchange(other.sema_, {})) {}
+            auto operator= (const acquire_awaiter&) -> acquire_awaiter& = delete;
 
-            auto operator= (const acquire_sender&) -> acquire_sender& = delete;
-
-            auto operator= (acquire_sender&& other) noexcept -> acquire_sender& {
-                sema_ = std::exchange(other.sema_, {});
-                return *this;
+            auto await_ready() const noexcept -> bool {
+                if (sema_.try_acquire()) {
+                    sema_.mtx_.unlock();
+                    return true;
+                }
+                return false;
             }
 
-            auto operator co_await() && noexcept {
-                COIO_ASSUME(sema_ != nullptr);
-                return awaiter{*std::exchange(sema_, {})};
+            auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> void {
+                coro_ = this_coro;
+                next_ = std::exchange(sema_.waiting_list_head_, this);
+                sema_.mtx_.unlock();
             }
+
+            static auto await_resume() noexcept -> void {}
 
         private:
-            async_semaphore* sema_;
+            async_semaphore& sema_;
+            std::coroutine_handle<> coro_;
+            acquire_awaiter* next_ = nullptr;
         };
 
     public:
@@ -310,34 +285,41 @@ namespace coio {
 
         [[nodiscard]]
         auto acquire() noexcept -> acquire_sender {
-            return acquire_sender{*this};
+            co_await mtx_.lock();
+            co_await acquire_awaiter{*this};
         }
 
         [[nodiscard]]
         auto try_acquire() noexcept -> bool {
-            auto current = counter_.load(std::memory_order::acquire);
+            auto current = counter_.load(std::memory_order_acquire);
             do {
                 if (current <= 0) return false;
             }
             while (not counter_.compare_exchange_weak(
                 current, current - 1,
-                std::memory_order::acq_rel, std::memory_order::acquire
+                std::memory_order_acq_rel, std::memory_order_acquire
             ));
             return true;
         }
 
-        auto release() noexcept -> void {
-            if (auto front = waiting_list_.pop()) {
-                front->coro_.resume();
+        [[nodiscard]]
+        auto release() noexcept -> release_sender {
+            auto lock_guard = co_await mtx_.lock_guard();
+            if (waiting_list_head_) {
+                auto continuation = waiting_list_head_->coro_;
+                waiting_list_head_ = waiting_list_head_->next_;
+                lock_guard.unlock();
+                continuation.resume();
             }
             else {
-                auto current = counter_.load(std::memory_order::acquire);
+                lock_guard.unlock();
+                auto current = counter_.load(std::memory_order_acquire);
                 do {
-                    COIO_ASSERT(current >= 0 and current < max());
+                    if (current < 0 or current >= max()) std::terminate();
                 }
                 while (not counter_.compare_exchange_weak(
                     current, current + 1,
-                    std::memory_order::acq_rel, std::memory_order::acquire
+                    std::memory_order_acq_rel, std::memory_order_acquire
                 ));
             }
         }
@@ -349,8 +331,120 @@ namespace coio {
 
     private:
         std::atomic_signed_lock_free counter_;
-        typename acquire_sender::waiting_list waiting_list_{&acquire_sender::awaiter::next_};
+        async_mutex mtx_;
+        acquire_awaiter* waiting_list_head_{};
     };
 
     using async_binary_semaphore = async_semaphore<1>;
+
+
+    class async_latch {
+    public:
+        using count_type = std::atomic_unsigned_lock_free::value_type;
+
+    private:
+        class wait_sender {
+            friend class async_latch;
+        private:
+            struct awaiter {
+                awaiter(async_latch& latch, count_type n) noexcept : latch_{latch}, n_{n} {}
+
+                awaiter(const wait_sender&) = delete;
+
+                auto operator= (const awaiter&) -> awaiter& = delete;
+
+                auto await_ready() noexcept -> bool {
+                    return latch_.count_down(n_) == 0;
+                }
+
+                auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> void {
+                    coro_ = this_coro;
+                    latch_.waiting_list_.push(*this);
+                }
+
+                static auto await_resume() noexcept -> void {}
+
+                async_latch& latch_; // NOLINT(*-avoid-const-or-ref-data-members)
+                count_type n_;
+                std::coroutine_handle<> coro_;
+                awaiter* next_ = nullptr;
+            };
+
+        public:
+            wait_sender(async_latch& latch, count_type n) noexcept : latch_(&latch), n_(n) {}
+
+            wait_sender(const wait_sender&) = delete;
+
+            wait_sender(wait_sender&& other) noexcept :
+                latch_(std::exchange(other.latch_, {})),
+                n_(std::exchange(other.n_, 0)) {}
+
+            auto operator= (const wait_sender&) -> wait_sender& = delete;
+
+            auto operator= (wait_sender&& other) noexcept -> wait_sender& {
+                latch_ = std::exchange(other.latch_, {});
+                n_ = std::exchange(other.n_, 0);
+                return *this;
+            }
+
+            auto operator co_await() && noexcept -> awaiter {
+                COIO_ASSERT(latch_ != nullptr);
+                return {*std::exchange(latch_, {}), std::exchange(n_, 0)};
+            }
+
+        private:
+            async_latch* latch_ = nullptr;
+            count_type n_;
+        };
+
+    public:
+        explicit async_latch(count_type count) noexcept : counter_(count) {}
+
+        async_latch(const async_latch&) = delete;
+
+        auto operator= (const async_latch&) -> async_latch& = delete;
+
+        [[nodiscard]]
+        static constexpr auto max() noexcept -> count_type {
+            return std::numeric_limits<count_type>::max();
+        }
+
+        [[nodiscard]]
+        auto count() const noexcept -> count_type {
+            return counter_.load(std::memory_order_acquire);
+        }
+
+        [[nodiscard]]
+        auto try_wait() const noexcept -> bool {
+            return count() == 0;
+        }
+
+        auto count_down(count_type n = 1) noexcept -> count_type {
+            auto old = counter_.fetch_sub(n, std::memory_order_acq_rel);
+            COIO_ASSERT(old >= n);
+            if (old == n) {
+                auto node = waiting_list_.pop_all();
+                while (node) {
+                    auto next = node->next_;
+                    node->coro_.resume();
+                    node = next;
+                }
+            }
+            return old - n;
+        }
+
+        [[nodiscard]]
+        auto wait() noexcept -> wait_sender {
+            return {*this, 0};
+        }
+
+        [[nodiscard]]
+        auto arrive_and_wait(count_type n = 1) noexcept -> wait_sender {
+            return {*this, n};
+        }
+
+    private:
+        std::atomic_unsigned_lock_free counter_;
+        detail::intrusive_stack<wait_sender::awaiter> waiting_list_{&wait_sender::awaiter::next_};
+    };
 }

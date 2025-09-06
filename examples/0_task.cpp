@@ -27,7 +27,7 @@ auto main() -> int {
         [&context]() -> coio::task<> {
             co_return context.run();
         }()
-    ));
+    )).value();
     auto tock = std::chrono::steady_clock::now();
     ::println("result: i = {}, j = {}", i, j); // result: i = 114, j = 514
     ::println("take: {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(tock - tick).count()); // take: 2000ms

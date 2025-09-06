@@ -40,11 +40,11 @@
 #endif
 
 #if COIO_CXX_COMPILER_CLANG
-#define COIO_ALWAYS_INLINE [[clang::always_inline]]
+#define COIO_ALWAYS_INLINE [[clang::always_inline]] inline
 #elif COIO_CXX_COMPILER_GCC
-#define COIO_ALWAYS_INLINE [[gnu::always_inline]]
+#define COIO_ALWAYS_INLINE [[gnu::always_inline]] inline
 #elif COIO_CXX_COMPILER_MSVC
-#define COIO_ALWAYS_INLINE [[msvc::forceinline]]
+#define COIO_ALWAYS_INLINE [[msvc::forceinline]] inline
 #endif
 
 #if COIO_CXX_STANDARD >= COIO_CXX_STD23 and defined(__cpp_static_call_operator)

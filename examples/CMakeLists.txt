@@ -15,17 +15,17 @@ foreach(EXAMPLE_FILE ${EXAMPLE_FILES})
         PRIVATE
         coio
     )
-    target_compile_definitions(
+
+    target_compile_options(
         example-${EXAMPLE_FILE_NAME}
         PRIVATE
-        -DCOIO_ENABLE_SENDERS
-        -DCOIO_EXECUTION_USE_NVIDIA
+        $<$<AND:$<PLATFORM_ID:Linux>,$<CXX_COMPILER_ID:GNU,Clang>>:-fsanitize=address,undefined -fno-omit-frame-pointer>
     )
 
-    target_include_directories(
+    target_link_options(
         example-${EXAMPLE_FILE_NAME}
         PRIVATE
-        "/mnt/d/coding/cpp/stdexec/include"
+        $<$<AND:$<PLATFORM_ID:Linux>,$<CXX_COMPILER_ID:GNU,Clang>>:-fsanitize=address,undefined>
     )
 endforeach()
 

@@ -54,7 +54,7 @@ namespace coio {
 
     template<typename Promise>
     concept stoppable_promise = simple_promise<Promise> and requires (Promise promise) {
-        { promise.unhandled_stop() } noexcept -> std::convertible_to<std::coroutine_handle<>>;
+        { promise.unhandled_stopped() } noexcept -> std::convertible_to<std::coroutine_handle<>>;
     };
 
     template<typename Awaiter, typename PromiseType = void>

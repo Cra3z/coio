@@ -111,7 +111,7 @@ namespace coio {
 #ifdef COIO_ENABLE_SENDERS
             struct env {
                 template<typename T>
-                static auto query(const detail::exec::get_completion_scheduler_t<T>&) noexcept -> inline_scheduler {
+                static auto query(const execution::get_completion_scheduler_t<T>&) noexcept -> inline_scheduler {
                     return {};
                 }
             };

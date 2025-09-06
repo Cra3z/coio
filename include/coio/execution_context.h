@@ -15,7 +15,8 @@
 namespace coio {
     class execution_context {
     public:
-        class schedule_sender;;
+        class schedule_sender;
+        class sleep_sender;
 
         class scheduler {
             friend execution_context;
@@ -26,8 +27,29 @@ namespace coio {
         public:
             explicit scheduler(execution_context& ctx) noexcept : ctx_(&ctx) {}
 
-            auto schedule() const noexcept -> schedule_sender {
+            auto now() const noexcept -> std::chrono::steady_clock::time_point {
+                return std::chrono::steady_clock::now();
+            }
+
+            COIO_ALWAYS_INLINE auto schedule() const noexcept -> schedule_sender {
                 return schedule_sender{*ctx_};
+            }
+
+            template<typename Rep, typename Period>
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE auto schedule_after(std::chrono::duration<Rep, Period> duration) const noexcept -> sleep_sender {
+                return sleep_sender{
+                    *ctx_,
+                    sleep_sender::clock_type::now() + std::chrono::duration_cast<sleep_sender::duration_type>(duration)
+                };
+            }
+
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE auto schedule_at(std::chrono::steady_clock::time_point deadline) const noexcept -> sleep_sender {
+                return sleep_sender{
+                    *ctx_,
+                    deadline
+                };
             }
 
         public:
@@ -37,50 +59,16 @@ namespace coio {
             execution_context* ctx_;
         };
 
-
-        class schedule_sender {
-            friend execution_context;
 #ifdef COIO_ENABLE_SENDERS
-            struct env {
-                template<typename T>
-                auto query(const detail::exec::get_completion_scheduler_t<T>&) const noexcept -> scheduler {
-                    return scheduler{ctx_};
-                }
-
-                execution_context& ctx_; // NOLINT(*-avoid-const-or-ref-data-members)
-            };
-#endif
-        public:
-            explicit schedule_sender(execution_context& context) noexcept : ctx_(&context) {}
-
-#ifdef COIO_ENABLE_SENDERS
-            auto get_env() const noexcept -> env {
-                return {*ctx_};
-            }
-#endif
-
-            auto operator co_await() const noexcept {
-                struct awaiter : node {
-                    using node::node;
-
-                    static auto await_ready() noexcept -> bool {
-                        return false;
-                    }
-
-                    auto await_suspend(std::coroutine_handle<> this_coro) -> bool {
-                        coro_ = this_coro;
-                        return post();
-                    }
-
-                    static auto await_resume() noexcept -> void {}
-                };
-
-                return awaiter{*ctx_};
+        struct env {
+            template<typename T>
+            auto query(const execution::get_completion_scheduler_t<T>&) const noexcept -> scheduler {
+                return scheduler{ctx_};
             }
 
-        private:
-            execution_context* ctx_;
+            execution_context& ctx_; // NOLINT(*-avoid-const-or-ref-data-members)
         };
+#endif
 
         class node {
             friend execution_context;
@@ -110,6 +98,39 @@ namespace coio {
             node* next_{};
         };
 
+        class schedule_sender {
+            friend execution_context;
+        public:
+            explicit schedule_sender(execution_context& context) noexcept : ctx_(&context) {}
+
+#ifdef COIO_ENABLE_SENDERS
+            auto get_env() const noexcept -> env {
+                return {*ctx_};
+            }
+#endif
+            auto operator co_await() const noexcept {
+                struct awaiter : node {
+                    using node::node;
+
+                    static auto await_ready() noexcept -> bool {
+                        return false;
+                    }
+
+                    auto await_suspend(std::coroutine_handle<> this_coro) -> bool {
+                        coro_ = this_coro;
+                        return post();
+                    }
+
+                    static auto await_resume() noexcept -> void {}
+                };
+
+                return awaiter{*ctx_};
+            }
+
+        private:
+            execution_context* ctx_;
+        };
+
         class sleep_sender {
             friend execution_context;
         public:
@@ -125,6 +146,7 @@ namespace coio {
 
             public:
                 auto await_ready() noexcept -> bool {
+                    context_.work_started();
                     return deadline <= clock_type::now();
                 }
 
@@ -134,22 +156,39 @@ namespace coio {
                     context_.timer_queue_.push(this);
                 }
 
-                static auto await_resume() noexcept -> void {}
+                auto await_resume() noexcept -> void {
+                    context_.work_finished();
+                }
 
                 time_point_type deadline;
             };
 
         public:
-            sleep_sender(execution_context& context, time_point_type deadline) noexcept : ctx_(&context), deadline_(deadline) {
-                ctx_->work_started();
-            }
+            sleep_sender(execution_context& context, time_point_type deadline) noexcept : ctx_(&context), deadline_(deadline) {}
+
+            sleep_sender(const sleep_sender&) = delete;
+
+            sleep_sender(sleep_sender&& other) noexcept : ctx_(std::exchange(other.ctx_, {})), deadline_(std::exchange(other.deadline_, {})) {};
 
             ~sleep_sender() {
-                ctx_->work_finished();
+                if (ctx_) ctx_->work_finished();
             }
 
-            auto operator co_await() const noexcept {
-                return awaiter{*ctx_, deadline_};
+            auto operator= (const sleep_sender&) -> sleep_sender& = delete;
+
+            auto operator= (sleep_sender&& other) noexcept -> sleep_sender& {
+                ctx_ = std::exchange(other.ctx_, {});
+                deadline_ = std::exchange(other.deadline_, {});
+                return *this;
+            }
+#ifdef COIO_ENABLE_SENDERS
+            auto get_env() const noexcept -> env {
+                return {*ctx_};
+            }
+#endif
+            auto operator co_await() && noexcept {
+                COIO_ASSERT(ctx_ != nullptr);
+                return awaiter{*std::exchange(ctx_, {}), std::exchange(deadline_, {})};
             }
 
         private:
@@ -199,13 +238,27 @@ namespace coio {
         auto operator= (const execution_context&) -> execution_context& = delete;
 
         [[nodiscard]]
-        auto get_scheduler() noexcept -> scheduler {
+        COIO_ALWAYS_INLINE auto get_scheduler() noexcept -> scheduler {
             return scheduler{*this};
         }
 
         [[nodiscard]]
-        auto schedule() noexcept -> schedule_sender {
+        COIO_ALWAYS_INLINE auto schedule() noexcept -> schedule_sender {
             return schedule_sender{*this};
+        }
+
+        template<typename Rep, typename Period>
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto schedule_after(std::chrono::duration<Rep, Period> duration) noexcept -> sleep_sender {
+            return sleep_sender{
+                *this,
+                sleep_sender::clock_type::now() + std::chrono::duration_cast<sleep_sender::duration_type>(duration)
+            };
+        }
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto schedule_at(sleep_sender::time_point_type deadline) noexcept -> sleep_sender {
+            return sleep_sender{*this, deadline};
         }
 
         template<typename Fn, typename... Args>
@@ -226,7 +279,7 @@ namespace coio {
             return true;
         }
 
-        auto poll() -> std::size_t {
+        COIO_ALWAYS_INLINE auto poll() -> std::size_t {
             std::size_t count = 0;
             while (poll_one()) ++count;
             return count;
@@ -247,30 +300,30 @@ namespace coio {
             }
         }
 
-        auto request_stop() noexcept -> bool {
+        COIO_ALWAYS_INLINE auto request_stop() noexcept -> bool {
             return stop_source_.request_stop();
         }
 
         [[nodiscard]]
-        auto stop_requested() const noexcept -> bool {
+        COIO_ALWAYS_INLINE auto stop_requested() const noexcept -> bool {
             return stop_source_.stop_requested();
         }
 
-        auto work_started() noexcept -> void {
+        COIO_ALWAYS_INLINE auto work_started() noexcept -> void {
             ++work_count_;
         }
 
-        auto work_finished() noexcept -> void {
+        COIO_ALWAYS_INLINE auto work_finished() noexcept -> void {
             --work_count_;
         }
 
         [[nodiscard]]
-        auto work_count() noexcept -> std::size_t {
+        COIO_ALWAYS_INLINE auto work_count() noexcept -> std::size_t {
             return work_count_;
         }
 
         [[nodiscard]]
-        auto make_work_guard() noexcept -> work_guard {
+        COIO_ALWAYS_INLINE auto make_work_guard() noexcept -> work_guard {
             return work_guard{*this};
         }
 

@@ -110,7 +110,7 @@ namespace coio {
                 auto _ = co_await mtx_.lock_guard();
                 container_.emplace_back(std::move(args)...);
             }
-            empty_sema_.release();
+            co_await empty_sema_.release();
         }
 
         auto pop() {
@@ -126,7 +126,7 @@ namespace coio {
                 result.emplace(container_.front());
                 container_.pop_front();
             }
-            full_sema_.release();
+            co_await full_sema_.release();
             co_return *result;
         }
 
@@ -143,7 +143,7 @@ namespace coio {
                 result.emplace(container_.front());
                 container_.pop_front();
             }
-            full_sema_.release();
+            co_await full_sema_.release();
             co_return *result;
         }
 
@@ -241,7 +241,7 @@ namespace coio {
             auto index = tail_.load(std::memory_order_relaxed);
             std::ranges::begin(container_)[index] = value_type(std::move(args)...);
             tail_.store((index + 1) % capacity_, std::memory_order_release);
-            empty_sema_.release();
+            co_await empty_sema_.release();
         }
 
         auto pop() {
@@ -254,7 +254,7 @@ namespace coio {
             auto index = head_.load(std::memory_order_relaxed);
             value_type result = std::move(std::ranges::begin(container_)[index]);
             head_.store((index + 1) % capacity_, std::memory_order_release);
-            full_sema_.release(); // notify: not full
+            co_await full_sema_.release(); // notify: not full
             co_return result;
         }
 
@@ -268,7 +268,7 @@ namespace coio {
             auto index = head_.load(std::memory_order_relaxed);
             value_type result = std::move(std::ranges::begin(container_)[index]);
             head_.store((index + 1) % capacity_, std::memory_order_release);
-            full_sema_.release(); // notify: not full
+            co_await full_sema_.release(); // notify: not full
             co_return result;
         }
 

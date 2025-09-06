@@ -40,20 +40,22 @@ namespace {
 }
 
 auto main() -> int {
-    worker workers[4]{1, 2, 3, 4};
+    worker workers[6]{1, 2, 3, 4, 5, 6};
     coio::conqueue<std::string> channel;
-
-    auto writer = [&channel](stdexec::scheduler auto sched, std::string_view name, std::initializer_list<std::string_view> datum) -> coio::task<> {
+    auto writer = [&](stdexec::scheduler auto sched, std::string_view name, std::initializer_list<std::string_view> datum) -> coio::task<> {
         for (auto str : datum) {
-            ::debug("{} writes {}", name, str);
-            co_await (channel.emplace(str) | stdexec::continues_on(sched));
+            co_await (channel.emplace(str) | stdexec::continues_on(sched) | stdexec::then([&] {
+                ::debug("{} writes {}", name, str);
+            }));
         }
     };
 
-    auto reader = [&channel](stdexec::scheduler auto sched, std::string_view name) -> coio::task<> {
+    auto reader = [&](stdexec::scheduler auto sched, std::string_view name) -> coio::task<> {
         while (true) {
-            auto str = co_await (channel.pop() | stdexec::continues_on(sched));
-            ::debug("{} reads {}", name, str);
+            auto str = co_await (channel.pop() | stdexec::continues_on(sched) | stdexec::then([&](std::string str_) {
+                ::debug("{} reads {}", name, str_);
+                return str_;
+            }));
             if (str == "bye") break;
         }
     };
@@ -67,9 +69,11 @@ auto main() -> int {
     };
 
     stdexec::sync_wait(stdexec::when_all(
-        start_writer(workers[0].scheduler(), "writer-1", {"1#1", "1#2", "1#3", "bye"}),
-        start_writer(workers[1].scheduler(), "writer-2", {"2#1", "2#2", "2#3", "2#4", "2#5", "bye"}),
+        start_writer(workers[0].scheduler(), "writer-1", {"1#1", "1#2", "1#3", "1#4", "bye", "bye"}),
+        start_writer(workers[1].scheduler(), "writer-2", {"2#1", "2#2", "2#3", "2#4", "2#5", "2#6", "2#7", "bye", "bye"}),
         start_reader(workers[2].scheduler(), "reader-1"),
-        start_reader(workers[3].scheduler(), "reader-2")
+        start_reader(workers[3].scheduler(), "reader-2"),
+        start_reader(workers[4].scheduler(), "reader-3"),
+        start_reader(workers[5].scheduler(), "reader-4")
     ));
 }
