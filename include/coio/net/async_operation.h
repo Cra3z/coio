@@ -1,6 +1,6 @@
 #pragma once
 #include "../execution_context.h"
-#include "base.h"
+#include "internet.h"
 
 namespace coio {
     namespace detail {
@@ -43,8 +43,7 @@ namespace coio {
                 context_(std::exchange(other.context_, {})),
                 native_handle_(std::exchange(other.native_handle_, invalid_socket_handle_value)),
                 category_(std::exchange(other.category_, {})),
-                lazy_(std::exchange(other.lazy_, {})),
-                exception_(std::exchange(other.exception_, {}))
+                lazy_(std::exchange(other.lazy_, {}))
             {}
 
             /// \note: after moved, this object will be in a valid but unspecified state.
@@ -58,7 +57,6 @@ namespace coio {
                 std::ranges::swap(native_handle_, other.native_handle_);
                 std::ranges::swap(category_, other.category_);
                 std::ranges::swap(lazy_, other.lazy_);
-                std::ranges::swap(exception_, other.exception_);
             }
 
             friend auto swap(async_io_sender_base& lhs, async_io_sender_base& rhs) noexcept -> void {
@@ -70,9 +68,41 @@ namespace coio {
             socket_native_handle_type native_handle_ = invalid_socket_handle_value;
             category category_;
             bool lazy_; // indicate that this operation's `await_ready` always returns false
-            std::exception_ptr exception_;
         };
 
+        template<typename T>
+        class async_io_result {
+            static_assert(unqualified_object<T> and std::movable<T> and not std::is_array_v<T>);
+        public:
+            async_io_result() = default;
+
+            auto value(T v) noexcept(std::is_nothrow_move_assignable_v<T>) {
+                result_.template emplace<1>(std::move(v));
+            }
+
+            auto error(std::exception_ptr e) noexcept {
+                COIO_ASSERT(e != nullptr);
+                result_.template emplace<2>(std::move(e));
+            }
+
+            auto ready() const noexcept -> bool {
+                return result_.index() > 0;
+            }
+
+            [[nodiscard]]
+            auto get() -> T {
+                COIO_ASSERT(result_.index() != 0);
+                if (result_.index() == 1) {
+                    return *std::get_if<1>(&result_);
+                }
+                auto exp =*std::get_if<2>(&result_);
+                COIO_ASSERT(exp != nullptr);
+                std::rethrow_exception(exp);
+            }
+
+        private:
+            std::variant<std::monostate, T, std::exception_ptr> result_;
+        };
 
         template<typename Customization>
         class async_io_sender : public async_io_sender_base, private Customization {
@@ -144,7 +174,7 @@ namespace coio {
 
             std::span<std::byte> buffer_;
             bool zero_as_eof_;
-            std::size_t transferred_ = 0;
+            async_io_result<std::size_t> result_;
         };
 
         struct async_send {
@@ -153,7 +183,7 @@ namespace coio {
             static constexpr async_io_sender_base::category category = async_io_sender_base::category::output;
 
             std::span<const std::byte> buffer_;
-            std::size_t transferred_ = 0;
+            async_io_result<std::size_t> result_;
         };
 
         struct async_receive_from {
@@ -164,7 +194,7 @@ namespace coio {
             std::span<std::byte> buffer_;
             endpoint src_;
             bool zero_as_eof_;
-            std::size_t transferred_ = 0;
+            async_io_result<std::size_t> result_;
         };
 
         struct async_send_to {
@@ -174,7 +204,7 @@ namespace coio {
 
             std::span<const std::byte> buffer_;
             endpoint dest_;
-            std::size_t transferred_ = 0;
+            async_io_result<std::size_t> result_;
         };
 
         struct async_accept {
@@ -182,7 +212,7 @@ namespace coio {
             static constexpr bool is_lazy = true;
             static constexpr async_io_sender_base::category category = async_io_sender_base::category::input;
 
-            socket_native_handle_type accepted_ = invalid_socket_handle_value;
+            async_io_result<socket_native_handle_type> result_;
         };
 
         struct async_connect {

@@ -120,7 +120,7 @@
     #else
     #define COIO_HAS_EPOLL 0
     #endif
-    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0) and __has_include(<linux/io_uring.h>)
+    #if __has_include(<liburing.h>)
     #define COIO_HAS_IO_URING 1
     #else
     #define COIO_HAS_IO_URING 0

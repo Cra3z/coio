@@ -266,7 +266,7 @@ namespace coio {
         [[nodiscard]]
         auto submit(Fn fn, Args... args) -> task<std::invoke_result_t<Fn, Args...>> {
             co_await schedule();
-            co_return std::invoke(fn, std::move(args)...);
+            co_return std::invoke(std::move(fn), std::move(args)...);
         }
 
         auto poll_one() -> bool {

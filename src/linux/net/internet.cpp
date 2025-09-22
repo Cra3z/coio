@@ -9,7 +9,7 @@
 #include <netdb.h>
 #include <coio/error.h>
 #include <coio/detail/platform/linux.h>
-#include <coio/net/base.h>
+#include <coio/net/internet.h>
 #include <coio/utils/scope_exit.h>
 
 namespace coio {

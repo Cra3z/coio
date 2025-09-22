@@ -1,6 +1,6 @@
 #pragma once
 #include <span>
-#include "base.h"
+#include "internet.h"
 #include "async_operation.h"
 
 namespace coio {

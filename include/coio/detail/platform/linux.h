@@ -15,21 +15,21 @@ namespace coio {
 }
 
 namespace coio::detail {
-    inline auto throw_last_error(::ssize_t value, const char* msg = nullptr) -> void {
+    COIO_ALWAYS_INLINE auto throw_last_error(::ssize_t value, const char* msg = nullptr) -> void {
         // assume: msg is null or null-terminated.
         if (value != -1) return;
         if (msg == nullptr) throw std::system_error(errno, std::system_category());
         throw std::system_error(errno, std::system_category(), msg);
     }
 
-    inline auto no_errno_here(::ssize_t value, const char* msg = nullptr) -> void {
+    COIO_ALWAYS_INLINE auto no_errno_here(::ssize_t value, const char* msg = nullptr) -> void {
         // assume: msg is null or null-terminated.
         if (value != -1) return;
         std::perror(msg);
         std::terminate();
     }
 
-    inline auto is_blocking_errno(int errno_) noexcept ->bool {
+    COIO_ALWAYS_INLINE auto is_blocking_errno(int errno_) noexcept ->bool {
 #if EWOULDBLOCK == EAGAIN
         return errno_ == EWOULDBLOCK;
 #else
@@ -38,7 +38,7 @@ namespace coio::detail {
     }
 
     [[nodiscard]]
-    inline auto make_system_error_from_nonblock_errno(const char* msg = nullptr) noexcept -> std::exception_ptr {
+    COIO_ALWAYS_INLINE auto make_system_error_from_nonblock_errno(const char* msg = nullptr) noexcept -> std::exception_ptr {
         int errno_ = errno;
         if (is_blocking_errno(errno_)) return {};
         return std::make_exception_ptr(
@@ -56,7 +56,7 @@ namespace coio::detail {
 
     auto to_sockaddr(std::variant<::sockaddr_in, ::sockaddr_in6>& sa)-> std::pair<::sockaddr*, ::socklen_t> ;
 
-    inline auto make_eof_error(const char* msg = nullptr) -> std::system_error {
+    COIO_ALWAYS_INLINE auto make_eof_error(const char* msg = nullptr) -> std::system_error {
         return msg ? std::system_error{error::eof, msg} : std::system_error{error::eof};
     }
 }
