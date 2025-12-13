@@ -168,7 +168,7 @@ namespace coio {
     };
 
     /// single-producer, single-consumer queue
-    template<typename T, typename Alloc = std::allocator<T>, typename Container = std::vector<T, Alloc>>
+    template<typename T, typename Container = std::vector<T>>
     class ring_buffer {
         static_assert(unqualified_object<T>, "type `T` shall be a cv-unqualified object-type.");
         static_assert(std::ranges::random_access_range<Container>, "type `Container` shall be a random-access-range.");
@@ -178,7 +178,6 @@ namespace coio {
         using value_type = T;
         using container_type = Container;
         using size_type = typename Container::size_type;
-        using allocator_type = Alloc;
 
     public:
         explicit ring_buffer(size_type capacity) : capacity_(capacity), full_sema_(capacity), empty_sema_(0) {
@@ -216,23 +215,13 @@ namespace coio {
             return std::min<int_type>(async_semaphore<>::max(), container_.max_size());
         }
 
-        [[nodiscard]]
-        auto get_allocator() const noexcept -> allocator_type {
-            if constexpr (requires { typename Container::allocator_type; } ) {
-                return container_.get_allocator();
-            }
-            else {
-                return allocator_type();
-            }
-        }
-
         auto push(value_type value) {
             this->emplace(std::move(value));
         }
 
         template<typename... Args> requires std::constructible_from<value_type, Args...> and (... and std::move_constructible<Args>)
         auto emplace(Args... args) {
-            return this->emplace(std::allocator_arg, get_allocator(), std::move(args)...);
+            return this->emplace(std::allocator_arg, get_allocator_(), std::move(args)...);
         }
 
         template<typename OtherAlloc, typename... Args> requires std::constructible_from<value_type, Args...> and (... and std::move_constructible<Args>)
@@ -245,7 +234,7 @@ namespace coio {
         }
 
         auto pop() {
-            return this->pop(std::allocator_arg, get_allocator());
+            return this->pop(std::allocator_arg, get_allocator_());
         }
 
         template<typename OtherAlloc>
@@ -259,7 +248,7 @@ namespace coio {
         }
 
         auto try_pop() {
-            return this->try_pop(std::allocator_arg, get_allocator());
+            return this->try_pop(std::allocator_arg, get_allocator_());
         }
 
         template<typename OtherAlloc>
@@ -273,6 +262,16 @@ namespace coio {
         }
 
     private:
+        auto get_allocator_() const noexcept {
+            if constexpr (requires { container_.get_allocator(); }) {
+                return container_.get_allocator();
+            }
+            else {
+                return std::allocator<void>{};
+            }
+        }
+
+    private:
         Container container_;
         const size_type capacity_;
         std::atomic<async_semaphore<>::count_type> head_{0}, tail_{0};
@@ -281,6 +280,6 @@ namespace coio {
     };
 
     template<typename T, std::size_t N>
-    using inplace_ring_buffer = ring_buffer<T, std::allocator<T>, inplace_vector<T, N>>;
+    using inplace_ring_buffer = ring_buffer<T, inplace_vector<T, N>>;
 
 }

@@ -282,16 +282,24 @@ namespace coio {
             impl_ = get_io_scheduler().wrap_fd(detail::socket::open(protocol.family(), protocol.type(), protocol.protocol_id()));
         }
 
+        /**
+         * \brief close the socket. Any asynchronous send, receive or connect operations will be cancelled immediately.
+         */
         COIO_ALWAYS_INLINE auto close() -> void {
             detail::socket::close(release());
         }
 
+        /**
+         * \brief release the ownership of the native handle. Any asynchronous send, receive or connect operations will be cancelled immediately.
+         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto release() -> native_handle_type {
             return impl_.release();
         }
 
-
+        /**
+         * \brief cancel all asynchronous operations associated with the socket. Any asynchronous send, receive or connect operations will be cancelled immediately.
+         */
         COIO_ALWAYS_INLINE auto cancel() -> void {
             impl_.cancel();
         }
@@ -307,11 +315,18 @@ namespace coio {
             return detail::socket::shutdown(native_handle(), how);
         }
 
+        /**
+         * \brief determine whether the socket is open
+         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto is_open() const noexcept -> bool {
             return native_handle() != detail::invalid_socket_handle;
         }
 
+
+        /**
+         * \brief same as `is_open`
+         */
         COIO_ALWAYS_INLINE explicit operator bool() const noexcept {
             return is_open();
         }
@@ -332,11 +347,17 @@ namespace coio {
             return detail::socket::remote_endpoint(native_handle());
         }
 
+        /**
+         * \brief set an option on the socket.
+         */
         template<typename SocketOption>
         COIO_ALWAYS_INLINE auto set_option(const SocketOption& option) -> void {
             detail::socket::set_sockopt(native_handle(), option.level(), option.name(), option.data());
         }
 
+        /**
+         * \brief get an option on the socket.
+         */
         template<typename SocketOption>
         COIO_ALWAYS_INLINE auto get_option(SocketOption& option) const -> void {
             detail::socket::get_sockopt(native_handle(), option.level(), option.name(), option.data());
@@ -364,7 +385,7 @@ namespace coio {
         /**
          * \brief start an asynchronous connect.
          * \param peer the remote endpoint to which the socket will be connected.
-         * \return the awaitable - `async_connect_t`.
+         * \return an awaitable of `void`.
          * \throw std::system_error on failure.
         */
         [[nodiscard]]
@@ -467,6 +488,7 @@ namespace coio {
          * \brief start an asynchronous accept.
          * \param peer the socket into which the new connection will be accepted.
          * \return an awaitable of `void`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
@@ -487,7 +509,8 @@ namespace coio {
         /**
          * \brief start an asynchronous accept.
          * \param other_scheduler the io_context object to be used for the newly accepted socket.
-         * \return an awaitable of `tcp_socket<OtherScheduler>`.
+         * \return an awaitable of `protocol_type::socket<OtherScheduler>`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
@@ -507,7 +530,8 @@ namespace coio {
 
         /**
          * \brief start an asynchronous accept.
-         * \return an awaitable of `tcp_socket<scheduler_type>`.
+         * \return an awaitable of `protocol_type::socket<scheduler_type>`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
@@ -579,7 +603,8 @@ namespace coio {
         /**
          * \brief receive some message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
-         * \return the awaitable - `async_receive_t`.
+         * \return an awaitable of `std::size_t`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `read`, `read_some`, `receive`,
          * `async_read`, `async_read_some` or `async_receive` are performed until this operation completes.\n
@@ -605,7 +630,8 @@ namespace coio {
         /**
          * \brief send some message data asynchronously.
          * \param buffer the buffers containing the message part to send.
-         * \return the awaitable - `async_send_t`.
+         * \return an awaitable of `std::size_t`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `write`, `write_some`, `send`,
          * `async_write`, `async_write_some`, or `async_send` are performed until this operation completes.\n
@@ -700,7 +726,8 @@ namespace coio {
         /**
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
-         * \return the awaitable - `async_receive_t`.
+         * \return an awaitable of `std::size_t`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
          * `async_receive_from` are performed until this operation completes.\n
@@ -719,7 +746,8 @@ namespace coio {
         /**
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
-         * \return the awaitable - `async_send_t`.
+         * \return an awaitable of `std::size_t`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
          * `async_send_to` are performed until this operation completes.\n
@@ -739,7 +767,8 @@ namespace coio {
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
          * \param peer an endpoint object that receives the endpoint of the remote sender of the datagram.
-         * \return the awaitable - `async_receive_from_t`.
+         * \return an awaitable of `std::size_t`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
          * `async_receive_from` are performed until this operation completes.\n
@@ -759,7 +788,8 @@ namespace coio {
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
          * \param peer the remote endpoint to which the data will be sent.
-         * \return the awaitable - `async_send_to_t`.
+         * \return an awaitable of `std::size_t`.
+         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
          * `async_send_to` are performed until this operation completes.\n

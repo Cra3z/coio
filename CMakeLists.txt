@@ -9,6 +9,13 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/permissive->")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
 
 option(COIO_BUILD_EXAMPLES "whether to build examples" OFF)
+option(COIO_ENABLE_SENDERS "whether to enable std::execution support" OFF)
+set(COIO_SENDERS_BACKEND "NVIDIA" CACHE STRING "the backend to use for std::execution support.
+    available options are: NVIDIA, BEMAN, CXX26.
+    NVIDIA - use NVIDIA/stdexec implementation,
+    BEMAN - use bemanproject/execution implementation,
+    CXX26 - use the standard library implementation"
+)
 
 file(GLOB_RECURSE COIO_PUBLIC_HEADERS CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/*.h")
 add_library(
@@ -21,6 +28,15 @@ add_library(
     ALIAS
     ${PROJECT_NAME}
 )
+
+if (COIO_ENABLE_SENDERS)
+    target_compile_definitions(
+        ${PROJECT_NAME}
+        PUBLIC
+        -DCOIO_ENABLE_SENDERS
+        -DCOIO_EXECUTION_USE_${COIO_SENDERS_BACKEND}
+    )
+endif()
 
 target_sources(
     ${PROJECT_NAME}
