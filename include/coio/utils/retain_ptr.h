@@ -5,7 +5,7 @@
 #include <type_traits>
 #include <typeindex>
 #include <concepts>
-#include "../config.h"
+#include "../detail/config.h"
 
 namespace coio {
 

@@ -1,6 +1,6 @@
 #pragma once
 #include <utility>
-#include "../config.h"
+#include "../detail/config.h"
 #include "../concepts.h"
 #include "type_traits.h"
 

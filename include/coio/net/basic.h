@@ -1,15 +1,27 @@
 #pragma once
-#include <cstdint>
-#include <cstddef>
+#include "../detail/config.h"
 #include <compare>
-#include <optional>
-#if COIO_OS_WINSOWS
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include "../utils/format.h"
+#if COIO_OS_WINDOWS
 #include <BaseTsd.h>
 #endif
-#include "../generator.h"
-#include "../utils/format.h"
 
 namespace coio {
+    namespace detail {
+#if COIO_OS_LINUX
+        using socket_native_handle_type = int;
+#elif COIO_OS_WINDOWS
+        using socket_native_handle_type = ::UINT_PTR;
+#endif
+        inline constexpr socket_native_handle_type invalid_socket_handle = socket_native_handle_type(-1);
+    }
+
     class ipv4_address {
     public:
         ipv4_address() = default;
@@ -191,92 +203,7 @@ namespace coio {
         std::uint16_t port_{};
     };
 
-
-    class tcp {
-    private:
-        explicit tcp(int family) noexcept : family_(family) {}
-
-    public:
-
-        /**
-         * \brief construct to represent the IPv4 TCP protocol.
-         */
-        [[nodiscard]]
-        static auto v4() noexcept -> tcp;
-
-        /**
-         * \brief construct to represent the IPv6 TCP protocol.
-         */
-        [[nodiscard]]
-        static auto v6() noexcept -> tcp;
-
-        /**
-         * \brief get the identifier for the protocol family.
-         */
-        [[nodiscard]]
-        auto family() const noexcept -> int {
-            return family_;
-        }
-
-        /**
-         * \brief get the identifier for the type of the protocol.
-         */
-        [[nodiscard]]
-        static auto type() noexcept -> int;
-
-        /**
-         * \brief get the identifier for the protocol.
-         */
-        [[nodiscard]]
-        static auto protocol_id() noexcept -> int;
-
-    private:
-        int family_;
-    };
-
-    class udp {
-    private:
-        explicit udp(int family) noexcept : family_(family) {}
-
-    public:
-
-        /**
-         * \brief construct to represent the IPv4 UDP protocol.
-         */
-        [[nodiscard]]
-        static auto v4() noexcept -> udp;
-
-        /**
-         * \brief construct to represent the IPv6 UDP protocol.
-         */
-        [[nodiscard]]
-        static auto v6() noexcept -> udp;
-
-        /**
-         * \brief get the identifier for the protocol family.
-         */
-        [[nodiscard]]
-        auto family() const noexcept -> int {
-            return family_;
-        }
-
-        /**
-         * \brief get the identifier for the type of the protocol.
-         */
-        [[nodiscard]]
-        static auto type() noexcept -> int;
-
-        /**
-         * \brief get the identifier for the protocol.
-         */
-        [[nodiscard]]
-        static auto protocol_id() noexcept -> int;
-
-    private:
-        int family_;
-    };
-
-    inline auto reverse_bytes(std::span<std::byte> bytes) noexcept -> void  {
+    inline auto reverse_bytes(std::span<std::byte> bytes) noexcept -> void {
         if (bytes.empty()) [[unlikely]] return;
         for (std::size_t i = 0, j = bytes.size() - 1; i < j; ++i, --j) {
             std::swap(bytes[i], bytes[j]);
@@ -298,69 +225,8 @@ namespace coio {
         }
         return from_net;
     };
-
-
-    namespace detail {
-#if COIO_OS_LINUX
-        using socket_native_handle_type = int;
-#elif COIO_OS_WINDOWS
-        using socket_native_handle_type = ::UINT_PTR;
-#endif
-        inline constexpr socket_native_handle_type invalid_socket_handle_value = socket_native_handle_type(-1);
-
-        struct resolve_query_t {
-            static const int canonical_name;
-            static const int passive;
-            static const int numeric_host;
-            static const int numeric_service;
-            static const int v4_mapped;
-            static const int all_matching;
-            static const int address_configured;
-
-            std::string host_name;
-            std::string service_name;
-            int         flags{v4_mapped | address_configured};
-        };
-
-        struct resolve_result_t {
-            class endpoint endpoint;
-            std::string canonical_name;
-        };
-
-        auto resolve_impl(resolve_query_t query, int family, int socktype, int protocol_id) -> generator<resolve_result_t>;
-
-        auto resolve_impl(resolve_query_t query, int sock_type, int protocol_id) -> generator<resolve_result_t>;
-
-    }
-
-    template<typename Protocol>
-    class resolver {
-    public:
-        using protocol_type = Protocol;
-        using query_t = detail::resolve_query_t;
-        using result_t = detail::resolve_result_t;
-
-    public:
-        resolver() = default;
-
-        explicit resolver(protocol_type protocol) noexcept(std::is_nothrow_move_constructible_v<protocol_type>) : protocol_(std::move(protocol)) {}
-
-        /**
-         * \brief resolve a query into a sequence of endpoint entries.
-         */
-        [[nodiscard]]
-        auto resolve(query_t query) const -> generator<result_t> {
-            if (protocol_) return detail::resolve_impl(std::move(query), protocol_->family(), protocol_type::type(), protocol_type::protocol_id());
-            return detail::resolve_impl(std::move(query), protocol_type::type(), protocol_type::protocol_id());
-        }
-
-    private:
-        std::optional<protocol_type> protocol_;
-    };
-
-    using tcp_resolver = resolver<tcp>;
-    using udp_resolver = resolver<udp>;
 }
+
 
 template<>
 struct std::tuple_size<coio::endpoint> : std::integral_constant<std::size_t, 2> {};

@@ -1,21 +1,25 @@
 #include <coio/core.h>
-#include <coio/async_io.h>
+#include <coio/asyncio/io.h>
+#include <coio/asyncio/epoll_context.h>
 #include <coio/net/socket.h>
+#include <coio/net/tcp.h>
 #include "common.h"
 
-auto handle_connection(coio::tcp_socket socket) -> coio::task<> {
+#if COIO_OS_LINUX
+using io_context = coio::epoll_context;
+#endif
+using tcp_socket = coio::tcp::socket<io_context::scheduler>;
+using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
+
+auto handle_connection(tcp_socket socket) -> coio::task<> {
     auto remote_endpoint = socket.remote_endpoint();
     try {
-        std::uint8_t length;
         char buffer[255];
         ::println("new connection with [{}]", remote_endpoint);
         while (true) {
-            co_await coio::async_read(socket, std::as_writable_bytes(std::span{&length, 1}));
-            co_await coio::async_read(socket, std::as_writable_bytes(std::span{buffer, length}));
+            const auto length = co_await socket.async_read_some(coio::as_writable_bytes(buffer));
             ::println("[{}] {}", remote_endpoint, std::string_view{buffer, length});
-            for (std::size_t i = 0; i < length; ++i) buffer[i] = char(std::toupper(buffer[i]));
-            co_await coio::async_write(socket, std::as_bytes(std::span{&length, 1}));
-            co_await coio::async_write(socket, std::as_bytes(std::span{buffer, length}));
+            co_await coio::async_write(socket, coio::as_bytes(buffer, length));
         }
     }
     catch (const std::system_error& e) {
@@ -23,18 +27,26 @@ auto handle_connection(coio::tcp_socket socket) -> coio::task<> {
     }
 }
 
-auto main() -> int {
-    coio::io_context context;
+auto start_server(io_context::scheduler sched) -> coio::task<> {
+    tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8086}};
+    ::println("server \"{}\" start...", acceptor.local_endpoint());
     coio::async_scope scope;
-    scope.spawn([&context]() -> coio::task<> {
-        coio::async_scope sub_scope;
-        coio::tcp_acceptor acceptor{context, {coio::ipv4_address::any(), 8086}};
-        ::println("server \"{}\" start...", acceptor.local_endpoint());
+    try {
         while (true) {
-            coio::tcp_socket socket = co_await acceptor.async_accept();
-            sub_scope.spawn(handle_connection(std::move(socket)));
+            tcp_socket socket = co_await acceptor.async_accept();
+            scope.spawn(handle_connection(std::move(socket)));
         }
-        co_await sub_scope.join();
-    }());
+    }
+    catch (const std::system_error& e) {
+        ::println("acceptor error: {}", e.what());
+    }
+    co_await scope.join();
+}
+
+auto main() -> int {
+    io_context context;
+    coio::async_scope scope;
+    scope.spawn(start_server(context.get_scheduler()));
     context.run();
+    coio::sync_wait(scope.join());
 }

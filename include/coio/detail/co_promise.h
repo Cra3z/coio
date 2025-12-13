@@ -1,5 +1,5 @@
 #pragma once
-#include "../config.h"
+#include "config.h"
 #include "../concepts.h"
 #include "../utils/type_traits.h"
 

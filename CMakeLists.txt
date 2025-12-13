@@ -8,22 +8,36 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/permissive->")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
 
-option(COIO_EXAMPLES "whether to build examples" OFF)
+option(COIO_BUILD_EXAMPLES "whether to build examples" OFF)
 
-file(GLOB_RECURSE COIO_HEADERS CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/*.h")
+file(GLOB_RECURSE COIO_PUBLIC_HEADERS CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/*.h")
 add_library(
     ${PROJECT_NAME}
-    STATIC
-    ${COIO_HEADERS}
+    ${COIO_PUBLIC_HEADERS}
+)
+
+add_library(
+    ${PROJECT_NAME}::${PROJECT_NAME}
+    ALIAS
+    ${PROJECT_NAME}
+)
+
+target_sources(
+    ${PROJECT_NAME}
+    INTERFACE
+    FILE_SET coio_public_headers
+    TYPE HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/include
+    FILES
+    ${COIO_PUBLIC_HEADERS}
 )
 
 if (LINUX)
+    file(GLOB_RECURSE COIO_LINUX_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/linux/*.cpp")
     target_sources(
         ${PROJECT_NAME}
         PRIVATE
-        src/linux/epoll.cpp
-        src/linux/net/base.cpp
-        src/linux/net/socket.cpp
+        ${COIO_LINUX_SOURCES}
     )
 endif()
 
@@ -35,13 +49,9 @@ target_include_directories(
 )
 
 install(
-    DIRECTORY ${PROJECT_SOURCE_DIR}/include
-    DESTINATION ${PROJECT_NAME}
-)
-
-install(
     TARGETS ${PROJECT_NAME}
     EXPORT ${PROJECT_NAME}-targets
+    FILE_SET coio_public_headers DESTINATION ${PROJECT_NAME}/include
     DESTINATION ${PROJECT_NAME}/lib/${CMAKE_BUILD_TYPE}
 )
 
@@ -50,6 +60,12 @@ install(
     FILE ${PROJECT_NAME}-targets.cmake
     NAMESPACE ${PROJECT_NAME}::
     DESTINATION ${PROJECT_NAME}/lib/cmake/${PROJECT_NAME}
+)
+
+export(
+    EXPORT ${PROJECT_NAME}-targets
+    NAMESPACE ${PROJECT_NAME}::
+    FILE ${PROJECT_BINARY_DIR}/${PROJECT_NAME}-targets.cmake
 )
 
 include(CMakePackageConfigHelpers)
@@ -65,6 +81,6 @@ install(
     DESTINATION ${PROJECT_NAME}/lib/cmake/${PROJECT_NAME}
 )
 
-if (COIO_EXAMPLES)
+if (COIO_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()

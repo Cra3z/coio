@@ -6,7 +6,7 @@
 #include <memory>
 #include <cassert>
 #include <algorithm>
-#include "../config.h"
+#include "../detail/config.h"
 #include "../concepts.h"
 
 namespace coio {

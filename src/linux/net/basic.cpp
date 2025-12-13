@@ -1,55 +1,19 @@
-#include <coio/config.h>
 #include <bit>
+#include <cstring>
 #include <unistd.h>
-#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <coio/error.h>
-#include <coio/detail/platform/linux.h>
-#include <coio/net/internet.h>
+#include <coio/net/basic.h>
 #include <coio/utils/scope_exit.h>
 
 namespace coio {
     auto error::gai_category_t::message(int ec) const -> std::string {
         return ::gai_strerror(ec);
     }
-
-    auto tcp::v4() noexcept -> tcp {
-        return tcp{AF_INET};
-    }
-
-    auto tcp::v6() noexcept -> tcp {
-        return tcp{AF_INET6};
-    }
-
-    auto tcp::type() noexcept -> int {
-        return SOCK_STREAM;
-    }
-
-    auto tcp::protocol_id() noexcept -> int {
-        return IPPROTO_TCP;
-    }
-
-
-    auto udp::v4() noexcept -> udp {
-        return udp{AF_INET};
-    }
-
-    auto udp::v6() noexcept -> udp {
-        return udp{AF_INET6};
-    }
-
-    auto udp::type() noexcept -> int {
-        return SOCK_DGRAM;
-    }
-
-    auto udp::protocol_id() noexcept -> int {
-        return IPPROTO_UDP;
-    }
-
 
     ipv4_address::ipv4_address(std::uint32_t host_u32) noexcept : net_u32_(::htonl(host_u32)) {}
 
@@ -85,40 +49,6 @@ namespace coio {
 
 
     namespace detail {
-        const int resolve_query_t::canonical_name     = AI_CANONNAME;
-        const int resolve_query_t::passive            = AI_PASSIVE;
-        const int resolve_query_t::numeric_host       = AI_NUMERICHOST;
-        const int resolve_query_t::numeric_service    = AI_NUMERICSERV;
-        const int resolve_query_t::v4_mapped          = AI_V4MAPPED;
-        const int resolve_query_t::all_matching       = AI_ALL;
-        const int resolve_query_t::address_configured = AI_ADDRCONFIG;
-
-        auto resolve_impl(resolve_query_t query, int socktype, int protocol_id) -> generator<resolve_result_t> {
-            return resolve_impl(std::move(query), AF_UNSPEC, socktype, protocol_id);
-        }
-
-        auto resolve_impl(resolve_query_t query, int family, int socktype, int protocol_id) -> generator<resolve_result_t> {
-            ::addrinfo hints{
-                .ai_flags = query.flags,
-                .ai_family = family,
-                .ai_socktype = socktype,
-                .ai_protocol = protocol_id,
-            };
-            ::addrinfo* ai_head = nullptr;
-            if (int ec = ::getaddrinfo(
-                query.host_name.empty() ? nullptr : query.host_name.c_str(),
-                query.service_name.empty() ? nullptr : query.service_name.c_str(),
-                &hints, &ai_head
-            )) throw std::system_error(ec, error::gai_category());
-            scope_exit _{[ai_head]() noexcept {
-                ::freeaddrinfo(ai_head);
-            }};
-            for (auto ai_node = ai_head; ai_node != nullptr; ai_node = ai_node->ai_next) {
-                co_yield {sockaddr_to_endpoint(ai_node->ai_addr), ai_node->ai_canonname ? ai_node->ai_canonname : ""};
-            }
-        }
-
-
         auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6> {
             if (addr.ip().is_v4()) {
                 return ::sockaddr_in{

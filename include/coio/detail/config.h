@@ -56,8 +56,6 @@
 #endif
 
 #define COIO_ASSERT(...) assert(__VA_ARGS__)
-#define COIO_PRECONDITION(...)
-#define COIO_POSTCONDITION(r, ...)
 
 #if __has_cpp_attribute(assume)
 #define COIO_ASSUME(expr) [[assume(expr)]]
@@ -67,16 +65,6 @@
 #define COIO_ASSUME(expr) __attribute__((assume(expr)))
 #elif COIO_CXX_COMPILER_MSVC
 #define COIO_ASSUME(expr) __assume(expr)
-#endif
-
-#ifdef COIO_USE_MODULE
-#define COIO_MODULE_EXPORT export
-#define COIO_MODULE_EXPORT_BEGIN export {
-#define COIO_MODULE_EXPORT_END }
-#else
-#define COIO_MODULE_EXPORT
-#define COIO_MODULE_EXPORT_BEGIN
-#define COIO_MODULE_EXPORT_END
 #endif
 
 #if COIO_CXX_STANDARD >= COIO_CXX_STD23 and defined(__cpp_lib_start_lifetime_as)
@@ -125,8 +113,4 @@
     #else
     #define COIO_HAS_IO_URING 0
     #endif
-#endif
-
-#if not COIO_HAS_IOCP and not COIO_HAS_EPOLL and not COIO_HAS_IO_URING
-#error "there must be epoll or iocp or io_uring."
 #endif

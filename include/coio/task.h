@@ -4,7 +4,7 @@
 #include <tuple>
 #include <utility>
 #include <variant>
-#include "config.h"
+#include "detail/config.h"
 #include "concepts.h"
 #include "detail/co_memory.h"
 #include "detail/co_promise.h"
@@ -60,7 +60,7 @@ namespace coio {
             return promise.unhandled_stopped();
         }
 
-        using unhandled_stopped_fn = std::coroutine_handle<>(*)(std::coroutine_handle<>);
+        using unhandled_stopped_fn = std::coroutine_handle<>(*)(std::coroutine_handle<>) noexcept;
 
         template<typename TaskType>
         class task_awaiter {

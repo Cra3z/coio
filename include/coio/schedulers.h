@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <coroutine>
 #include "task.h"
 #include "detail/exec.h"
@@ -7,18 +8,28 @@ namespace coio {
     template<typename Scheduler>
     concept scheduler =
         std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::scheduler_tag> and
-        std::copy_constructible<std::remove_cvref_t<Scheduler>> and
+        std::copyable<std::remove_cvref_t<Scheduler>> and
         std::equality_comparable<std::remove_cvref_t<Scheduler>> and
-        requires {
-            { std::declval<Scheduler&>().schedule() } -> awaitable_value;
-            { std::declval<Scheduler>().schedule() } -> awaitable_value;
+        requires (Scheduler&& sch)  {
+            { static_cast<Scheduler&&>(sch).schedule() } -> awaitable_value;
         };
+
+    template<typename Scheduler>
+    concept timed_scheduler = scheduler<Scheduler> and requires (Scheduler&& sch) {
+        { static_cast<Scheduler&&>(sch).now() } -> specialization_of<std::chrono::time_point>;
+        { static_cast<Scheduler&&>(sch).schedule_after(static_cast<Scheduler&&>(sch).now().time_since_epoch()) } -> awaitable_value;
+        { static_cast<Scheduler&&>(sch).schedule_at(static_cast<Scheduler&&>(sch).now()) } -> awaitable_value;
+    };
+
+    template<typename Scheduler>
+    concept io_scheduler = scheduler<Scheduler> and
+        std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_tag>;
 
     namespace detail {
         struct schedule_fn {
             template<scheduler Scheduler>
-            COIO_STATIC_CALL_OP auto operator()(Scheduler&& sched) COIO_STATIC_CALL_OP_CONST noexcept(noexcept(std::forward<Scheduler>(sched).schedule())) {
-                return std::forward<Scheduler>(sched).schedule();
+            COIO_STATIC_CALL_OP auto operator()(Scheduler&& sch) COIO_STATIC_CALL_OP_CONST noexcept(noexcept(std::forward<Scheduler>(sch).schedule())) {
+                return std::forward<Scheduler>(sch).schedule();
             }
         };
 
@@ -105,7 +116,7 @@ namespace coio {
     inline constexpr detail::on_fn on{};
 
     struct inline_scheduler {
-        using schedule_concept = detail::scheduler_tag;
+        using scheduler_concept = detail::scheduler_tag;
 
         class schedule_sender {
 #ifdef COIO_ENABLE_SENDERS
@@ -118,18 +129,22 @@ namespace coio {
 #endif
         public:
 #ifdef COIO_ENABLE_SENDERS
-            static auto get_env() noexcept -> env {
+            COIO_ALWAYS_INLINE static auto get_env() noexcept -> env {
                 return {};
             }
 #endif
-            auto operator co_await() const noexcept -> std::suspend_never {
+            COIO_ALWAYS_INLINE auto operator co_await() const noexcept -> std::suspend_never {
                 return {};
             }
         };
 
         [[nodiscard]]
-        static auto schedule() noexcept -> schedule_sender {
+        COIO_ALWAYS_INLINE static auto schedule() noexcept -> schedule_sender {
             return {};
+        }
+
+        friend auto operator== (const inline_scheduler&, const inline_scheduler&) noexcept -> bool {
+            return true;
         }
     };
 

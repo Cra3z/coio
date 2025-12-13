@@ -1,216 +1,425 @@
 #pragma once
 #include <span>
-#include "internet.h"
-#include "async_operation.h"
+#include "coio/core.h"
+#include "../error.h"
+#include "../detail/io_descriptions.h"
+
+struct linger;
 
 namespace coio {
+    namespace detail::socket {
+        struct linger_storage {
+            #if COIO_OS_WINDOWS
+            using linger_interal = unsigned short;
+#else
+            using linger_interal = int;
+#endif
+            linger_interal l_onoff;
+            linger_interal l_linger;
+        };
 
-    namespace detail {
-        auto receive(socket_native_handle_type handle, std::span<std::byte> buffer, bool zero_as_eof) -> std::size_t;
+        enum class shutdown_type : short {
+            shutdown_send,
+            shutdown_receive,
+            shutdown_both,
+        };
+
+        auto set_sockopt(socket_native_handle_type handle, int level, int option_name, std::span<const std::byte> value) -> void;
+
+        auto get_sockopt(socket_native_handle_type handle, int level, int option_name, std::span<std::byte> value) -> void;
+
+        auto sol_socket_v() noexcept -> int;
+
+        template<typename ValueType>
+        struct sock_option_traits {
+            using storage = ValueType;
+
+            static auto from_value(const ValueType& value) noexcept -> storage {
+                return value;
+            }
+
+            static auto to_value(const storage& storage) noexcept -> ValueType {
+                return storage;
+            }
+        };
+
+        template<>
+        struct sock_option_traits<bool> {
+            using storage = int;
+
+            static auto from_value(bool value) noexcept -> storage {
+                return static_cast<int>(value);
+            }
+
+            static auto to_value(int storage) noexcept -> bool {
+                return static_cast<bool>(storage);
+            }
+        };
+
+        template<>
+        struct sock_option_traits<::linger> {
+            using storage = linger_storage;
+
+            static auto from_value(const ::linger& value) noexcept -> linger_storage;
+
+            static auto to_value(const linger_storage& storage) noexcept -> ::linger;
+        };
+
+        template<typename ValueType>
+        class sock_option {
+        private:
+            using traits = sock_option_traits<ValueType>;
+            using storage_type = typename traits::storage;
+            static constexpr std::size_t length = sizeof(storage_type);
+
+        public:
+            sock_option() noexcept = default;
+
+            explicit sock_option(ValueType value) noexcept : storage_(value) {}
+
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE auto data() noexcept -> std::span<std::byte> {
+                return {reinterpret_cast<std::byte*>(&storage_), length};
+            }
+
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE auto data() const noexcept -> std::span<const std::byte> {
+                return {reinterpret_cast<const std::byte*>(&storage_), length};
+            }
+
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE static auto level() noexcept -> int {
+                return sol_socket_v();
+            }
+
+            [[nodiscard]]
+            auto get() const noexcept -> ValueType {
+                return traits::to_value(storage_);
+            }
+
+            auto set(const ValueType& value) noexcept -> void {
+                storage_ = traits::from_value(value);
+            }
+
+        protected:
+            storage_type storage_;
+        };
+
+        struct debug : sock_option<bool> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct do_not_route : sock_option<bool> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct broadcast : sock_option<bool> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct keep_alive : sock_option<bool> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct linger : sock_option<::linger> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct out_of_band_inline : sock_option<bool> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct receive_buffer_size : sock_option<int> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct receive_low_watermark : sock_option<int> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct reuse_address : sock_option<bool> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct send_buffer_size : sock_option<int> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        struct send_low_watermark : sock_option<int> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        [[nodiscard]]
+        auto open(int family, int type, int protocol_id) -> socket_native_handle_type;
+
+        auto close(socket_native_handle_type handle) -> void;
+
+        [[nodiscard]]
+        auto max_backlog() noexcept -> std::size_t;
+
+        [[nodiscard]]
+        auto local_endpoint(socket_native_handle_type handle) -> endpoint;
+
+        [[nodiscard]]
+        auto remote_endpoint(socket_native_handle_type handle) -> endpoint;
+
+        auto shutdown(socket_native_handle_type handle, shutdown_type how) -> void;
+
+        auto bind(socket_native_handle_type handle, const endpoint& local_endpoint) -> void;
+
+        auto listen(socket_native_handle_type handle, std::size_t backlog) -> void;
+
+        auto connect(socket_native_handle_type handle, const endpoint& peer) -> void;
+
+        auto accept(socket_native_handle_type handle) -> socket_native_handle_type;
+
+        auto receive(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t;
 
         auto send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t;
 
-        auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer, const endpoint& src, bool zero_as_eof) -> std::size_t;
+        auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer, const endpoint& src) -> std::size_t;
 
         auto send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
     }
 
-    class async_accept_1_t;
-
-    class async_accept_2_t;
-
-    namespace detail {
-
-        class socket_base {
-        public:
-            using native_handle_type = socket_native_handle_type;
-
-            enum class shutdown_type : short {
-                shutdown_send,
-                shutdown_receive,
-                shutdown_both,
-            };
-
-        public:
-            explicit socket_base(io_context& context) noexcept : context_(&context), handle_(detail::invalid_socket_handle_value) {}
-
-            socket_base(io_context& context, native_handle_type handle) : socket_base(context) {
-                reset_(handle);
-            }
-
-            socket_base(const socket_base&) = delete;
-
-            socket_base(socket_base&& other) noexcept :
-                context_(other.context_), handle_(std::exchange(other.handle_, detail::invalid_socket_handle_value))
-            {}
-
-            ~socket_base() {
-                close();
-            }
-
-            auto operator= (socket_base other) noexcept -> socket_base& {
-                std::swap(context_, other.context_);
-                std::swap(handle_, other.handle_);
-                return *this;
-            }
-
-
-            /**
-             * \brief get associated `io_context`.
-             * \return associated `io_context`.
-             */
-            [[nodiscard]]
-            auto context() const noexcept -> io_context& {
-                COIO_ASSERT(context_);
-                return *context_;
-            }
-
-            /**
-             * \brief get native handle
-             * \return native handle
-             */
-            [[nodiscard]]
-            auto native_handle() const noexcept -> native_handle_type {
-                return handle_;
-            }
-
-            /**
-             * \brief get local endpoint
-             * \return locl endpoint
-             * \pre `native_handle()` is valid
-             */
-            [[nodiscard]]
-            auto local_endpoint() const noexcept -> endpoint;
-
-            /**
-             * \brief get remote endpoint
-             * \return remote endpoint
-             * \pre `native_handle()` is valid
-             */
-            [[nodiscard]]
-            auto remote_endpoint() const noexcept -> endpoint;
-
-            /**
-             * \brief determine whether the socket is open.
-             */
-            explicit operator bool() const noexcept {
-                return is_open();
-            }
-
-            /**
-             * \brief determine whether the socket is open.
-             */
-            [[nodiscard]]
-            auto is_open() const noexcept -> bool {
-                return native_handle() != detail::invalid_socket_handle_value;
-            }
-
-            /**
-             * \brief close socket.
-             */
-            auto close() noexcept -> void;
-
-            /**
-             * \brief disable sends or receives on the socket.
-             * \param how `shutdown_send`: disable sends,
-             * `shutdown_receive`: disable receives,
-             * `shutdonw_both`: disable sends and receives.
-             * \throw std::system_error on failure.
-             */
-            auto shutdown(shutdown_type how) -> void;
-
-            /**
-             * \brief allow the socket to be bound to an address that is already in use.
-             * \throw std::system_error on failure. 
-             */
-            auto reuse_address() -> void;
-
-            /**
-             * \brief set the non-blocking mode of the socket.
-             * \throw std::system_error on failure.
-             * \note 1) the socket's synchronous operations will throw
-             * `std::system_error` with `std::errc::operation_would_block` or
-             * `std::errc::resource_unavailable_try_again`
-             *  if they are unable to perform the requested operation immediately.\n
-             * 2) The non-blocking mode has no effect on the behaviour of asynchronous operations.
-            *  Asynchronous operations will never fail with the error `std::errc::operation_would_block` or
-             * `std::errc::resource_unavailable_try_again` \n
-             * \sa is_non_blocking
-             */
-            auto set_non_blocking(bool mode) -> void;
-
-            /**
-             * \brief get the non-blocking mode of the socket.
-             * \return true if the socket's synchronous operations will fail with `std::errc::operation_would_block` or `std::errc::resource_unavailable_try_again` if they are unable to perform the requested operation immediately. If false, synchronous operations will block until complete.
-             * \pre `is_open()` is true
-             * \sa set_non_blocking
-             */
-            [[nodiscard]]
-            auto is_non_blocking() const noexcept -> bool;
-
-            /**
-             * \brief bind the socket to the given local endpoint.
-             * \param addr an endpoint on the local machine to which the socket will be bound.
-             * \throw std::system_error on failure.
-             */
-            auto bind(const endpoint& addr) -> void;
-
-            auto cancel() -> void;
-
-        protected:
-            auto reset_(native_handle_type new_handle) noexcept -> void;
-
-            auto open_(int family, int type, int protocol_id) -> void;
-
-            auto connect_(const endpoint& addr) -> void;
-
-            auto async_connect_(const endpoint& addr) noexcept -> async_connect_t {
-                return {*context_, handle_, {addr}};
-            }
-
-        protected:
-            io_context* context_;
-            native_handle_type handle_;
-        };
-    }
-
-    class tcp_socket;
-
-    class tcp_acceptor : detail::socket_base {
-    public:
-        using socket_base::native_handle_type;
-        using protocol_type = tcp;
+    template<typename Protocol, io_scheduler IoScheduler>
+    class basic_socket {
+    private:
+        using implementation_type = decltype(std::declval<IoScheduler&>().wrap_fd(std::declval<detail::socket_native_handle_type>()));
 
     public:
-        tcp_acceptor(io_context& context) noexcept : socket_base(context) {}
+        using protocol_type = Protocol;
+        using scheduler_type = IoScheduler;
+        using native_handle_type = detail::socket_native_handle_type;
+        using shutdown_type = detail::socket::shutdown_type;
+        using enum shutdown_type;
 
-        tcp_acceptor(io_context& context, native_handle_type handle) : socket_base(context, handle) {};
+        // Socket options
+        using broadcast = detail::socket::broadcast;
+        using debug = detail::socket::debug;
+        using do_not_route = detail::socket::do_not_route;
+        using keep_alive = detail::socket::keep_alive;
+        using linger = detail::socket::linger;
+        using out_of_band_inline = detail::socket::out_of_band_inline;
+        using receive_buffer_size = detail::socket::receive_buffer_size;
+        using receive_low_watermark = detail::socket::receive_low_watermark;
+        using reuse_address = detail::socket::reuse_address;
+        using send_buffer_size = detail::socket::send_buffer_size;
+        using send_low_watermark = detail::socket::send_low_watermark;
 
-        tcp_acceptor(io_context& context, const endpoint& addr, std::size_t backlog = max_backlog(), bool reuse_addr = true);
+    public:
+        explicit basic_socket(scheduler_type scheduler) noexcept :
+            basic_socket(std::move(scheduler), detail::invalid_socket_handle) {}
 
-        using socket_base::context;
-        using socket_base::native_handle;
-        using socket_base::local_endpoint;
-        using socket_base::is_open;
-        using socket_base::operator bool;
-        using socket_base::close;
-        using socket_base::reuse_address;
-        using socket_base::set_non_blocking;
-        using socket_base::is_non_blocking;
-        using socket_base::bind;
+        basic_socket(scheduler_type scheduler, native_handle_type handle) :
+            impl_(scheduler.wrap_fd(handle)) {}
+
+        basic_socket(const basic_socket&) = delete;
+
+        basic_socket(basic_socket&& other) = default;
+
+        ~basic_socket() noexcept {
+            close();
+        }
+
+        auto operator= (const basic_socket&) -> basic_socket& = delete;
+
+        auto operator= (basic_socket&& other) -> basic_socket& = default;
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto get_io_scheduler() const noexcept -> scheduler_type {
+            return impl_.get_io_scheduler();
+        }
+
+        /**
+         * \brief get native handle
+         * \return native handle
+         */
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto native_handle() const noexcept -> native_handle_type {
+            return impl_.native_handle();
+        }
+
+        /**
+         * \brief open the socket using the specified protocol.
+         * \param protocol an object specifying protocol parameters to be used.
+        */
+        COIO_ALWAYS_INLINE auto open(const protocol_type& protocol = protocol_type()) -> void {
+            if (is_open()) throw std::system_error{error::already_open, "open"};
+            impl_ = get_io_scheduler().wrap_fd(detail::socket::open(protocol.family(), protocol.type(), protocol.protocol_id()));
+        }
+
+        COIO_ALWAYS_INLINE auto close() -> void {
+            detail::socket::close(release());
+        }
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto release() -> native_handle_type {
+            return impl_.release();
+        }
+
+
+        COIO_ALWAYS_INLINE auto cancel() -> void {
+            impl_.cancel();
+        }
+
+        /**
+         * \brief disable sends or receives on the socket.
+         * \param how `shutdown_send`: disable sends,
+         * `shutdown_receive`: disable receives,
+         * `shutdonw_both`: disable sends and receives.
+         * \throw std::system_error on failure.
+         */
+        COIO_ALWAYS_INLINE auto shutdown(shutdown_type how) -> void {
+            return detail::socket::shutdown(native_handle(), how);
+        }
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto is_open() const noexcept -> bool {
+            return native_handle() != detail::invalid_socket_handle;
+        }
+
+        COIO_ALWAYS_INLINE explicit operator bool() const noexcept {
+            return is_open();
+        }
+
+        /**
+         * \brief get local endpoint
+         */
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto local_endpoint() const -> endpoint {
+            return detail::socket::local_endpoint(native_handle());
+        }
+
+        /**
+         * \brief get remote endpoint
+         */
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto remote_endpoint() const -> endpoint {
+            return detail::socket::remote_endpoint(native_handle());
+        }
+
+        template<typename SocketOption>
+        COIO_ALWAYS_INLINE auto set_option(const SocketOption& option) -> void {
+            detail::socket::set_sockopt(native_handle(), option.level(), option.name(), option.data());
+        }
+
+        template<typename SocketOption>
+        COIO_ALWAYS_INLINE auto get_option(SocketOption& option) const -> void {
+            detail::socket::get_sockopt(native_handle(), option.level(), option.name(), option.data());
+        }
+
+        /**
+         * \brief bind the socket to the given local endpoint.
+         * \param local_endpoint an endpoint on the local machine to which the socket will be bound.
+         * \throw std::system_error on failure.
+         */
+        COIO_ALWAYS_INLINE auto bind(const endpoint& local_endpoint) -> void {
+            detail::socket::bind(native_handle(), local_endpoint);
+        }
+
+        /**
+         * \brief connect the socket to the specified endpoint.
+         * \param peer the remote endpoint to which the socket will be connected.
+         * \throw std::system_error on failure.
+        */
+        COIO_ALWAYS_INLINE auto connect(const endpoint& peer) -> void {
+            if (not is_open()) open();
+            detail::socket::connect(native_handle(), peer);
+        }
+
+        /**
+         * \brief start an asynchronous connect.
+         * \param peer the remote endpoint to which the socket will be connected.
+         * \return the awaitable - `async_connect_t`.
+         * \throw std::system_error on failure.
+        */
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) noexcept {
+            if (not is_open()) open();
+            return get_io_scheduler().schedule_io(impl_, detail::async_connect_t{peer});
+        }
+
+    protected:
+        COIO_ALWAYS_INLINE auto check_handle_valid(const char* what) -> void {
+            if (not is_open()) [[unlikely]] {
+                throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor), what};
+            }
+        }
+
+    protected:
+        implementation_type impl_;
+    };
+
+
+    template<typename Protocol, io_scheduler IoScheduler>
+    class basic_socket_acceptor : public basic_socket<Protocol, IoScheduler> {
+    private:
+        template<io_scheduler OtherScheduler>
+        using protocol_socket_ = typename Protocol::template socket<OtherScheduler>;
+        using base = basic_socket<Protocol, IoScheduler>;
+
+    public:
+        template<io_scheduler OtherScheduler>
+        using rebind_scheduler = basic_socket_acceptor<Protocol, OtherScheduler>;
+        using typename base::scheduler_type;
+        using typename base::protocol_type;
+        using typename base::native_handle_type;
+
+    public:
+        using base::base;
+
+        basic_socket_acceptor(
+            scheduler_type scheduler,
+            const endpoint& local_endpoint,
+            std::size_t backlog = max_backlog(),
+            bool reuse_addr = true
+        ) : basic_socket_acceptor(scheduler) {
+            this->open(local_endpoint.ip().is_v4() ? protocol_type::v4() : protocol_type::v6());
+            this->set_option(detail::socket::reuse_address{reuse_addr});
+            this->bind(local_endpoint);
+            this->listen(backlog);
+        }
 
         /**
          * \brief get the maximum length of the queue of pending incoming connections.
         */
         [[nodiscard]]
-        static auto max_backlog() noexcept -> std::size_t;
-
-        /**
-         * \brief open the socket using the specified protocol.
-         * \param protocol an object specifying protocol parameters to be used. it's `tcp::v4()` or `tcp::v6()`.
-        */
-        auto open(const protocol_type& protocol) -> void {
-            open_(protocol.family(), protocol.type(), protocol.protocol_id());
+        COIO_ALWAYS_INLINE static auto max_backlog() noexcept -> std::size_t {
+            return detail::socket::max_backlog();
         }
 
         /**
@@ -218,117 +427,112 @@ namespace coio {
          * \param backlog the maximum length of the queue of pending connections.
          * \throw std::system_error on failure.
          */
-        auto listen(std::size_t backlog = max_backlog()) -> void;
-
-        /**
-         * \brief accept a new connection.
-         * \param peer the socket into which the new connection will be accepted.
-         * \throw std::system_error on failure.
-         */
-        auto accept(tcp_socket& peer) -> void;
-
-        /**
-         * \brief accept a new connection.
-         * \param context_of_peer the io_context object to be used for the newly accepted socket.
-         * \return a socket object representing the newly accepted connection.
-         * \throw std::system_error on failure.
-         */
-        [[nodiscard]]
-        auto accept(io_context& context_of_peer) -> tcp_socket;
-
-        /**
-         * \brief accept a new connection.
-         * \return a socket object representing the newly accepted connection.
-         * \throw std::system_error on failure.
-         */
-        [[nodiscard]]
-        auto accept() -> tcp_socket;
-
-        /**
-         * \brief start an asynchronous accept.
-         * \param peer the socket into which the new connection will be accepted.
-         * \return the awaitable - `async_accept_1_t`.
-         * \note
-         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
-         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
-         *  on the same socket object from different threads simultaneously.\n
-         */
-        [[nodiscard]]
-        auto async_accept(tcp_socket& peer) noexcept -> async_accept_1_t;
-
-        /**
-         * \brief start an asynchronous accept.
-         * \param context_of_peer the io_context object to be used for the newly accepted socket.
-         * \return the awaitable - `async_accept_2_t`.
-         * \note
-         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
-         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
-         *  on the same socket object from different threads simultaneously.\n
-         */
-        [[nodiscard]]
-        auto async_accept(io_context& context_of_peer) noexcept -> async_accept_2_t;
-
-        /**
-         * \brief start an asynchronous accept.
-         * \return the awaitable - `async_accept_2_t`.
-         * \note
-         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
-         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
-         *  on the same socket object from different threads simultaneously.\n
-         */
-        [[nodiscard]]
-        auto async_accept() noexcept -> async_accept_2_t;
-    };
-
-    class tcp_socket : detail::socket_base {
-        friend tcp_acceptor;
-        friend async_accept_1_t;
-        friend async_accept_2_t;
-
-    public:
-        using socket_base::native_handle_type;
-        using socket_base::shutdown_type;
-        using protocol_type = tcp;
-        using enum shutdown_type;
-
-    public:
-        using socket_base::socket_base;
-        using socket_base::context;
-        using socket_base::native_handle;
-        using socket_base::local_endpoint;
-        using socket_base::remote_endpoint;
-        using socket_base::is_open;
-        using socket_base::operator bool;
-        using socket_base::close;
-        using socket_base::shutdown;
-        using socket_base::reuse_address;
-        using socket_base::set_non_blocking;
-        using socket_base::is_non_blocking;
-        using socket_base::bind;
-
-        /**
-         * \brief open the socket using the specified protocol.
-         * \param protocol an object specifying protocol parameters to be used. it's `tcp::v4()` or `tcp::v6()`.
-        */
-        auto open(const protocol_type& protocol) -> void {
-            open_(protocol.family(), protocol.type(), protocol.protocol_id());
+        COIO_ALWAYS_INLINE auto listen(std::size_t backlog = max_backlog()) noexcept -> void {
+           detail::socket::listen(this->native_handle(), backlog);
         }
 
         /**
-         * \brief connect the socket to the specified endpoint.
-         * \param addr the remote endpoint to which the socket will be connected.
+         * \brief accept a new connection.
+         * \param peer the socket into which the new connection will be accepted.
          * \throw std::system_error on failure.
-        */
-        auto connect(const endpoint& addr) -> void;
+         */
+        template<io_scheduler OtherScheduler>
+        COIO_ALWAYS_INLINE auto accept(protocol_socket_<OtherScheduler>& peer) -> void {
+            peer = this->accept(peer.get_io_scheduler());
+        }
 
         /**
-         * \brief start an asynchronous connect.
-         * \param addr the remote endpoint to which the socket will be connected.
-         * \return the awaitable - `async_connect_t`.
+         * \brief accept a new connection.
+         * \param peer_scheduler the io_context object to be used for the newly accepted socket.
+         * \return a socket object representing the newly accepted connection.
+         * \throw std::system_error on failure.
+         */
+        template<io_scheduler OtherScheduler>
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto accept(OtherScheduler peer_scheduler) -> protocol_socket_<OtherScheduler> {
+            return protocol_socket_<OtherScheduler>(peer_scheduler, detail::socket::accept(this->native_handle()));
+        }
+
+        /**
+         * \brief accept a new connection.
+         * \return a socket object representing the newly accepted connection.
          * \throw std::system_error on failure.
          */
         [[nodiscard]]
-        auto async_connect(const endpoint& addr) -> async_connect_t;
+        COIO_ALWAYS_INLINE auto accept() -> protocol_socket_<scheduler_type> {
+            return this->accept(this->get_io_scheduler());
+        }
+
+        /**
+         * \brief start an asynchronous accept.
+         * \param peer the socket into which the new connection will be accepted.
+         * \return an awaitable of `void`.
+         * \note
+         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.\n
+         */
+        template<io_scheduler OtherScheduler>
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto async_accept(protocol_socket_<OtherScheduler>& peer) {
+            this->check_handle_valid("async_accept");
+            return then(
+                this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}),
+                [&peer](native_handle_type handle) noexcept {
+                    peer = protocol_socket_<OtherScheduler>(peer.get_io_scheduler(), handle);
+                }
+            );
+        }
+
+        /**
+         * \brief start an asynchronous accept.
+         * \param other_scheduler the io_context object to be used for the newly accepted socket.
+         * \return an awaitable of `tcp_socket<OtherScheduler>`.
+         * \note
+         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.\n
+         */
+        template<io_scheduler OtherScheduler>
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto async_accept(OtherScheduler other_scheduler) {
+            this->check_handle_valid("async_accept");
+            return then(
+                this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}),
+                [other_scheduler](native_handle_type handle) noexcept {
+                    return protocol_socket_<OtherScheduler>(other_scheduler, handle);
+                }
+            );
+        }
+
+        /**
+         * \brief start an asynchronous accept.
+         * \return an awaitable of `tcp_socket<scheduler_type>`.
+         * \note
+         * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
+         * 2) the behavior is undefined if call two initiating functions (names that start with async_)
+         *  on the same socket object from different threads simultaneously.\n
+         */
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto async_accept() {
+            return this->async_accept(this->get_io_scheduler());
+        }
+    };
+
+    template<typename Protocol, io_scheduler IoScheduler>
+    class basic_stream_socket : public basic_socket<Protocol, IoScheduler> {
+    private:
+        using base = basic_socket<Protocol, IoScheduler>;
+
+    public:
+        template<io_scheduler OtherScheduler>
+        using rebind_scheduler = basic_stream_socket<Protocol, OtherScheduler>;
+        using typename base::scheduler_type;
+        using typename base::protocol_type;
+        using typename base::native_handle_type;
+
+    public:
+        using base::base;
 
         /**
          * \brief read some data to the socket.
@@ -338,8 +542,10 @@ namespace coio {
          * \note consider using `read` if you need to ensure that the requested amount of data is read before the blocking operation completes.
         */
         [[nodiscard]]
-        auto read_some(std::span<std::byte> buffer) -> std::size_t {
-            return detail::receive(handle_, buffer, true);
+        COIO_ALWAYS_INLINE auto read_some(std::span<std::byte> buffer) -> std::size_t {
+            const auto bytes_transferred = detail::socket::receive(this->native_handle(), buffer);
+            if (bytes_transferred == 0) [[unlikely]] throw std::system_error{error::eof, "read_some"};
+            return bytes_transferred;
         }
 
         /**
@@ -350,15 +556,15 @@ namespace coio {
          * \note consider using `write` if you need to ensure that all data is written before the blocking operation completes.
         */
         [[nodiscard]]
-        auto write_some(std::span<const std::byte> buffer) -> std::size_t {
-            return detail::send(handle_, buffer);
+        COIO_ALWAYS_INLINE auto write_some(std::span<const std::byte> buffer) -> std::size_t {
+            return detail::socket::send(this->native_handle(), buffer);
         }
 
         /**
          * \brief same as `read_some`
          */
         [[nodiscard]]
-        auto receive(std::span<std::byte> buffer) -> std::size_t {
+        COIO_ALWAYS_INLINE auto receive(std::span<std::byte> buffer) -> std::size_t {
             return read_some(buffer);
         }
 
@@ -366,7 +572,7 @@ namespace coio {
          * \brief same as `write_some`
          */
         [[nodiscard]]
-        auto send(std::span<const std::byte> buffer) -> std::size_t {
+        COIO_ALWAYS_INLINE auto send(std::span<const std::byte> buffer) -> std::size_t {
             return write_some(buffer);
         }
 
@@ -382,8 +588,18 @@ namespace coio {
          * 3) consider using `async_read` if you need to ensure that the requested amount of data is read before the asynchronous operation completes.
         */
         [[nodiscard]]
-        auto async_read_some(std::span<std::byte> buffer) noexcept -> async_receive_t {
-            return {*context_, handle_, {buffer, true}};
+        COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
+            this->check_handle_valid("async_read_some");
+            return then(
+                this->get_io_scheduler().schedule_io(
+                    this->impl_,
+                    detail::async_receive_t{buffer}
+                ),
+                [](std::size_t bytes_transferred) -> std::size_t {
+                    if (bytes_transferred == 0) [[unlikely]] throw std::system_error{error::eof, "async_read_some"};
+                    return bytes_transferred;
+                }
+            );
         }
 
         /**
@@ -398,15 +614,16 @@ namespace coio {
          * 3) consider using the async_write function if you need to ensure that all data is written before the asynchronous operation completes.
         */
         [[nodiscard]]
-        auto async_write_some(std::span<const std::byte> buffer) noexcept -> async_send_t {
-            return {*context_, handle_, {buffer}};
+        COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) {
+            this->check_handle_valid("async_write_some");
+            return this->get_io_scheduler().schedule_io(this->impl_, detail::async_send_t{buffer});
         }
 
         /**
          * \brief same as `async_read_some`
          */
         [[nodiscard]]
-        auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_t {
+        COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) {
             return async_read_some(buffer);
         }
 
@@ -414,168 +631,25 @@ namespace coio {
          * \brief same as `async_write_some`
          */
         [[nodiscard]]
-        auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_t {
+        COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer) {
             return async_write_some(buffer);
         }
     };
 
-    class async_accept_1_t {
-    public:
-        async_accept_1_t(io_context& context, detail::socket_native_handle_type native_handle, tcp_socket& out) noexcept :
-           impl_(context, native_handle, {}), peer_(&out) {}
-
-        async_accept_1_t(const async_accept_1_t&) = delete;
-
-        async_accept_1_t(async_accept_1_t&& other) noexcept : impl_(std::move(other.impl_)), peer_(std::exchange(other.peer_, {})) {}
-
-        auto operator= (const async_accept_1_t& other) -> async_accept_1_t& = delete;
-
-        auto operator= (async_accept_1_t&& other) noexcept -> async_accept_1_t& {
-            impl_ = std::move(other.impl_);
-            peer_ = std::exchange(other.peer_, {});
-            return *this;
-        }
-
-        auto operator co_await() && noexcept {
-            struct awaiter {
-                auto await_ready() noexcept -> bool {
-                    return base.await_ready();
-                }
-
-                auto await_suspend(std::coroutine_handle<> this_coro) {
-                    return base.await_suspend(this_coro);
-                }
-
-                auto await_resume() -> void {
-                    auto native_handle = base.await_resume();
-                    peer.reset_(native_handle);
-                }
-
-                async_accept_t::awaiter base;
-                tcp_socket& peer;
-            };
-
-            COIO_ASSERT(peer_ != nullptr);
-            return awaiter{std::move(impl_).operator co_await(), *std::exchange(peer_, {})};
-        }
-
+    template<typename Protocol, io_scheduler IoScheduler>
+    class basic_datagram_socket : public basic_socket<Protocol, IoScheduler> {
     private:
-        async_accept_t impl_;
-        tcp_socket* peer_;
-    };
-
-    class async_accept_2_t {
-    public:
-        async_accept_2_t(io_context& context, detail::socket_native_handle_type native_handle, io_context& context_of_peer) noexcept :
-           impl_(context, native_handle, {}), context_of_peer_(&context_of_peer) {}
-
-        async_accept_2_t(const async_accept_2_t&) = delete;
-
-        async_accept_2_t(async_accept_2_t&& other) noexcept :
-            impl_(std::move(other.impl_)), context_of_peer_(std::exchange(other.context_of_peer_, {})) {}
-
-        auto operator= (const async_accept_2_t&) -> async_accept_2_t& = delete;
-
-        auto operator= (async_accept_2_t&& other) noexcept -> async_accept_2_t& {
-            impl_ = std::move(other.impl_);
-            context_of_peer_ = std::exchange(other.context_of_peer_, {});
-            return *this;
-        }
-
-        auto operator co_await() && noexcept {
-            struct awaiter {
-                auto await_ready() noexcept -> bool {
-                    return base.await_ready();
-                }
-
-                auto await_suspend(std::coroutine_handle<> this_coro) {
-                    return base.await_suspend(this_coro);
-                }
-
-                auto await_resume() -> tcp_socket {
-                    return {context_of_peer, base.await_resume()};
-                }
-
-                async_accept_t::awaiter base;
-                io_context& context_of_peer; // not null
-            };
-
-            COIO_ASSERT(context_of_peer_ != nullptr);
-            return awaiter{std::move(impl_).operator co_await(), *std::exchange(context_of_peer_, {})};
-        }
-
-    private:
-        async_accept_t impl_;
-        io_context* context_of_peer_;
-    };
-
-    inline auto tcp_acceptor::accept(io_context& context_of_peer) -> tcp_socket {
-        tcp_socket out{context_of_peer};
-        accept(out);
-        return out;
-    }
-
-    inline auto tcp_acceptor::accept() -> tcp_socket {
-        return accept(*context_);
-    }
-
-    inline auto tcp_acceptor::async_accept(tcp_socket& peer) noexcept -> async_accept_1_t {
-        return {*context_, handle_, peer};
-    }
-
-    inline auto tcp_acceptor::async_accept(io_context& context_of_peer) noexcept -> async_accept_2_t {
-        return {*context_, handle_, context_of_peer};
-    }
-
-    inline auto tcp_acceptor::async_accept() noexcept -> async_accept_2_t {
-        return async_accept(*context_);
-    }
-
-    class udp_socket : detail::socket_base {
-    public:
-        using socket_base::native_handle_type;
-        using socket_base::shutdown_type;
-        using protocol_type = udp;
-        using enum shutdown_type;
+        using base = basic_socket<Protocol, IoScheduler>;
 
     public:
-        using socket_base::socket_base;
-        using socket_base::context;
-        using socket_base::native_handle;
-        using socket_base::local_endpoint;
-        using socket_base::remote_endpoint;
-        using socket_base::is_open;
-        using socket_base::operator bool;
-        using socket_base::close;
-        using socket_base::shutdown;
-        using socket_base::reuse_address;
-        using socket_base::set_non_blocking;
-        using socket_base::is_non_blocking;
-        using socket_base::bind;
+        template<io_scheduler OtherScheduler>
+        using rebind_scheduler = basic_datagram_socket<Protocol, OtherScheduler>;
+        using typename base::scheduler_type;
+        using typename base::protocol_type;
+        using typename base::native_handle_type;
 
-        /**
-         * \brief open the socket using the specified protocol.
-         * \param protocol an object specifying protocol parameters to be used. it's `udp::v4()` or `udp::v6()`.
-         */
-        auto open(const protocol_type& protocol) -> void {
-            open_(protocol.family(), protocol.type(), protocol.protocol_id());
-        }
-
-        /**
-         * \brief connect the socket to the specified endpoint.
-         * \param addr the remote endpoint to which the socket will be connected.
-         * \throw std::system_error on failure.
-        */
-        auto connect(const endpoint& addr) -> void;
-
-        /**
-         * \brief start an asynchronous connect.
-         * \param addr the remote endpoint to which the socket will be connected.
-         * \return the awaitable - `async_connect_t`.
-         * \throw std::system_error on failure.
-         */
-        [[nodiscard]]
-        auto async_connect(const endpoint& addr) -> async_connect_t;
+    public:
+        using base::base;
 
         /**
          * \brief read data to the socket.
@@ -584,8 +658,8 @@ namespace coio {
          * \throw std::system_error on failure.
         */
         [[nodiscard]]
-        auto receive(std::span<std::byte> buffer) -> std::size_t {
-            return detail::receive(handle_, buffer, false);
+        COIO_ALWAYS_INLINE auto receive(std::span<std::byte> buffer) -> std::size_t {
+            return detail::socket::receive(this->native_handle(), buffer);
         }
 
         /**
@@ -595,32 +669,32 @@ namespace coio {
          * \throw std::system_error on failure.
         */
         [[nodiscard]]
-        auto send(std::span<const std::byte> buffer) -> std::size_t {
-            return detail::send(handle_, buffer);
+        COIO_ALWAYS_INLINE auto send(std::span<const std::byte> buffer) -> std::size_t {
+            return detail::socket::send(this->native_handle(), buffer);
         }
 
         /**
          * \brief read data to the socket.
          * \param buffer data buffer to be read to the socket.
-         * \param src an endpoint object that receives the endpoint of the remote sender of the datagram.
+         * \param peer an endpoint object that receives the endpoint of the remote sender of the datagram.
          * \return the number of bytes read.
          * \throw std::system_error on failure.
         */
         [[nodiscard]]
-        auto receive_from(std::span<std::byte> buffer, const endpoint& src) -> std::size_t {
-            return detail::receive_from(handle_, buffer, src, false);
+        COIO_ALWAYS_INLINE auto receive_from(std::span<std::byte> buffer, const endpoint& peer) -> std::size_t {
+            return detail::socket::receive_from(this->native_handle(), buffer, peer, false);
         }
 
         /**
          * \brief write data to the socket.
          * \param buffer data buffer to be written to the socket.
-         * \param dest the remote endpoint to which the data will be sent.
+         * \param peer the remote endpoint to which the data will be sent.
          * \return the number of bytes written.
          * \throw std::system_error on failure.
         */
         [[nodiscard]]
-        auto send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
-            return detail::send_to(handle_, buffer, dest);
+        COIO_ALWAYS_INLINE auto send_to(std::span<const std::byte> buffer, const endpoint& peer) -> std::size_t {
+            return detail::socket::send_to(this->native_handle(), buffer, peer);
         }
 
         /**
@@ -634,8 +708,12 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
         */
         [[nodiscard]]
-        auto async_receive(std::span<std::byte> buffer) noexcept -> async_receive_t {
-            return {*context_, handle_, {buffer, false}};
+        COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) {
+            this->check_handle_valid("async_receive");
+            return this->get_io_scheduler().schedule_io(
+                this->impl_,
+                detail::async_receive_t{buffer}
+            );
         }
 
         /**
@@ -649,14 +727,18 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
         */
         [[nodiscard]]
-        auto async_send(std::span<const std::byte> buffer) noexcept -> async_send_t {
-            return {*context_, handle_, {buffer}};
+        COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer) {
+            this->check_handle_valid("async_send");
+            return this->get_io_scheduler().schedule_io(
+                this->impl_,
+                detail::async_send_t{buffer}
+            );
         }
 
         /**
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
-         * \param src an endpoint object that receives the endpoint of the remote sender of the datagram.
+         * \param peer an endpoint object that receives the endpoint of the remote sender of the datagram.
          * \return the awaitable - `async_receive_from_t`.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
@@ -665,14 +747,18 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
          */
         [[nodiscard]]
-        auto async_receive_from(std::span<std::byte> buffer, const endpoint& src) noexcept -> async_receive_from_t {
-            return {*context_, handle_, {buffer, src, false}};
+        COIO_ALWAYS_INLINE auto async_receive_from(std::span<std::byte> buffer, const endpoint& peer) {
+            this->check_handle_valid("async_receive_from");
+            return this->get_io_scheduler().schedule_io(
+                this->impl_,
+                detail::async_receive_from_t{buffer, peer}
+            );
         }
 
         /**
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
-         * \param dest the remote endpoint to which the data will be sent.
+         * \param peer the remote endpoint to which the data will be sent.
          * \return the awaitable - `async_send_to_t`.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
@@ -681,8 +767,12 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
          */
         [[nodiscard]]
-        auto async_send_to(std::span<const std::byte> buffer, const endpoint& dest) noexcept -> async_send_to_t {
-            return {*context_, handle_, {buffer, dest}};
+        COIO_ALWAYS_INLINE auto async_send_to(std::span<const std::byte> buffer, const endpoint& peer) {
+            this->check_handle_valid("async_send_to");
+            return this->get_io_scheduler().schedule_io(
+                this->impl_,
+                detail::async_send_to_t{buffer, peer}
+            );
         }
     };
 

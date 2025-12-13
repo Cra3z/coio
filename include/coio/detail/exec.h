@@ -1,5 +1,5 @@
 #pragma once
-#include "../config.h"
+#include "config.h"
 #ifdef COIO_ENABLE_SENDERS
 #ifdef COIO_EXECUTION_USE_NVIDIA
 #if __has_include(<stdexec/execution.hpp>) // https://github.com/NVIDIA/stdexec
@@ -39,4 +39,5 @@ namespace coio::detail {
     struct sender_tag {};
     struct operation_state_tag {};
 #endif
+    struct io_scheduler_tag : scheduler_tag {};
 }

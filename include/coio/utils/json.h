@@ -11,7 +11,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
-#include "../config.h"
+#include "../detail/config.h"
 #include "type_traits.h"
 
 namespace coio::json {

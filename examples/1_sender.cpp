@@ -1,25 +1,24 @@
-#define COIO_ENABLE_SENDERS
-#define COIO_EXECUTION_USE_NVIDIA
 #include <stdexec/execution.hpp>
 #include <coio/core.h>
-#include <coio/steady_timer.h>
+#include <coio/timer.h>
 #include "common.h"
 
 auto main() -> int {
-    coio::io_context io_context;
-    auto emit_after = [&io_context](int i) -> coio::task<int> {
-        coio::steady_timer timer{io_context};
+    coio::run_loop context;
+    auto emit_after = [&context](int i) -> coio::task<int> {
+        coio::timer timer{context.get_scheduler()};
         co_await timer.async_wait(std::chrono::seconds(i));
         co_return co_await stdexec::just(i);
     };
 
     auto tick = std::chrono::steady_clock::now();
     auto [i, j, k] = stdexec::sync_wait(stdexec::when_all(
-        emit_after(1),
+        emit_after(1) | stdexec::split(),
         emit_after(2),
         emit_after(3),
-        [&io_context]() -> coio::task<> {
-            co_return io_context.run();
+        [&context]() -> coio::task<> {
+            context.run();
+            co_return;
         }()
     )).value();
     auto tock = std::chrono::steady_clock::now();

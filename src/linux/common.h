@@ -6,7 +6,7 @@
 #include <system_error>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include "../../error.h"
+#include <coio/error.h>
 
 namespace coio {
     class endpoint;
@@ -29,7 +29,7 @@ namespace coio::detail {
         std::terminate();
     }
 
-    COIO_ALWAYS_INLINE auto is_blocking_errno(int errno_) noexcept ->bool {
+    COIO_ALWAYS_INLINE constexpr auto is_blocking_errno(int errno_) noexcept ->bool {
 #if EWOULDBLOCK == EAGAIN
         return errno_ == EWOULDBLOCK;
 #else
@@ -52,11 +52,7 @@ namespace coio::detail {
 
     auto sockaddr_to_endpoint(::sockaddr* sa) noexcept -> endpoint;
 
-    auto sockaddr_storage_to_endpoint(::sockaddr_storage& addr) noexcept -> endpoint ;
+    auto sockaddr_storage_to_endpoint(::sockaddr_storage& addr) noexcept -> endpoint;
 
-    auto to_sockaddr(std::variant<::sockaddr_in, ::sockaddr_in6>& sa)-> std::pair<::sockaddr*, ::socklen_t> ;
-
-    COIO_ALWAYS_INLINE auto make_eof_error(const char* msg = nullptr) -> std::system_error {
-        return msg ? std::system_error{error::eof, msg} : std::system_error{error::eof};
-    }
+    auto to_sockaddr(std::variant<::sockaddr_in, ::sockaddr_in6>& sa)-> std::pair<::sockaddr*, ::socklen_t>;
 }

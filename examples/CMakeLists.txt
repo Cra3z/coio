@@ -15,17 +15,4 @@ foreach(EXAMPLE_FILE ${EXAMPLE_FILES})
         PRIVATE
         coio
     )
-
-    target_compile_options(
-        example-${EXAMPLE_FILE_NAME}
-        PRIVATE
-        $<$<AND:$<PLATFORM_ID:Linux>,$<CXX_COMPILER_ID:GNU,Clang>>:-fsanitize=address,undefined -fno-omit-frame-pointer>
-    )
-
-    target_link_options(
-        example-${EXAMPLE_FILE_NAME}
-        PRIVATE
-        $<$<AND:$<PLATFORM_ID:Linux>,$<CXX_COMPILER_ID:GNU,Clang>>:-fsanitize=address,undefined>
-    )
 endforeach()
-

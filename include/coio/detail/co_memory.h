@@ -2,7 +2,7 @@
 #include <cstring>
 #include <memory>
 #include <utility>
-#include "../config.h"
+#include "config.h"
 
 namespace coio::detail {
 

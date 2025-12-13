@@ -1,11 +1,10 @@
 #pragma once
 #include <span>
 #include <stop_token>  // IWYU pragma: keep
-#include "task.h"
-#include "error.h" // IWYU pragma: keep
+#include "../task.h"
+#include "../error.h" // IWYU pragma: keep
 
 namespace coio {
-
     template<typename T>
     concept readable_file = requires (T t, std::span<std::byte> buffer) {
         { t.read_some(buffer) } -> std::integral;
@@ -35,7 +34,7 @@ namespace coio {
     concept async_readable_and_writable_file = async_readable_file<T> and async_writable_file<T>;
 
     template<typename T>
-    concept dynamic_buffer = std::move_constructible<T> and requires (T t, const T ct, std::size_t n) {
+    concept dynamic_buffer = std::constructible_from<T, T> and requires (T t, const T& ct, std::size_t n) {
         { ct.size() } -> std::integral;
         { ct.capacity() } -> std::integral;
         { ct.max_size() } -> std::integral;
@@ -107,11 +106,34 @@ namespace coio {
                 co_return total;
             }
         };
+
+        struct as_bytes_fn {
+            template<typename... Args> requires requires { std::span(std::declval<Args>()...); }
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE
+            COIO_STATIC_CALL_OP
+            auto operator() (Args&&... args) COIO_STATIC_CALL_OP_CONST noexcept(noexcept(std::span(std::declval<Args>()...)))
+            -> std::span<const std::byte> {
+                return std::as_bytes(std::span(std::forward<Args>(args)...));
+            }
+        };
+
+        struct as_writable_bytes_fn {
+            template<typename... Args> requires requires { std::span(std::declval<Args>()...); }
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE
+            COIO_STATIC_CALL_OP
+            auto operator() (Args&&... args) COIO_STATIC_CALL_OP_CONST noexcept(noexcept(std::span(std::declval<Args>()...)))
+            -> std::span<std::byte> {
+                return std::as_writable_bytes(std::span(std::forward<Args>(args)...));
+            }
+        };
     }
 
-    inline constexpr detail::read_fn        read{};
-    inline constexpr detail::write_fn       write{};
-    inline constexpr detail::async_read_fn  async_read{};
-    inline constexpr detail::async_write_fn async_write{};
-
+    inline constexpr detail::read_fn              read{};
+    inline constexpr detail::write_fn             write{};
+    inline constexpr detail::async_read_fn        async_read{};
+    inline constexpr detail::async_write_fn       async_write{};
+    inline constexpr detail::as_bytes_fn          as_bytes{};
+    inline constexpr detail::as_writable_bytes_fn as_writable_bytes{};
 }

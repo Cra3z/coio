@@ -1,5 +1,5 @@
 #pragma once
-#include "../config.h"
+#include "../detail/config.h"
 
 #define COIO_STRINGTIFY_IMPL(x) #x
 
