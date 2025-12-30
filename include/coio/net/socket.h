@@ -620,8 +620,10 @@ namespace coio {
                     this->impl_,
                     detail::async_receive_t{buffer}
                 ),
-                [](std::size_t bytes_transferred) -> std::size_t {
-                    if (bytes_transferred == 0) [[unlikely]] throw std::system_error{error::eof, "async_read_some"};
+                [total = buffer.size()](std::size_t bytes_transferred) -> std::size_t {
+                    if (bytes_transferred == 0 and total > 0) [[unlikely]] {
+                        throw std::system_error{error::eof, "async_read_some"};
+                    }
                     return bytes_transferred;
                 }
             );

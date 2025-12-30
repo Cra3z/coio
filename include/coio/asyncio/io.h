@@ -48,6 +48,7 @@ namespace coio {
         struct read_fn {
             COIO_STATIC_CALL_OP auto operator() (readable_file auto&& file, std::span<std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> std::size_t {
                 const std::size_t total = buffer.size();
+                if (total == 0) return 0;
                 std::size_t remain = total;
                 do {
                     remain -= file.read_some(buffer.subspan(total - remain, remain));
@@ -60,6 +61,7 @@ namespace coio {
         struct write_fn {
             COIO_STATIC_CALL_OP auto operator() (writable_file auto&& file, std::span<const std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> std::size_t {
                 const std::size_t total = buffer.size();
+                if (total == 0) return 0;
                 std::size_t remain = total;
                 do {
                     remain -= file.write_some(buffer.subspan(total - remain, remain));
@@ -79,6 +81,7 @@ namespace coio {
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc&, async_readable_file auto&& file, std::span<std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
                 const std::size_t total = buffer.size();
+                if (total == 0) co_return 0;
                 std::size_t remain = total;
                 do {
                     remain -= co_await file.async_read_some(buffer.subspan(total - remain, remain));
@@ -98,6 +101,7 @@ namespace coio {
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc&, async_writable_file auto&& file, std::span<const std::byte> buffer) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
                 const std::size_t total = buffer.size();
+                if (total == 0) co_return 0;
                 std::size_t remain = total;
                 do {
                     remain -= co_await file.async_write_some(buffer.subspan(total - remain, remain));
