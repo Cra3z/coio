@@ -555,7 +555,7 @@ namespace coio {
                     co_await sync_;
                 }();
                 sync_.handle.promise().finished_.wait(0);
-                optional_t<ResultType> maybe_result = sync_.try_get_result();
+                auto maybe_result = sync_.try_get_result();
                 if (not maybe_result) return {};
                 if constexpr (std::is_void_v<ResultType>) {
                     return optional_t<void>{std::in_place};

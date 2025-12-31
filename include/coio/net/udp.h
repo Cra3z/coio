@@ -8,7 +8,8 @@ namespace coio {
         template<io_scheduler IoScheduler>
         using socket = basic_datagram_socket<udp, IoScheduler>;
 
-        using resolver = coio::resolver<udp>;
+        template<scheduler Scheduler>
+        using resolver = basic_resolver<udp, Scheduler>;
 
     private:
         explicit udp(int family) noexcept : family_(family) {}

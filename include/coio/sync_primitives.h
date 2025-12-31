@@ -7,7 +7,7 @@
 #include <limits>
 #include <mutex>
 #include <utility>
-#include "task.h"
+#include "core.h"
 
 namespace coio {
     template<typename Mutex>

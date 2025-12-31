@@ -221,6 +221,9 @@ UDP 数据报套接字。
 ##### `resolver<Protocol>`
 用于主机名/服务解析的 DNS 解析器。
 - `resolve(query)` - 将查询解析为端点序列 (返回 `generator<result_t>`)
+- `resolve(protocol, query)` - 将查询解析为端点序列 (返回 `generator<result_t>`)
+- `async_resolve(query)` - 异步地将查询解析为端点序列 (返回 `generator<result_t>`)
+- `async_resolve(protocol, query)` - 异步地将查询解析为端点序列 (返回 `generator<result_t>`)
 
 ### 异步 I/O 工具
 

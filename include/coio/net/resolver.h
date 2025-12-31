@@ -1,6 +1,8 @@
 #pragma once
 #include "basic.h"
 #include "../generator.h"
+#include "../schedulers.h"
+#include "../task.h"
 
 namespace coio {
     namespace detail {
@@ -43,28 +45,65 @@ namespace coio {
 
     }
 
-    template<typename Protocol>
-    class resolver {
+    using detail::resolve_query_t;
+    using detail::resolve_result_t;
+
+    template<typename Protocol, scheduler Scheduler>
+    class basic_resolver {
     public:
         using protocol_type = Protocol;
+        using scheduler_type = Scheduler;
         using query_t = detail::resolve_query_t;
         using result_t = detail::resolve_result_t;
 
     public:
-        resolver() = default;
+        explicit basic_resolver(Scheduler sched) noexcept : sched_(std::move(sched)) {}
 
-        explicit resolver(protocol_type protocol) noexcept(std::is_nothrow_move_constructible_v<protocol_type>) : protocol_(std::move(protocol)) {}
+        [[nodiscard]]
+        auto get_scheduler() const noexcept -> Scheduler {
+            return sched_;
+        }
 
         /**
          * \brief resolve a query into a sequence of endpoint entries.
          */
         [[nodiscard]]
         auto resolve(query_t query) const -> generator<result_t> {
-            if (protocol_) return detail::resolve_impl(std::move(query), protocol_->family(), protocol_type::type(), protocol_type::protocol_id());
             return detail::resolve_impl(std::move(query), protocol_type::type(), protocol_type::protocol_id());
         }
 
+        /**
+         * \brief resolve a query into a sequence of endpoint entries.
+         */
+        [[nodiscard]]
+        auto resolve(const protocol_type& protocol, query_t query) const -> generator<result_t> {
+            return detail::resolve_impl(
+                std::move(query),
+                protocol.family(),
+                protocol_type::type(),
+                protocol_type::protocol_id()
+            );
+        }
+
+        /**
+         * \brief asynchronously resolve a query into a sequence of endpoint entries.
+         */
+        [[nodiscard]]
+        auto async_resolve(query_t query) const -> task<generator<result_t>> {
+            co_await sched_.schedule();
+            co_return resolve(std::move(query));
+        }
+
+        /**
+         * \brief asynchronously resolve a query into a sequence of endpoint entries.
+         */
+        [[nodiscard]]
+        auto async_resolve(protocol_type protocol, query_t query) const -> task<generator<result_t>> {
+            co_await sched_.schedule();
+            co_return resolve(std::move(protocol), std::move(query));
+        }
+
     private:
-        std::optional<protocol_type> protocol_;
+        Scheduler sched_;
     };
 }

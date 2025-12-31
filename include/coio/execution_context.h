@@ -50,13 +50,13 @@ namespace coio {
                 friend run_loop_base;
             public:
                 operation_base(Ctx& context) noexcept : context_(context) {
-                    context.work_started();
+                    ++context.work_count_;
                 }
 
                 operation_base(const operation_base&) = delete;
 
                 ~operation_base() {
-                    context_.work_finished();
+                    --context_.work_count_;
                 }
 
                 auto operator= (const operation_base&) -> operation_base& = delete;
@@ -104,8 +104,8 @@ namespace coio {
                             this->unhandled_stopped_ = &stop_stoppable_coroutine_<Promise>;
                         }
                         this->next_ = nullptr;
-                        this->ctx_->op_queue_.enqueue(*this);
-                        this->ctx_->interrupt();
+                        this->context_.op_queue_.enqueue(*this);
+                        this->context_.interrupt();
                     }
 
                     static auto await_resume() noexcept -> void {}
@@ -167,9 +167,7 @@ namespace coio {
 
                 sleep_sender(sleep_sender&& other) noexcept : ctx_(std::exchange(other.ctx_, {})), deadline_(std::exchange(other.deadline_, {})) {};
 
-                ~sleep_sender() {
-                    if (ctx_) ctx_->work_finished();
-                }
+                ~sleep_sender() = default;
 
                 auto operator= (const sleep_sender&) -> sleep_sender& = delete;
 
@@ -268,7 +266,10 @@ namespace coio {
             }
 
             COIO_ALWAYS_INLINE auto work_finished() noexcept -> void {
-                --work_count_;
+                if (--work_count_ == 0) {
+                    auto self = static_cast<Ctx*>(this);
+                    self->request_stop();
+                }
             }
 
             auto poll_one() -> bool {
@@ -370,13 +371,14 @@ namespace coio {
         }
 
     private:
-        auto do_one(bool) -> bool {
+        auto do_one(bool infinite) -> bool {
             while (not stop_requested()) {
                 timer_queue_.take_ready_timers(op_queue_);
                 if (const auto op = op_queue_.try_dequeue()) {
                     op->coro_.resume();
                     return true;
                 }
+                if (not infinite) break;
             }
             return false;
         }

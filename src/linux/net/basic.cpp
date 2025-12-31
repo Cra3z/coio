@@ -1,5 +1,6 @@
 #include <bit>
 #include <cstring>
+#include <variant>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>

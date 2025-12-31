@@ -11,7 +11,11 @@ namespace coio {
         template<io_scheduler IoScheduler>
         using socket = basic_stream_socket<tcp, IoScheduler>;
 
-        using resolver = coio::resolver<tcp>;
+        template<scheduler Scheduler>
+        using resolver = basic_resolver<tcp, Scheduler>;
+
+        // tcp socket options:
+        using no_delay = detail::socket::no_dely;
 
     private:
         explicit tcp(int family) noexcept : family_(family) {}

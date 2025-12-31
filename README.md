@@ -218,9 +218,12 @@ Datagram socket for UDP.
 - `async_receive_from(buffer, endpoint)` / `async_send_to(buffer, endpoint)` - async I/O with endpoint (awaitable)
 
 #### Resolver (`#include <coio/net/resolver.h>`)
-##### `resolver<Protocol>`
+##### `basic_resolver<Protocol, Scheduler>`
 DNS resolver for hostname/service resolution.
 - `resolve(query)` - resolve query to endpoint sequence (returns `generator<result_t>`)
+- `resolve(protocol, query)` - resolve query to endpoint sequence (returns `generator<result_t>`)
+- `async_resolve(query)` - asynchronously resolve query to endpoint sequence (returns `generator<result_t>`)
+- `async_resolve(protocol, query)` - asynchronously resolve query to endpoint sequence (returns `generator<result_t>`)
 
 ### Async I/O Utilities
 

@@ -10,12 +10,12 @@ namespace coio {
     namespace detail::socket {
         struct linger_storage {
             #if COIO_OS_WINDOWS
-            using linger_interal = unsigned short;
+            using linger_integral = unsigned short;
 #else
-            using linger_interal = int;
+            using linger_integral = int;
 #endif
-            linger_interal l_onoff;
-            linger_interal l_linger;
+            linger_integral l_onoff;
+            linger_integral l_linger;
         };
 
         enum class shutdown_type : short {
@@ -29,6 +29,10 @@ namespace coio {
         auto get_sockopt(socket_native_handle_type handle, int level, int option_name, std::span<std::byte> value) -> void;
 
         auto sol_socket_v() noexcept -> int;
+
+        auto ipproto_ipv6_v() noexcept -> int;
+
+        auto ipproto_tcp_v() noexcept -> int;
 
         template<typename ValueType>
         struct sock_option_traits {
@@ -65,7 +69,7 @@ namespace coio {
             static auto to_value(const linger_storage& storage) noexcept -> ::linger;
         };
 
-        template<typename ValueType>
+        template<typename ValueType, int(*Level)() noexcept>
         class sock_option {
         private:
             using traits = sock_option_traits<ValueType>;
@@ -89,7 +93,7 @@ namespace coio {
 
             [[nodiscard]]
             COIO_ALWAYS_INLINE static auto level() noexcept -> int {
-                return sol_socket_v();
+                return Level();
             }
 
             [[nodiscard]]
@@ -105,77 +109,94 @@ namespace coio {
             storage_type storage_;
         };
 
-        struct debug : sock_option<bool> {
+        // socket options
+        struct debug : sock_option<bool, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct do_not_route : sock_option<bool> {
+        struct do_not_route : sock_option<bool, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct broadcast : sock_option<bool> {
+        struct broadcast : sock_option<bool, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct keep_alive : sock_option<bool> {
+        struct keep_alive : sock_option<bool, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct linger : sock_option<::linger> {
+        struct linger : sock_option<::linger, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct out_of_band_inline : sock_option<bool> {
+        struct out_of_band_inline : sock_option<bool, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct receive_buffer_size : sock_option<int> {
+        struct receive_buffer_size : sock_option<int, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct receive_low_watermark : sock_option<int> {
+        struct receive_low_watermark : sock_option<int, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct reuse_address : sock_option<bool> {
+        struct reuse_address : sock_option<bool, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct send_buffer_size : sock_option<int> {
+        struct send_buffer_size : sock_option<int, sol_socket_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
             static auto name() noexcept -> int;
         };
 
-        struct send_low_watermark : sock_option<int> {
+        struct send_low_watermark : sock_option<int, sol_socket_v> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        // ip options
+        struct v6_only : sock_option<bool, ipproto_ipv6_v> {
+            using sock_option::sock_option;
+
+            [[nodiscard]]
+            static auto name() noexcept -> int;
+        };
+
+        // tcp options
+        struct no_dely : sock_option<bool, ipproto_tcp_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]
@@ -239,6 +260,9 @@ namespace coio {
         using reuse_address = detail::socket::reuse_address;
         using send_buffer_size = detail::socket::send_buffer_size;
         using send_low_watermark = detail::socket::send_low_watermark;
+
+        // Ip options
+        using v6_only = detail::socket::v6_only;
 
     public:
         explicit basic_socket(scheduler_type scheduler) noexcept :
@@ -395,7 +419,7 @@ namespace coio {
         }
 
     protected:
-        COIO_ALWAYS_INLINE auto check_handle_valid(const char* what) -> void {
+        COIO_ALWAYS_INLINE auto check_handle_valid(const char* what) const -> void {
             if (not is_open()) [[unlikely]] {
                 throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor), what};
             }

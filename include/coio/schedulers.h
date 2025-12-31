@@ -37,14 +37,14 @@ namespace coio {
             template<scheduler Scheduler, awaitable_value Awaitable>
             COIO_STATIC_CALL_OP auto operator()(
                 Scheduler sched, Awaitable awt
-            ) COIO_STATIC_CALL_OP_CONST -> task<await_result_t<Awaitable>> {
+            ) COIO_STATIC_CALL_OP_CONST {
                 return starts_on_fn{}(std::allocator_arg, std::allocator<void>{}, std::move(sched), std::move(awt));
             }
 
             template<typename Alloc, scheduler Scheduler, awaitable_value Awaitable>
             COIO_STATIC_CALL_OP auto operator()(
-                std::allocator_arg_t, const Alloc&, Scheduler&& sched, Awaitable awt
-            )COIO_STATIC_CALL_OP_CONST -> task<await_result_t<Awaitable>, Alloc> {
+                std::allocator_arg_t, const Alloc&, Scheduler sched, Awaitable awt
+            ) COIO_STATIC_CALL_OP_CONST -> task<await_result_t<Awaitable>, Alloc> {
                 co_await std::forward<Scheduler>(sched).schedule();
                 co_return co_await std::move(awt);
             }
@@ -54,14 +54,14 @@ namespace coio {
             template<scheduler Scheduler, awaitable_value Awaitable>
             COIO_STATIC_CALL_OP auto operator()(
                 Awaitable awt, Scheduler sched
-            ) COIO_STATIC_CALL_OP_CONST -> task<await_result_t<Awaitable>> {
+            ) COIO_STATIC_CALL_OP_CONST {
                 return continues_on_fn{}(std::allocator_arg, std::allocator<void>{}, std::move(awt), std::move(sched));
             }
 
             template<typename Alloc, scheduler Scheduler, awaitable_value Awaitable>
             COIO_STATIC_CALL_OP auto operator()(
                 std::allocator_arg_t, const Alloc&, Awaitable awt, Scheduler sched
-            )COIO_STATIC_CALL_OP_CONST -> task<await_result_t<Awaitable>, Alloc> {
+            ) COIO_STATIC_CALL_OP_CONST -> task<await_result_t<Awaitable>, Alloc> {
                 bool scheduled = false; // determine whether caught exception is thrown from `co_await sched.schdule()` or `co_await std::move(awt)`
                 std::exception_ptr ex;
                 try {
@@ -95,16 +95,24 @@ namespace coio {
             template<scheduler Scheduler, awaitable_value Awaitable>
             COIO_STATIC_CALL_OP auto operator()(
                 Scheduler sched, Awaitable awt
-            ) COIO_STATIC_CALL_OP_CONST -> task<await_result_t<Awaitable>> {
-                co_return co_await starts_on_fn{}(sched, continues_on_fn{}(std::move(awt), sched));
+            ) COIO_STATIC_CALL_OP_CONST {
+                return on_fn{}(std::allocator_arg, std::allocator<void>{}, std::move(sched), std::move(awt));
             }
 
             template<typename Alloc, scheduler Scheduler, awaitable_value Awaitable>
             COIO_STATIC_CALL_OP auto operator()(
-                std::allocator_arg_t, const Alloc& alloc, Scheduler&& sched, Awaitable awt
+                std::allocator_arg_t, const Alloc& alloc, Scheduler sched, Awaitable awt
             )COIO_STATIC_CALL_OP_CONST -> task<await_result_t<Awaitable>, Alloc> {
-                co_return co_await starts_on_fn{}(
-                    std::allocator_arg, alloc, sched, continues_on_fn{}(std::allocator_arg, alloc, std::move(awt), sched)
+                return starts_on_fn{}(
+                    std::allocator_arg,
+                    alloc,
+                    sched,
+                    continues_on_fn{}(
+                        std::allocator_arg,
+                        alloc,
+                        std::move(awt),
+                        sched
+                    )
                 );
             }
         };

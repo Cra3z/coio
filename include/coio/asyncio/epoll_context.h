@@ -47,6 +47,7 @@ namespace coio {
             std::atomic<operation_base*> in_op{nullptr};
             std::atomic<operation_base*> out_op{nullptr};
         };
+
     public:
         class scheduler : public scheduler_base {
             friend epoll_context;
@@ -60,9 +61,12 @@ namespace coio {
 
                 fd_entry(const fd_entry&) = delete;
 
-                fd_entry(fd_entry&& other) noexcept : ctx_(other.ctx_), fd_(std::exchange(other.fd_, -1)), data_(std::move(other.data_)) {}
+                fd_entry(fd_entry&& other) noexcept :
+                    ctx_(other.ctx_),
+                    fd_(std::exchange(other.fd_, -1)),
+                    data_(std::exchange(other.data_, {})) {}
 
-                ~fd_entry() = default;
+                ~fd_entry();
 
                 auto operator= (fd_entry other) noexcept -> fd_entry& {
                     std::ranges::swap(ctx_, other.ctx_);
@@ -89,7 +93,7 @@ namespace coio {
             private:
                 std::reference_wrapper<epoll_context> ctx_;
                 int fd_ = -1;
-                std::unique_ptr<epoll_data> data_;
+                epoll_data* data_;
             };
 
             template<std::move_constructible Sexpr>
@@ -127,7 +131,7 @@ namespace coio {
             template<typename Sexpr>
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto schedule_io(fd_entry& entry, Sexpr sexpr) noexcept -> io_awaitable<Sexpr> {
-                return {entry.fd_, ctx_, entry.data_.get(), std::move(sexpr)};
+                return {entry.fd_, ctx_, entry.data_, std::move(sexpr)};
             }
 
         public:
@@ -156,6 +160,11 @@ namespace coio {
         COIO_ALWAYS_INLINE auto interrupt() -> void {
             interrupter_.interrupt();
         }
+
+        [[nodiscard]]
+        auto new_epoll_data() -> epoll_data*;
+
+        auto reclaim_epoll_data(epoll_data* data) noexcept -> void;
 
     private:
         int epoll_fd_;
@@ -199,7 +208,7 @@ namespace coio {
         private:
             int fd;
             epoll_context::epoll_data* data;
-            detail::async_result<typename Sexpr::result_type> result;
+            async_result<typename Sexpr::result_type> result;
         };
 
         template<>

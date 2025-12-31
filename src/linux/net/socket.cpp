@@ -1,7 +1,8 @@
 #include <cstdio>
 #include <memory>
-#include <unistd.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <unistd.h>
 #include <coio/utils/utility.h>
 #include <coio/net/socket.h>
 #include "../common.h"
@@ -75,6 +76,14 @@ namespace coio::detail::socket {
         return SOL_SOCKET;
     }
 
+    auto ipproto_ipv6_v() noexcept -> int {
+        return IPPROTO_IPV6;
+    }
+
+    auto ipproto_tcp_v() noexcept -> int {
+        return IPPROTO_TCP;
+    }
+
     auto sock_option_traits<::linger>::from_value(const ::linger& value) noexcept -> linger_storage {
         return std::bit_cast<linger_storage>(value);
     }
@@ -125,6 +134,14 @@ namespace coio::detail::socket {
 
     auto send_low_watermark::name() noexcept -> int {
         return SO_SNDLOWAT;
+    }
+
+    auto v6_only::name() noexcept -> int {
+        return IPV6_V6ONLY;
+    }
+
+    auto no_dely::name() noexcept -> int {
+        return TCP_NODELAY;
     }
 
     auto open(int family, int type, int protocol_id) -> socket_native_handle_type {

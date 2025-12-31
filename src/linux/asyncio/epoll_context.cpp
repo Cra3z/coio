@@ -43,7 +43,11 @@ namespace coio {
     epoll_context::scheduler::fd_entry::fd_entry(epoll_context& ctx, int fd) :
         ctx_(ctx),
         fd_(fd),
-        data_(fd == -1 ? nullptr : std::make_unique<epoll_data>()) {}
+        data_(ctx.new_epoll_data()) {}
+
+    epoll_context::scheduler::fd_entry::~fd_entry() {
+        ctx_.get().reclaim_epoll_data(data_);
+    }
 
     auto epoll_context::scheduler::fd_entry::release() -> int {
         if (fd_ == -1) return -1;
@@ -52,7 +56,7 @@ namespace coio {
         if (data_->registered.load()) {
             detail::throw_last_error(::epoll_ctl(ctx_.get().epoll_fd_, EPOLL_CTL_DEL, fd_, nullptr));
         }
-        data_.reset();
+        ctx_.get().reclaim_epoll_data(std::exchange(data_, nullptr));
         return std::exchange(fd_, -1);
     }
 
@@ -144,6 +148,14 @@ namespace coio {
         return false;
     }
 
+    auto epoll_context::new_epoll_data() -> epoll_data* {
+        return allocator_.new_object<epoll_data>();
+    }
+
+    auto epoll_context::reclaim_epoll_data(epoll_data* data) noexcept -> void {
+        if (data == nullptr) return;
+        return allocator_.delete_object(data);
+    }
 
     namespace detail {
         template<>
