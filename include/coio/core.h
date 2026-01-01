@@ -646,18 +646,13 @@ namespace coio {
             async_scope* scope_;
         };
 
-        template<awaitable_value Awaitable>
-        static auto wrap(Awaitable awt) -> task<> {
-            void(co_await std::move(awt));
-        }
-
     public:
         async_scope() noexcept : retain_base(1) {}
 
         template<awaitable_value Awaitable>
         auto spawn(Awaitable awt) -> void {
             [this](std::decay_t<Awaitable> awt_, retain_ptr<async_scope>) -> detail::fire_and_forget {
-                co_await wrap(std::move(awt_));
+                void(co_await std::move(awt_));
             }(std::move(awt), retain_ptr{this});
         }
 

@@ -3,15 +3,6 @@
 #include "../common.h"
 
 namespace {
-    std::thread::id main_thread_id = std::this_thread::get_id();
-
-    template<typename... Args>
-    void debug(std::format_string<Args...> fmt, Args&&... args) {
-        auto thread_id = std::this_thread::get_id();
-        auto thread_name = thread_id == main_thread_id ? "main" : (std::stringstream{} << thread_id).str();
-        std::clog << std::format("[thread-{}] {}\n", thread_name, std::format(fmt, std::forward<Args>(args)...));
-    }
-
     class worker {
     public:
         worker(int index) : thrd([index, this] {

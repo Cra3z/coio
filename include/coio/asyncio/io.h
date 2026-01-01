@@ -4,8 +4,7 @@
 #include <span>
 #include <stop_token>  // IWYU pragma: keep
 #include <string_view>
-#include "../task.h"
-#include "../error.h" // IWYU pragma: keep
+#include "../core.h"
 
 namespace coio {
     template<typename T>
@@ -37,7 +36,7 @@ namespace coio {
     concept async_readable_and_writable_file = async_readable_file<T> and async_writable_file<T>;
 
     template<typename T>
-    concept dynamic_buffer = std::constructible_from<T, T> and requires (T t, const T& ct, std::size_t n) {
+    concept dynamic_buffer = requires (T t, const T& ct, std::size_t n) {
         { ct.size() } -> std::integral;
         { ct.capacity() } -> std::integral;
         { ct.max_size() } -> std::integral;
@@ -50,7 +49,7 @@ namespace coio {
     namespace detail {
         struct read_fn {
             COIO_STATIC_CALL_OP auto operator() (
-                readable_file auto&& file,
+                readable_file auto& file,
                 std::span<std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
                 const std::size_t total = buffer.size();
@@ -62,11 +61,22 @@ namespace coio {
                 while (remain > 0);
                 return total;
             }
+
+            COIO_STATIC_CALL_OP auto operator() (
+                readable_file auto& file,
+                dynamic_buffer auto& dyn_buffer,
+                std::size_t total
+            ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
+                std::size_t bytes_transferred = read_fn{}(file, dyn_buffer.prepare(total));
+                COIO_ASSERT(bytes_transferred == total);
+                dyn_buffer.commit(bytes_transferred);
+                return total;
+            }
         };
 
         struct write_fn {
             COIO_STATIC_CALL_OP auto operator() (
-                writable_file auto&& file,
+                writable_file auto& file,
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
                 const std::size_t total = buffer.size();
@@ -78,25 +88,33 @@ namespace coio {
                 while (remain > 0);
                 return total;
             }
+
+            COIO_STATIC_CALL_OP auto operator() (
+                writable_file auto& file,
+                dynamic_buffer auto& dyn_buffer
+            ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
+                const std::size_t bytes_transferred = write_fn{}(file, dyn_buffer.data());
+                dyn_buffer.consume(bytes_transferred);
+                return bytes_transferred;
+            }
         };
 
         struct async_read_fn {
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_readable_file auto&& file,
+                async_readable_file auto& file,
                 std::span<std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST {
-                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, std::forward<decltype(file)>(file), buffer);
+                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, file, buffer);
             }
 
-            template<typename Alloc>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
-                const Alloc&,
-                async_readable_file auto&& file,
+                const auto&,
+                async_readable_file auto& file,
                 std::span<std::byte> buffer
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
+            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 const std::size_t total = buffer.size();
                 if (total == 0) co_return 0;
                 std::size_t remain = total;
@@ -106,25 +124,45 @@ namespace coio {
                 while (remain > 0);
                 co_return total;
             }
+
+            COIO_STATIC_CALL_OP auto operator() (
+                async_readable_file auto& file,
+                dynamic_buffer auto& dyn_buffer,
+                std::size_t total
+            ) COIO_STATIC_CALL_OP_CONST {
+                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, file, dyn_buffer, total);
+            }
+
+            COIO_STATIC_CALL_OP auto operator() (
+                std::allocator_arg_t,
+                const auto&,
+                async_readable_file auto& file,
+                dynamic_buffer auto& dyn_buffer,
+                std::size_t total
+            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
+                std::size_t bytes_transferred = co_await async_read_fn{}(file, dyn_buffer.prepare(total));
+                COIO_ASSERT(bytes_transferred == total);
+                dyn_buffer.commit(bytes_transferred);
+                co_return total;
+            }
         };
 
         struct async_write_fn {
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_writable_file auto&& file,
+                async_writable_file auto& file,
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST {
-                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, std::forward<decltype(file)>(file), buffer);
+                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, file, buffer);
             }
 
-            template<typename Alloc>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
-                const Alloc&,
-                async_writable_file auto&& file,
+                const auto&,
+                async_writable_file auto& file,
                 std::span<const std::byte> buffer
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
+            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 const std::size_t total = buffer.size();
                 if (total == 0) co_return 0;
                 std::size_t remain = total;
@@ -134,13 +172,37 @@ namespace coio {
                 while (remain > 0);
                 co_return total;
             }
+
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP auto operator() (
+                async_writable_file auto& file,
+                dynamic_buffer auto& dyn_buffer
+            ) {
+                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, file, dyn_buffer);
+            }
+
+            [[nodiscard]]
+            COIO_STATIC_CALL_OP auto operator() (
+                std::allocator_arg_t,
+                const auto& alloc,
+                async_writable_file auto& file,
+                dynamic_buffer auto& dyn_buffer
+            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
+                return then(
+                    async_write_fn{}(std::allocator_arg, alloc, file, dyn_buffer.data()),
+                    [&dyn_buffer](std::size_t bytes_transferred) {
+                        dyn_buffer.consume(bytes_transferred);
+                        return bytes_transferred;
+                    }
+                );
+            }
         };
 
         struct read_until_fn {
             // Read until char delimiter
             COIO_STATIC_CALL_OP auto operator() (
-                readable_file auto&& file,
-                dynamic_buffer auto&& buffer,
+                readable_file auto& file,
+                dynamic_buffer auto& buffer,
                 char delim
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
                 std::size_t search_pos = 0;
@@ -169,13 +231,13 @@ namespace coio {
 
             // Read until string delimiter
             COIO_STATIC_CALL_OP auto operator() (
-                readable_file auto&& file,
-                dynamic_buffer auto&& buffer,
+                readable_file auto& file,
+                dynamic_buffer auto& buffer,
                 std::string_view delim
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
                 if (delim.empty()) return 0;
                 if (delim.size() == 1) {
-                    return read_until_fn{}(std::forward<decltype(file)>(file), buffer, delim[0]);
+                    return read_until_fn{}(file, buffer, delim[0]);
                 }
                 
                 std::size_t search_pos = 0;
@@ -212,28 +274,27 @@ namespace coio {
             // Read until char delimiter
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_readable_file auto&& file,
-                dynamic_buffer auto&& buffer,
+                async_readable_file auto& file,
+                dynamic_buffer auto& buffer,
                 char delim
             ) COIO_STATIC_CALL_OP_CONST {
                 return async_read_until_fn{}(
                     std::allocator_arg,
                     std::allocator<void>{},
-                    std::forward<decltype(file)>(file),
+                    file,
                     buffer,
                     delim
                 );
             }
 
-            template<typename Alloc>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
-                const Alloc&,
-                async_readable_file auto&& file,
-                dynamic_buffer auto&& buffer,
+                const auto&,
+                async_readable_file auto& file,
+                dynamic_buffer auto& buffer,
                 char delim
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
+            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 std::size_t search_pos = 0;
                 for (;;) {
                     auto data = buffer.data();
@@ -261,34 +322,33 @@ namespace coio {
             // Read until string delimiter
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_readable_file auto&& file,
-                dynamic_buffer auto&& buffer,
+                async_readable_file auto& file,
+                dynamic_buffer auto& buffer,
                 std::string_view delim
             ) COIO_STATIC_CALL_OP_CONST {
                 return async_read_until_fn{}(
                     std::allocator_arg,
                     std::allocator<void>{},
-                    std::forward<decltype(file)>(file),
+                    file,
                     buffer,
                     delim
                 );
             }
 
-            template<typename Alloc>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
-                const Alloc& alloc,
-                async_readable_file auto&& file,
-                dynamic_buffer auto&& buffer,
+                const auto& alloc,
+                async_readable_file auto& file,
+                dynamic_buffer auto& buffer,
                 std::string_view delim
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t, Alloc> {
+            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 if (delim.empty()) co_return 0;
                 if (delim.size() == 1) {
                     co_return co_await async_read_until_fn{}(
                         std::allocator_arg,
                         alloc,
-                        std::forward<decltype(file)>(file),
+                        file,
                         buffer,
                         delim[0]
                     );
