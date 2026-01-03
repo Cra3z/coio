@@ -3,6 +3,7 @@
 #include <coio/asyncio/epoll_context.h>
 #include <coio/net/socket.h>
 #include <coio/net/tcp.h>
+#include <coio/utils/flat_buffer.h>
 #include "common.h"
 
 #if COIO_OS_LINUX
@@ -26,9 +27,11 @@ auto main() -> int {
             if (content == "exit" or content == "quit") break;
             co_await coio::async_write(socket, coio::as_bytes(content));
             std::size_t content_length = content.size();
-            auto buffer = std::make_unique<char[]>(content_length);
-            co_await coio::async_read(socket, coio::as_writable_bytes(buffer.get(), content_length));
-            ::println("-- {}", std::string_view{buffer.get(), content_length});
+            coio::flat_buffer buffer;
+            co_await coio::async_read(socket, buffer, content_length);
+            const auto buffer_data = buffer.data();
+            ::println("-- {}", std::string_view{reinterpret_cast<const char*>(buffer_data.data()), buffer_data.size()});
+            buffer.consume(content_length);
         }
     }(context.get_scheduler()));
     context.run();
