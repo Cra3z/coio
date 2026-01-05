@@ -11,6 +11,6 @@ namespace http {
 
         router& operator=(const router&) = delete;
 
-        void route(const request& req, response& res);
+        auto route(const request& req, response& res) -> void;
     };
 }

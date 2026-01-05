@@ -12,8 +12,8 @@ auto main() -> int {
 
     const auto tick = std::chrono::steady_clock::now();
     auto [i, j, k] = coio::execution::sync_wait(coio::execution::when_all(
-        emit_after(2),
         emit_after(1),
+        emit_after(2),
         emit_after(3),
         [&context]() -> coio::task<> {
             context.run();

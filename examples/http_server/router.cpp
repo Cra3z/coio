@@ -1,7 +1,7 @@
 #include "router.h"
 
 namespace http {
-    void router::route(const request& req, response& res) {
+    auto router::route(const request& req, response& res) -> void {
         if (req.method == "GET") {
             res.status = response::ok;
             res.headers.emplace("Content-Type", "text/html; charset=utf-8");

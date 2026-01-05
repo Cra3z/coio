@@ -3,7 +3,6 @@
 #include <coio/execution_context.h>
 #include <coio/utils/conqueue.h>
 #include "common.h"
-#include "coio/asyncio/epoll_context.h"
 
 namespace {
     class worker {
@@ -25,9 +24,9 @@ namespace {
         }
 
     private:
-        coio::epoll_context loop;
+        coio::run_loop loop;
         std::jthread thrd;
-        coio::work_guard<coio::epoll_context> _{loop};
+        coio::work_guard<coio::run_loop> _{loop};
     };
 }
 

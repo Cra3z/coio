@@ -58,7 +58,7 @@ namespace http {
     }
 
 
-    response response::stock_reply(status_type status) {
+    auto response::stock_reply(status_type status) -> response {
         response rep;
         rep.status = status;
         rep.content = stock_content(status);

@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <map>
 #include <string>
-#include <vector>
 
 namespace http {
     namespace detail {

@@ -16,7 +16,7 @@ coio 提供了一些*C++20 coroutine*的基本库设施。
 </details>
 
 > [!NOTE]
-> 部分网络和异步IO设施目前仅在Linux上使用epoll实现。
+> 部分网络和异步IO设施目前仅在Linux上使用epoll和io_uring实现。
 
 ## 构建和安装
 
@@ -93,6 +93,9 @@ target_link_libraries(your_target PRIVATE coio::coio)
 
 #### `epoll_context` (`#include <coio/asyncio/epoll_context.h>`) [仅Linux]
 类似于`run_loop`, 但基于epoll支持异步I/O操作.
+
+#### `uring_context` (`#include <coio/asyncio/uring_context.h>`) [仅Linux]
+类似于`run_loop`, 但基于io_uring支持异步I/O操作.
 
 #### `work_guard<ExecutionContext>` (`#include <coio/execution_context.h>`)
 RAII 守卫，通过维护未完成工作计数来保持执行上下文运行。

@@ -1,6 +1,5 @@
 #pragma once
 #include <string>
-#include <vector>
 #include "request.h"
 #include "define.h"
 
@@ -32,6 +31,6 @@ namespace http {
 
         auto write_to(tcp_socket& socket) -> coio::task<>;
 
-        static response stock_reply(status_type status);
+        static auto stock_reply(status_type status) -> response;
     };
 }

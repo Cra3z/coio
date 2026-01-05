@@ -37,17 +37,6 @@ namespace coio::detail {
 #endif
     }
 
-    [[nodiscard]]
-    COIO_ALWAYS_INLINE auto make_system_error_from_nonblock_errno(const char* msg = nullptr) noexcept -> std::exception_ptr {
-        int errno_ = errno;
-        if (is_blocking_errno(errno_)) return {};
-        return std::make_exception_ptr(
-            msg ?
-            std::system_error(errno_, std::system_category(), msg) :
-            std::system_error(errno_, std::system_category())
-        );
-    }
-
     auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6>;
 
     auto sockaddr_to_endpoint(::sockaddr* sa) noexcept -> endpoint;

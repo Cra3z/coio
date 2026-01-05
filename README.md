@@ -16,7 +16,7 @@ coio provides some basic library facilities for *C++20 coroutines*.
 </details>
 
 > [!NOTE]
-> Some network and async-io facilities are currently only implemented using epoll on linux.
+> Some network and async-io facilities are currently only implemented using epoll and io_uring on linux.
 
 ## Build and Install
 
@@ -93,6 +93,9 @@ A basic execution context for running coroutines.
 
 #### `epoll_context` (`#include <coio/asyncio/epoll_context.h>`) [Linux only]
 Similar to `run_loop`, but based on epoll to support asynchronous I/O operations.
+
+#### `uring_context` (`#include <coio/asyncio/uring_context.h>`) [Linux only]
+Similar to `run_loop`, but based on io_uring to support asynchronous I/O operations.
 
 #### `work_guard<ExecutionContext>` (`#include <coio/execution_context.h>`)
 RAII guard that keeps an execution context running by maintaining an outstanding work count.
