@@ -127,7 +127,7 @@ RAII 守卫，通过维护未完成工作计数来保持执行上下文运行。
 
 ### 定时器
 
-#### `timer<Scheduler>` (`#include <coio/timer.h>`)
+#### `timer<Scheduler>` (`#include <coio/utils/timer.h>`)
 用于调度延迟操作的定时器工具。
 - `wait(duration)` - 同步等待
 - `wait_until(time_point)` - 同步等待到时间点
@@ -269,7 +269,7 @@ UDP 数据报套接字。
 
 ### 概念
 
-#### 协程概念 (`#include <coio/concepts.h>`)
+#### 协程概念 (`#include <coio/detail/concepts.h>`)
 - `awaiter<T, Promise>` - 类型可用作协程 awaiter
 - `awaitable<T, Promise>` - 类型可与 `co_await` 一起使用
 - `awaitable_value<T, Promise>` - 可移动构造的 awaitable

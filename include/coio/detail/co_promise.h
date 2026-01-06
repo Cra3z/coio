@@ -1,6 +1,6 @@
 #pragma once
 #include "config.h"
-#include "../concepts.h"
+#include "concepts.h"
 #include "../utils/type_traits.h"
 
 namespace coio {

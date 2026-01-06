@@ -127,7 +127,7 @@ A scope for spawning and managing fire-and-forget async work.
 
 ### Timer
 
-#### `timer<Scheduler>` (`#include <coio/timer.h>`)
+#### `timer<Scheduler>` (`#include <coio/utils/timer.h>`)
 A timer utility for scheduling delayed operations.
 - `wait(duration)` - synchronous wait
 - `wait_until(time_point)` - synchronous wait until time point
@@ -269,7 +269,7 @@ Alias for `ring_buffer<T, std::allocator<T>, inplace_vector<T, N>>`.
 
 ### Concepts
 
-#### Coroutine Concepts (`#include <coio/concepts.h>`)
+#### Coroutine Concepts (`#include <coio/detail/concepts.h>`)
 - `awaiter<T, Promise>` - type can be used as a coroutine awaiter
 - `awaitable<T, Promise>` - type can be used with `co_await`
 - `awaitable_value<T, Promise>` - awaitable that is move constructible

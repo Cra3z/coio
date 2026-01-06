@@ -1,7 +1,7 @@
 #pragma once
 #include <span>
 #include "coio/core.h"
-#include "../error.h"
+#include "../detail/error.h"
 #include "../detail/io_descriptions.h"
 
 struct linger;

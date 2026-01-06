@@ -1,5 +1,4 @@
 #pragma once
-#include "io.h"
 #include "../detail/config.h"
 #if not COIO_HAS_IO_URING
 #error "uh, where is <liburing.h>?"
@@ -147,7 +146,7 @@ namespace coio {
             return stop_source_.request_stop();
         }
 
-private:
+    private:
         auto do_one(bool infinite) -> bool;
 
         auto interrupt() -> void;

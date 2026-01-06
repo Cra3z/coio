@@ -7,7 +7,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
-#include <coio/error.h>
+#include <coio/detail/error.h>
 #include <coio/net/basic.h>
 #include <coio/utils/scope_exit.h>
 

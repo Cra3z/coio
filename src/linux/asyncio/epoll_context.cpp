@@ -24,7 +24,7 @@ namespace coio {
 
     auto detail::reactor_interrupter::interrupt() -> void {
         std::byte byte{};
-        no_errno_here(::write(writer_, &byte, 1), "coio::detail::reactor_interrupter::interrupt");
+        void(::write(writer_, &byte, 1));
     }
 
     auto detail::reactor_interrupter::reset() -> bool {

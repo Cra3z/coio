@@ -7,7 +7,7 @@
 #include <cassert>
 #include <algorithm>
 #include "../detail/config.h"
-#include "../concepts.h"
+#include "../detail/concepts.h"
 
 namespace coio {
 

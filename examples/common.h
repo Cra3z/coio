@@ -32,6 +32,6 @@ inline auto println() -> void {
 
 template<typename... Args>
 void debug(std::format_string<Args...> fmt, Args&&... args) {
-    static auto thread_name = (std::stringstream{} << std::this_thread::get_id()).str();
+    auto thread_name = (std::stringstream{} << std::this_thread::get_id()).str();
     std::clog << std::format("[thread-{}] {}\n", thread_name, std::format(fmt, std::forward<Args>(args)...));
 }

@@ -3,7 +3,7 @@
 #include <ranges>
 #include <iterator>
 #include <variant>
-#include "concepts.h"
+#include "detail/concepts.h"
 #include "detail/co_memory.h"
 
 namespace coio {

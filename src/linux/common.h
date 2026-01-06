@@ -6,7 +6,7 @@
 #include <system_error>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <coio/error.h>
+#include <coio/detail/error.h>
 
 namespace coio {
     class endpoint;

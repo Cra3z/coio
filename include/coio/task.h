@@ -5,7 +5,7 @@
 #include <utility>
 #include <variant>
 #include "detail/config.h"
-#include "concepts.h"
+#include "detail/concepts.h"
 #include "detail/co_memory.h"
 #include "detail/co_promise.h"
 #include "detail/execution.h"
