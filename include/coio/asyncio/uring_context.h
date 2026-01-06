@@ -141,11 +141,6 @@ namespace coio {
 
         auto operator= (const uring_context&) -> uring_context& = delete;
 
-        auto request_stop() -> bool {
-            interrupt();
-            return stop_source_.request_stop();
-        }
-
     private:
         auto do_one(bool infinite) -> bool;
 

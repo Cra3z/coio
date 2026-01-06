@@ -256,6 +256,13 @@ namespace coio {
                 return allocator_;
             }
 
+            COIO_ALWAYS_INLINE auto request_stop() -> bool {
+                auto self = static_cast<Ctx*>(this);
+                const auto result = stop_source_.request_stop();
+                if (result) self->interrupt();
+                return result;
+            }
+
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto stop_requested() const noexcept -> bool {
                 return stop_source_.stop_requested();
@@ -365,10 +372,6 @@ namespace coio {
         using run_loop_base::run_loop_base;
 
         ~run_loop() = default;
-
-        COIO_ALWAYS_INLINE auto request_stop() noexcept -> bool {
-            return stop_source_.request_stop();
-        }
 
     private:
         auto do_one(bool infinite) -> bool {

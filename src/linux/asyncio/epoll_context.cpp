@@ -120,12 +120,6 @@ namespace coio {
         ::close(epoll_fd_);
     }
 
-    auto epoll_context::request_stop() -> bool {
-        const auto result = stop_source_.request_stop();
-        if (result) interrupter_.interrupt();
-        return result;
-    }
-
     auto epoll_context::do_one(bool infinite) -> bool {
         if (stop_requested()) return false;
 

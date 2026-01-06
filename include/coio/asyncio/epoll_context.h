@@ -170,8 +170,6 @@ namespace coio {
 
         ~epoll_context();
 
-        auto request_stop() -> bool;
-
     private:
         auto do_one(bool infinite) -> bool;
 
