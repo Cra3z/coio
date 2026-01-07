@@ -284,8 +284,8 @@ UDP 数据报套接字。
 - `async_lockable<T>` - basic_async_lockable 且带有 `try_lock()`
 
 #### I/O 概念 (`#include <coio/asyncio/io.h>`)
-- `readable_file<T>` - 类型具有 `read_some(buffer)`
-- `writable_file<T>` - 类型具有 `write_some(buffer)`
-- `async_readable_file<T>` - 类型具有 `async_read_some(buffer)`
-- `async_writable_file<T>` - 类型具有 `async_write_some(buffer)`
+- `input_device<T>` - 类型具有 `read_some(buffer)`
+- `output_device<T>` - 类型具有 `write_some(buffer)`
+- `async_input_device<T>` - 类型具有 `async_read_some(buffer)`
+- `async_output_device<T>` - 类型具有 `async_write_some(buffer)`
 - `dynamic_buffer<T>` - 类型建模动态缓冲区

@@ -284,8 +284,8 @@ Alias for `ring_buffer<T, std::allocator<T>, inplace_vector<T, N>>`.
 - `async_lockable<T>` - basic_async_lockable with `try_lock()`
 
 #### I/O Concepts (`#include <coio/asyncio/io.h>`)
-- `readable_file<T>` - type has `read_some(buffer)`
-- `writable_file<T>` - type has `write_some(buffer)`
-- `async_readable_file<T>` - type has `async_read_some(buffer)`
-- `async_writable_file<T>` - type has `async_write_some(buffer)`
+- `input_device<T>` - type has `read_some(buffer)`
+- `output_device<T>` - type has `write_some(buffer)`
+- `async_input_device<T>` - type has `async_read_some(buffer)`
+- `async_output_device<T>` - type has `async_write_some(buffer)`
 - `dynamic_buffer<T>` - type models a dynamic buffer

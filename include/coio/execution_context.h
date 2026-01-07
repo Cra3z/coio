@@ -71,12 +71,11 @@ namespace coio {
 #ifdef COIO_ENABLE_SENDERS
             struct env {
                 auto query(execution::get_completion_scheduler_t<execution::set_value_t>) const noexcept {
-                    using scheduler_t = typename Ctx::scheduler;
-                    return scheduler_t(ctx_);
+                    return ctx_.get_scheduler();
                 }
 
                 auto query(execution::get_stop_token_t) const noexcept -> std::stop_token {
-                    return ctx_.stop_source_.get_token();
+                    return ctx_.get_stop_token();
                 }
 
                 auto query(execution::get_allocator_t) const noexcept -> std::pmr::polymorphic_allocator<> {
@@ -254,6 +253,11 @@ namespace coio {
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto get_allocator() const noexcept -> std::pmr::polymorphic_allocator<> {
                 return allocator_;
+            }
+
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE auto get_stop_token() const noexcept -> std::stop_token {
+                return stop_source_.get_token();
             }
 
             COIO_ALWAYS_INLINE auto request_stop() -> bool {
