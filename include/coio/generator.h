@@ -267,7 +267,7 @@ namespace coio {
         using rref = std::conditional_t<std::is_reference_v<reference>, std::remove_reference_t<reference>&&, reference>;
         using allocator_type = Alloc;
 
-        static_assert(detail::valid_coroutine_alloctor_<allocator_type>);
+        static_assert(std::is_void_v<allocator_type> or simple_allocator<allocator_type>);
         static_assert(unqualified_object<value_type>);
         static_assert(
             std::is_reference_v<reference> or

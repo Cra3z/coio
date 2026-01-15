@@ -7,11 +7,11 @@
 namespace http {
     class io_context_pool {
     public:
+        explicit io_context_pool(std::size_t count = std::thread::hardware_concurrency());
+
         io_context_pool(const io_context_pool&) = delete;
 
         io_context_pool& operator= (const io_context_pool&) = delete;
-
-        explicit io_context_pool(std::size_t count = std::thread::hardware_concurrency());
 
         auto stop() -> void {
             for (auto& ctx : io_contexts_) {

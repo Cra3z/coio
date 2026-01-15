@@ -96,16 +96,21 @@ namespace http {
         }
     }
 
-    auto connection(tcp_socket socket, router& router) -> coio::task<> try {
-        while (true) {
+    auto connection(
+        tcp_socket socket,
+        coio::endpoint remote_endpoint,
+        router& router,
+        coio::inplace_stop_token stop_token
+    ) -> coio::task<> try {
+        while (not stop_token.stop_requested()) {
             coio::streambuf buf;
-            co_await coio::async_read_until(socket, buf, "\r\n\r\n");
+            co_await coio::async_read_until(socket, buf, "\r\n\r\n", stop_token);
             std::istream stream(&buf);
             auto maybe_req = parse_line_and_headers(stream);
             if (!maybe_req) {
                 response res = response::stock_reply(response::bad_request);
                 res.headers.emplace("Connection", "close");
-                co_await res.write_to(socket);
+                co_await res.write_to(socket, stop_token);
                 socket.shutdown(tcp_socket::shutdown_send);
                 co_return;
             }
@@ -115,7 +120,7 @@ namespace http {
             if (auto maybe_content_length = parse_content_length(req); maybe_content_length > 0) {
                 const std::size_t content_length = *maybe_content_length;
                 if (buf.size() < content_length) {
-                    co_await coio::async_read(socket, buf, content_length - buf.size());
+                    co_await coio::async_read(socket, buf, content_length - buf.size(), stop_token);
                 }
                 req.body.resize(content_length);
                 stream.read(req.body.data(), static_cast<std::streamsize>(content_length));
@@ -126,7 +131,7 @@ namespace http {
 
             const bool keep_alive = should_keep_alive(req);
             rep.headers.emplace("Connection", keep_alive ? "keep-alive" : "close");
-            co_await rep.write_to(socket);
+            co_await rep.write_to(socket, stop_token);
             if (not keep_alive) {
                 socket.shutdown(tcp_socket::shutdown_send);
                 co_return;
@@ -134,6 +139,6 @@ namespace http {
         }
     }
     catch (const std::exception& e) {
-        ::debug("connection with {} broken: {}", socket.remote_endpoint(), e.what());
+        ::debug("connection with {} broken: {}", remote_endpoint, e.what());
     }
 }

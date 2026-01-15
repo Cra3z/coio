@@ -44,7 +44,7 @@ namespace coio {
     class conqueue {
         static_assert(unqualified_object<T>, "type `T` shall be a cv-unqualified object-type.");
         static_assert(std::movable<T>, "type `T` shall be movable.");
-        static_assert(detail::valid_coroutine_alloctor_<Alloc>, "type `Alloc` shall model the concept `coio::detail::valid_coroutine_allocator_`.");
+        static_assert(simple_allocator<Alloc>, "type `Alloc` shall model the concept `coio::allocator`.");
         static_assert(detail::valid_conqueue_container_<Container, Alloc>, "type `Container` shall model the concept `coio::detail::valid_conqueue_container_`.");
         static_assert(std::same_as<typename Container::value_type, T>, "the value-type of `Container` shall be same as type `T`.");
     public:

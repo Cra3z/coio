@@ -40,7 +40,7 @@ namespace coio {
         }
     }
 
-    auto epoll_context::io_op::register_event(int event_type, uint32_t extra_flags) noexcept -> bool {
+    auto epoll_context::epoll_op_base::register_event(int event_type, uint32_t extra_flags) noexcept -> bool {
         const bool in_op_registered = data->in_op;
         const bool out_op_registered = data->out_op;
         if (event_type == EPOLLIN /* or event_type == EPOLLPRI */) {
@@ -70,17 +70,17 @@ namespace coio {
         return ::epoll_ctl(context_.epoll_fd_, epoll_ctl_op, fd, &event) == 0;
     }
 
-    epoll_context::scheduler::fd_entry::fd_entry(epoll_context& ctx, int fd) :
+    epoll_context::scheduler::io_object::io_object(epoll_context& ctx, int fd) :
         ctx_(ctx),
         fd_(fd),
         data_(ctx.new_epoll_data()) {}
 
-    epoll_context::scheduler::fd_entry::~fd_entry() {
+    epoll_context::scheduler::io_object::~io_object() {
         cancel();
         ctx_.get().reclaim_epoll_data(data_);
     }
 
-    auto epoll_context::scheduler::fd_entry::release() -> int {
+    auto epoll_context::scheduler::io_object::release() -> int {
         if (fd_ == -1) return -1;
         COIO_ASSERT(data_ != nullptr);
         cancel();
@@ -91,7 +91,7 @@ namespace coio {
         return std::exchange(fd_, -1);
     }
 
-    auto epoll_context::scheduler::fd_entry::cancel() -> void {
+    auto epoll_context::scheduler::io_object::cancel() -> void {
         if (fd_ == -1) return;
         COIO_ASSERT(data_ != nullptr);
         for (auto op : {data_->in_op.exchange(nullptr), data_->out_op.exchange(nullptr)}) {
@@ -126,6 +126,12 @@ namespace coio {
         ::epoll_event ready_events[epoll_max_wait_count];
         int timeout = infinite ? -1 : 0;
         do {
+            timer_queue_.take_ready_timers(op_queue_);
+            if (const auto op = op_queue_.try_dequeue()) {
+                op->coro_.resume();
+                return true;
+            }
+
             if (infinite) {
                 using milliseconds = std::chrono::duration<int, std::milli>;
                 if (const auto earliest = timer_queue_.earliest()) {
@@ -162,13 +168,6 @@ namespace coio {
                     }
                 }
             }
-
-            if (stop_requested()) return false;
-            timer_queue_.take_ready_timers(op_queue_);
-            const auto op = op_queue_.try_dequeue();
-            if (op == nullptr) continue;
-            op->coro_.resume();
-            return true;
         }
         while (infinite and not stop_requested());
         return false;
@@ -183,17 +182,27 @@ namespace coio {
         return allocator_.delete_object(data);
     }
 
+    auto epoll_context::cancel_op(int event, epoll_op_base* op) -> void {
+        COIO_ASSERT(op != nullptr);
+        const auto data = op->data;
+        [[maybe_unused]] const auto registered_op = event == EPOLLIN ? data->in_op.exchange(nullptr) : data->out_op.exchange(nullptr);
+        COIO_ASSERT(registered_op == op);
+        if (op->unhandled_stopped_ == nullptr) std::terminate();
+        op->unhandled_stopped_(op->coro_).resume();
+    }
+
     namespace detail {
         template<>
-        auto epoll_op<async_read_some_t>::start() noexcept -> void {
+        auto epoll_op_base_for<async_read_some_t>::start() noexcept -> bool {
             if (not register_event(EPOLLIN, 0)) {
                 result.error(std::error_code(errno, std::system_category()));
-                immediate_complete();
+                return false;
             }
+            return true;
         }
 
         template<>
-        auto epoll_op<async_read_some_t>::do_perform() noexcept -> void {
+        auto epoll_op_base_for<async_read_some_t>::do_perform() noexcept -> void {
             COIO_ASSERT(not result.ready());
             const ::ssize_t n = ::read(fd, buffer.data(), buffer.size());
             if (n == -1) {
@@ -205,17 +214,26 @@ namespace coio {
             }
         }
 
+        template<>
+        auto epoll_op_base_for<async_read_some_t>::cancel() -> void {
+            context_.cancel_op(EPOLLIN, this);
+            [[maybe_unused]] auto op = data->in_op.exchange(nullptr);
+            COIO_ASSERT(op == this);
+            coro_.resume();
+        }
+
 
         template<>
-        auto epoll_op<async_write_some_t>::start() noexcept -> void {
+        auto epoll_op_base_for<async_write_some_t>::start() noexcept -> bool {
             if (not register_event(EPOLLOUT, 0)) {
                 result.error(std::error_code(errno, std::system_category()));
-                immediate_complete();
+                return false;
             }
+            return true;
         }
 
         template<>
-        auto epoll_op<async_write_some_t>::do_perform() noexcept -> void {
+        auto epoll_op_base_for<async_write_some_t>::do_perform() noexcept -> void {
             COIO_ASSERT(not result.ready());
             const ::ssize_t n = ::write(fd, buffer.data(), buffer.size());
             if (n == -1) {
@@ -227,17 +245,22 @@ namespace coio {
             }
         }
 
+        template<>
+        auto epoll_op_base_for<async_write_some_t>::cancel() -> void {
+            context_.cancel_op(EPOLLOUT, this);
+        }
+
 
         template<>
-        auto epoll_op<async_receive_t>::start() noexcept -> void {
+        auto epoll_op_base_for<async_receive_t>::start() noexcept -> bool {
             const ::ssize_t n = ::recv(fd, buffer.data(), buffer.size(), MSG_DONTWAIT);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLIN, EPOLLET)) {
                         result.error(std::error_code(errno, std::system_category()));
-                        immediate_complete();
+                        return false;
                     }
-                    return;
+                    return true;
                 }
                 result.error(std::error_code(errno, std::system_category()));
             }
@@ -245,10 +268,11 @@ namespace coio {
                 result.value(n);
             }
             immediate_complete();
+            return true;
         }
 
         template<>
-        auto epoll_op<async_receive_t>::do_perform() noexcept -> void {
+        auto epoll_op_base_for<async_receive_t>::do_perform() noexcept -> void {
             COIO_ASSERT(not result.ready());
             const ::ssize_t n = ::recv(fd, buffer.data(), buffer.size(), 0);
             if (n == -1) {
@@ -260,17 +284,22 @@ namespace coio {
             }
         }
 
+        template<>
+        auto epoll_op_base_for<async_receive_t>::cancel() -> void {
+            context_.cancel_op(EPOLLIN, this);
+        }
+
 
         template<>
-        auto epoll_op<async_send_t>::start() noexcept -> void {
+        auto epoll_op_base_for<async_send_t>::start() noexcept -> bool {
             const ::ssize_t n = ::send(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLOUT, EPOLLET)) {
                         result.error(std::error_code(errno, std::system_category()));
-                        immediate_complete();
+                        return false;
                     }
-                    return;
+                    return true;
                 }
                 result.error(std::error_code(errno, std::system_category()));
             }
@@ -278,10 +307,11 @@ namespace coio {
                 result.value(n);
             }
             immediate_complete();
+            return true;
         }
 
         template<>
-        auto epoll_op<async_send_t>::do_perform() noexcept -> void {
+        auto epoll_op_base_for<async_send_t>::do_perform() noexcept -> void {
             COIO_ASSERT(not result.ready());
             const ::ssize_t n = ::send(fd, buffer.data(), buffer.size(), MSG_NOSIGNAL);
             if (n == -1) {
@@ -293,9 +323,14 @@ namespace coio {
             }
         }
 
+        template<>
+        auto epoll_op_base_for<async_send_t>::cancel() -> void {
+            context_.cancel_op(EPOLLOUT, this);
+        }
+
 
         template<>
-        auto epoll_op<async_receive_from_t>::start() noexcept -> void {
+        auto epoll_op_base_for<async_receive_from_t>::start() noexcept -> bool {
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
             const ::ssize_t n = ::recvfrom(fd, buffer.data(), buffer.size(), MSG_DONTWAIT, psa, &len);
@@ -303,9 +338,9 @@ namespace coio {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLIN, EPOLLET)) {
                         result.error(std::error_code(errno, std::system_category()));
-                        immediate_complete();
+                        return false;
                     }
-                    return;
+                    return true;
                 }
                 result.error(std::error_code(errno, std::system_category()));
             }
@@ -313,10 +348,11 @@ namespace coio {
                 result.value(n);
             }
             immediate_complete();
+            return true;
         }
 
         template<>
-        auto epoll_op<async_receive_from_t>::do_perform() noexcept -> void {
+        auto epoll_op_base_for<async_receive_from_t>::do_perform() noexcept -> void {
             COIO_ASSERT(not result.ready());
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
@@ -330,9 +366,14 @@ namespace coio {
             }
         }
 
+        template<>
+        auto epoll_op_base_for<async_receive_from_t>::cancel() -> void {
+            context_.cancel_op(EPOLLIN, this);
+        }
+
 
         template<>
-        auto epoll_op<async_send_to_t>::start() noexcept -> void {
+        auto epoll_op_base_for<async_send_to_t>::start() noexcept -> bool {
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
             ::ssize_t n = ::sendto(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
@@ -340,9 +381,9 @@ namespace coio {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLOUT, EPOLLET)) {
                         result.error(std::error_code(errno, std::system_category()));
-                        immediate_complete();
+                        return false;
                     }
-                    return;
+                    return true;
                 }
                 result.error(std::error_code(errno, std::system_category()));
             }
@@ -350,10 +391,11 @@ namespace coio {
                 result.value(n);
             }
             immediate_complete();
+            return true;
         }
 
         template<>
-        auto epoll_op<async_send_to_t>::do_perform() noexcept -> void {
+        auto epoll_op_base_for<async_send_to_t>::do_perform() noexcept -> void {
             COIO_ASSERT(not result.ready());
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
@@ -368,15 +410,22 @@ namespace coio {
         }
 
         template<>
-        auto epoll_op<async_accept_t>::start() noexcept -> void {
+        auto epoll_op_base_for<async_send_to_t>::cancel() -> void {
+            context_.cancel_op(EPOLLOUT, this);
+        }
+
+
+        template<>
+        auto epoll_op_base_for<async_accept_t>::start() noexcept -> bool {
             if (not register_event(EPOLLIN, 0)) {
                 result.error(std::error_code(errno, std::system_category()));
-                immediate_complete();
+                return false;
             }
+            return true;
         }
 
         template<>
-        auto epoll_op<async_accept_t>::do_perform() noexcept -> void {
+        auto epoll_op_base_for<async_accept_t>::do_perform() noexcept -> void {
             COIO_ASSERT(not result.ready());
             auto accepted_ = ::accept4(fd, nullptr, nullptr, 0);
             if (accepted_ == -1) {
@@ -389,15 +438,21 @@ namespace coio {
         }
 
         template<>
-        auto epoll_op<async_connect_t>::start() noexcept -> void {
-            if (not register_event(EPOLLOUT, 0)) {
-                result.error(std::error_code(errno, std::system_category()));
-                immediate_complete();
-            }
+        auto epoll_op_base_for<async_accept_t>::cancel() -> void {
+            context_.cancel_op(EPOLLIN, this);
         }
 
         template<>
-        auto epoll_op<async_connect_t>::do_perform() noexcept -> void {
+        auto epoll_op_base_for<async_connect_t>::start() noexcept -> bool {
+            if (not register_event(EPOLLOUT, 0)) {
+                result.error(std::error_code(errno, std::system_category()));
+                return false;
+            }
+            return true;
+        }
+
+        template<>
+        auto epoll_op_base_for<async_connect_t>::do_perform() noexcept -> void {
             COIO_ASSERT(not result.ready());
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = detail::to_sockaddr(sa);
@@ -408,6 +463,11 @@ namespace coio {
             else {
                 result.value();
             }
+        }
+
+        template<>
+        auto epoll_op_base_for<async_connect_t>::cancel() -> void {
+            context_.cancel_op(EPOLLOUT, this);
         }
     }
 }

@@ -23,12 +23,21 @@ namespace coio {
         }
     }
 
-    auto uring_context::scheduler::fd_entry::release() -> int {
+    auto uring_context::uring_op_base::cancel() -> void {
+        auto sqe = context_.allocate_sqe();
+        if (sqe == nullptr) {
+            throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
+        }
+        ::io_uring_prep_cancel(sqe, this, 0);
+        throw_uring_error(::io_uring_submit(&context_.uring_));
+    }
+
+    auto uring_context::scheduler::io_object::release() -> int {
         cancel();
         return std::exchange(fd_, -1);
     }
 
-    auto uring_context::scheduler::fd_entry::cancel() -> void {
+    auto uring_context::scheduler::io_object::cancel() -> void {
         if (fd_ == -1) return;
         auto sqe = ctx_->allocate_sqe();
         if (sqe == nullptr) {
@@ -52,9 +61,15 @@ namespace coio {
         if (stop_requested()) return false;
 
         do {
+            timer_queue_.take_ready_timers(op_queue_);
+            if (const auto op = op_queue_.try_dequeue()) {
+                op->coro_.resume();
+                return true;
+            }
+
             ::io_uring_cqe* cqe = nullptr;
-            std::optional cqe_guard{scope_exit{[this, &cqe] {
-                if (cqe) ::io_uring_cqe_seen(&uring_, cqe);
+            std::optional cqe_guard{scope_exit{[&] {
+                ::io_uring_cqe_seen(&uring_, cqe);
             }}};
             int ec = 0;
             if (infinite) {
@@ -86,18 +101,28 @@ namespace coio {
 
             if (cqe) {
                 if (auto user_data = ::io_uring_cqe_get_data(cqe); user_data and user_data != this) {
-                    auto op = static_cast<io_op*>(user_data);
+                    auto op = static_cast<uring_op_base*>(user_data);
                     op->complete(op, cqe->res);
                     op_queue_.enqueue(*op);
                 }
             }
             cqe_guard.reset();
-            if (stop_requested()) return false;
-            timer_queue_.take_ready_timers(op_queue_);
-            const auto op = op_queue_.try_dequeue();
-            if (op == nullptr) continue;
-            op->coro_.resume();
-            return true;
+
+            while (true) {
+                ::io_uring_cqe* peeked_cqes[8]{};
+                const auto n = ::io_uring_peek_batch_cqe(&uring_, peeked_cqes, std::ranges::size(peeked_cqes));
+                if (n == 0) break;
+                scope_exit _{[this, n]() noexcept {
+                    ::io_uring_cq_advance(&uring_, n);
+                }};
+                for (auto peeked_cqe : std::span(peeked_cqes, n)) {
+                    if (auto user_data = ::io_uring_cqe_get_data(peeked_cqe); user_data and user_data != this) {
+                        auto op = static_cast<uring_op_base*>(user_data);
+                        op->complete(op, peeked_cqe->res);
+                        op_queue_.enqueue(*op);
+                    }
+                }
+            }
         }
         while (infinite and not stop_requested());
         return false;
@@ -112,38 +137,6 @@ namespace coio {
         return sqe;
     }
 
-    detail::native_uring_sexpr<detail::async_send_to_t>::type::type(async_send_to_t s) noexcept {
-        peer = endpoint_to_sockaddr_in(s.peer);
-        auto [psa, len] = to_sockaddr(peer);
-        buffer = {
-            .iov_base = const_cast<std::byte*>(s.buffer.data()),
-            .iov_len = s.buffer.size()
-        };
-        msg = {
-            .msg_name = psa,
-            .msg_namelen = len,
-            .msg_iov = &buffer,
-            .msg_iovlen = 1
-        };
-    }
-
-    detail::native_uring_sexpr<detail::async_receive_from_t>::type::type(async_receive_from_t s) noexcept {
-        peer = endpoint_to_sockaddr_in(s.peer);
-        auto [psa, len] = to_sockaddr(peer);
-        buffer = {
-            .iov_base = s.buffer.data(),
-            .iov_len = s.buffer.size()
-        };
-        msg = {
-            .msg_name = psa,
-            .msg_namelen = len,
-            .msg_iov = &buffer,
-            .msg_iovlen = 1
-        };
-    }
-
-    detail::native_uring_sexpr<detail::async_connect_t>::type::type(async_connect_t s) noexcept : peer(endpoint_to_sockaddr_in(s.peer)) {}
-
     auto uring_context::interrupt() -> void {
         auto sqe = allocate_sqe();
         if (sqe == nullptr) {
@@ -155,15 +148,48 @@ namespace coio {
     }
 
     namespace detail {
+        native_uring_sexpr<async_send_to_t>::type::type(async_send_to_t s) noexcept {
+            peer = endpoint_to_sockaddr_in(s.peer);
+            auto [psa, len] = to_sockaddr(peer);
+            buffer = {
+                .iov_base = const_cast<std::byte*>(s.buffer.data()),
+                .iov_len = s.buffer.size()
+            };
+            msg = {
+                .msg_name = psa,
+                .msg_namelen = len,
+                .msg_iov = &buffer,
+                .msg_iovlen = 1
+            };
+        }
+
+        native_uring_sexpr<async_receive_from_t>::type::type(async_receive_from_t s) noexcept {
+            peer = endpoint_to_sockaddr_in(s.peer);
+            auto [psa, len] = to_sockaddr(peer);
+            buffer = {
+                .iov_base = s.buffer.data(),
+                .iov_len = s.buffer.size()
+            };
+            msg = {
+                .msg_name = psa,
+                .msg_namelen = len,
+                .msg_iov = &buffer,
+                .msg_iovlen = 1
+            };
+        }
+
+        native_uring_sexpr<async_connect_t>::type::type(async_connect_t s) noexcept : peer(endpoint_to_sockaddr_in(s.peer)) {}
+
+
         template<>
-        auto uring_op<async_read_some_t>::start() noexcept -> bool {
+        auto uring_op_base_for<async_read_some_t>::start() noexcept -> bool {
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
             ::io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), 0);
-            ::io_uring_sqe_set_data(sqe, static_cast<io_op*>(this));
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
                 return false;
@@ -172,14 +198,14 @@ namespace coio {
         }
 
         template<>
-        auto uring_op<async_write_some_t>::start() noexcept -> bool {
+        auto uring_op_base_for<async_write_some_t>::start() noexcept -> bool {
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
             ::io_uring_prep_write(sqe, fd, buffer.data(), buffer.size(), 0);
-            ::io_uring_sqe_set_data(sqe, static_cast<io_op*>(this));
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
                 return false;
@@ -188,14 +214,14 @@ namespace coio {
         }
 
         template<>
-        auto uring_op<async_receive_t>::start() noexcept -> bool {
+        auto uring_op_base_for<async_receive_t>::start() noexcept -> bool {
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
             ::io_uring_prep_recv(sqe, fd, buffer.data(), buffer.size(), 0);
-            ::io_uring_sqe_set_data(sqe, static_cast<io_op*>(this));
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
                 return false;
@@ -205,14 +231,14 @@ namespace coio {
 
 
         template<>
-        auto uring_op<async_send_t>::start() noexcept -> bool {
+        auto uring_op_base_for<async_send_t>::start() noexcept -> bool {
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
             ::io_uring_prep_send(sqe, fd, buffer.data(), buffer.size(), MSG_NOSIGNAL);
-            ::io_uring_sqe_set_data(sqe, static_cast<io_op*>(this));
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
                 return false;
@@ -221,14 +247,14 @@ namespace coio {
         }
 
         template<>
-        auto uring_op<async_receive_from_t>::start() noexcept -> bool {
+        auto uring_op_base_for<async_receive_from_t>::start() noexcept -> bool {
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
             ::io_uring_prep_recvmsg(sqe, fd, &msg, 0);
-            ::io_uring_sqe_set_data(sqe, static_cast<io_op*>(this));
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
                 return false;
@@ -238,14 +264,14 @@ namespace coio {
 
 
         template<>
-        auto uring_op<async_send_to_t>::start() noexcept -> bool {
+        auto uring_op_base_for<async_send_to_t>::start() noexcept -> bool {
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
             ::io_uring_prep_sendmsg(sqe, fd, &msg, MSG_NOSIGNAL);
-            ::io_uring_sqe_set_data(sqe, static_cast<io_op*>(this));
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
                 return false;
@@ -255,14 +281,14 @@ namespace coio {
 
 
         template<>
-        auto uring_op<async_accept_t>::start() noexcept -> bool {
+        auto uring_op_base_for<async_accept_t>::start() noexcept -> bool {
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
             ::io_uring_prep_accept(sqe, fd, nullptr, nullptr, 0);
-            ::io_uring_sqe_set_data(sqe, static_cast<io_op*>(this));
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
                 return false;
@@ -272,7 +298,7 @@ namespace coio {
 
 
         template<>
-        auto uring_op<async_connect_t>::start() noexcept -> bool {
+        auto uring_op_base_for<async_connect_t>::start() noexcept -> bool {
             auto [psa, len] = to_sockaddr(peer);
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
@@ -280,7 +306,7 @@ namespace coio {
                 return false;
             }
             ::io_uring_prep_connect(sqe, fd, psa, len);
-            ::io_uring_sqe_set_data(sqe, static_cast<io_op*>(this));
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
                 return false;

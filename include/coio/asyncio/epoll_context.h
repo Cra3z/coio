@@ -4,12 +4,16 @@
 #error "uh, where is <sys/epoll.h>?"
 #endif
 #include "../execution_context.h"
-#include "../detail/io_descriptions.h"
 #include "../detail/async_result.h"
+#include "../detail/io_descriptions.h"
+#include "../detail/stoppable_op.h"
 
 namespace coio {
     namespace detail {
         template<typename Sexpr>
+        class epoll_op_base_for;
+
+        template<typename Sexpr, typename StopToken>
         class epoll_op;
 
         class reactor_interrupter {
@@ -39,22 +43,25 @@ namespace coio {
 
     class epoll_context : public detail::run_loop_base<epoll_context> {
         template<typename Sexpr>
-        friend class detail::epoll_op;
+        friend class detail::epoll_op_base_for;
         friend run_loop_base;
     private:
-        class io_op;
+        class epoll_op_base;
 
         struct epoll_data {
             std::atomic<bool> registered{false};
-            std::atomic<io_op*> in_op{nullptr};
-            std::atomic<io_op*> out_op{nullptr};
+            std::atomic<epoll_op_base*> in_op{nullptr};
+            std::atomic<epoll_op_base*> out_op{nullptr};
         };
 
-        class io_op : public operation_base {
+        class epoll_op_base : public operation_base {
             friend epoll_context;
+        private:
+            using perform_fn_t = auto (*)(epoll_op_base*) noexcept -> void;
+
         public:
-            io_op(epoll_context& context, int fd, epoll_data* data) noexcept :
-                operation_base(context), fd(fd), data(data) {}
+            epoll_op_base(epoll_context& context, int fd, epoll_data* data, perform_fn_t perform) noexcept :
+                operation_base(context), fd(fd), data(data), perform(perform) {}
 
         protected:
             [[nodiscard]]
@@ -67,8 +74,8 @@ namespace coio {
 
         protected:
             int fd;
-            epoll_context::epoll_data* data;
-            auto (*perform)(io_op*) noexcept -> void = nullptr;
+            epoll_data* data;
+            const perform_fn_t perform = nullptr;
         };
 
     public:
@@ -77,21 +84,21 @@ namespace coio {
         public:
             using scheduler_concept = detail::io_scheduler_tag;
 
-            class fd_entry {
+            class io_object {
                 friend scheduler;
             public:
-                fd_entry(epoll_context& ctx, int fd);
+                io_object(epoll_context& ctx, int fd);
 
-                fd_entry(const fd_entry&) = delete;
+                io_object(const io_object&) = delete;
 
-                fd_entry(fd_entry&& other) noexcept :
+                io_object(io_object&& other) noexcept :
                     ctx_(other.ctx_),
                     fd_(std::exchange(other.fd_, -1)),
                     data_(std::exchange(other.data_, {})) {}
 
-                ~fd_entry();
+                ~io_object();
 
-                auto operator= (fd_entry other) noexcept -> fd_entry& {
+                auto operator= (io_object other) noexcept -> io_object& {
                     std::ranges::swap(ctx_, other.ctx_);
                     std::ranges::swap(fd_, other.fd_);
                     std::ranges::swap(data_, other.data_);
@@ -119,16 +126,18 @@ namespace coio {
                 epoll_data* data_;
             };
 
-            template<std::move_constructible Sexpr>
+            template<std::move_constructible Sexpr, stoppable_token StopToken>
             struct io_awaitable {
                 int fd;
                 epoll_context* context;
                 epoll_data* data;
                 Sexpr sexpr;
+                StopToken stop_token;
 
-                COIO_ALWAYS_INLINE auto operator co_await() && noexcept -> detail::epoll_op<Sexpr> {
+                COIO_ALWAYS_INLINE auto operator co_await() && noexcept -> detail::epoll_op<Sexpr, StopToken> {
                     COIO_ASSERT(fd != -1 and context != nullptr and data != nullptr);
                     return {
+                        std::move(stop_token),
                         std::exchange(fd, -1),
                         *std::exchange(context, nullptr),
                         std::exchange(data, nullptr),
@@ -147,14 +156,14 @@ namespace coio {
             using scheduler_base::scheduler_base;
 
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto wrap_fd(int fd) const -> fd_entry {
-                return fd_entry{*ctx_, fd};
+            COIO_ALWAYS_INLINE auto make_io_object(int fd) const -> io_object {
+                return io_object{*ctx_, fd};
             }
 
-            template<typename Sexpr>
+            template<typename Sexpr, stoppable_token StopToken>
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto schedule_io(fd_entry& entry, Sexpr sexpr) noexcept -> io_awaitable<Sexpr> {
-                return {entry.fd_, ctx_, entry.data_, std::move(sexpr)};
+            COIO_ALWAYS_INLINE auto schedule_io(io_object& obj, Sexpr sexpr, StopToken stop_token) noexcept -> io_awaitable<Sexpr, StopToken> {
+                return {obj.fd_, ctx_, obj.data_, std::move(sexpr), std::move(stop_token)};
             }
 
         public:
@@ -182,6 +191,8 @@ namespace coio {
 
         auto reclaim_epoll_data(epoll_data* data) noexcept -> void;
 
+        auto cancel_op(int event, epoll_op_base* op) -> void;
+
     private:
         int epoll_fd_;
         detail::reactor_interrupter interrupter_;
@@ -189,108 +200,141 @@ namespace coio {
 
     namespace detail {
         template<typename Sexpr>
-        class epoll_op : private Sexpr, public epoll_context::io_op {
+        class epoll_op_base_for : private Sexpr, public epoll_context::epoll_op_base {
         public:
-            epoll_op(int fd, epoll_context& context, epoll_context::epoll_data* data, Sexpr sexpr) noexcept;
+            epoll_op_base_for(int fd, epoll_context& context, epoll_context::epoll_data* data, Sexpr sexpr) noexcept :
+                Sexpr(std::move(sexpr)),
+                epoll_op_base(context, fd, data, &do_perform_thunk) {}
 
             COIO_ALWAYS_INLINE static auto await_ready() noexcept -> bool {
                 return false;
             }
 
             template<typename Promise>
-            auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> void;
+            auto await_suspend_impl(std::coroutine_handle<Promise> this_coro) noexcept -> bool;
 
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto await_resume() -> typename Sexpr::result_type {
+            COIO_ALWAYS_INLINE auto await_resume_impl() -> typename Sexpr::result_type {
                 return result.get(Sexpr::operation_name());
             }
 
-        private:
             // NOLINTBEGIN(*-use-equals-delete)
-            auto start() noexcept -> void = delete;
+            auto cancel() -> void = delete;
+
+        private:
+            auto start() noexcept -> bool = delete;
 
             auto do_perform() noexcept -> void = delete;
             // NOLINTEND(*-use-equals-delete)
+
+            static auto do_perform_thunk(epoll_op_base* self) noexcept -> void;
 
         private:
             async_result<typename Sexpr::result_type> result;
         };
 
         template<>
-        auto epoll_op<async_read_some_t>::start() noexcept -> void;
+        auto epoll_op_base_for<async_read_some_t>::start() noexcept -> bool;
 
         template<>
-        auto epoll_op<async_read_some_t>::do_perform() noexcept -> void;
-
-
-        template<>
-        auto epoll_op<async_write_some_t>::start() noexcept -> void;
+        auto epoll_op_base_for<async_read_some_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op<async_write_some_t>::do_perform() noexcept -> void;
+        auto epoll_op_base_for<async_read_some_t>::cancel() -> void;
 
 
         template<>
-        auto epoll_op<async_send_t>::start() noexcept -> void;
+        auto epoll_op_base_for<async_write_some_t>::start() noexcept -> bool;
 
         template<>
-        auto epoll_op<async_send_t>::do_perform() noexcept -> void;
-
-
-        template<>
-        auto epoll_op<async_receive_t>::start() noexcept -> void;
+        auto epoll_op_base_for<async_write_some_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op<async_receive_t>::do_perform() noexcept -> void;
+        auto epoll_op_base_for<async_write_some_t>::cancel() -> void;
 
 
         template<>
-        auto epoll_op<async_receive_from_t>::start() noexcept -> void;
+        auto epoll_op_base_for<async_send_t>::start() noexcept -> bool;
 
         template<>
-        auto epoll_op<async_receive_from_t>::do_perform() noexcept -> void;
-
-
-        template<>
-        auto epoll_op<async_send_to_t>::start() noexcept -> void;
+        auto epoll_op_base_for<async_send_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op<async_send_to_t>::do_perform() noexcept -> void;
+        auto epoll_op_base_for<async_send_t>::cancel() -> void;
 
 
         template<>
-        auto epoll_op<async_accept_t>::start() noexcept -> void;
+        auto epoll_op_base_for<async_receive_t>::start() noexcept -> bool;
 
         template<>
-        auto epoll_op<async_accept_t>::do_perform() noexcept -> void;
+        auto epoll_op_base_for<async_receive_t>::do_perform() noexcept -> void;
+
+        template<>
+        auto epoll_op_base_for<async_receive_t>::cancel() -> void;
 
 
         template<>
-        auto epoll_op<async_connect_t>::start() noexcept -> void;
+        auto epoll_op_base_for<async_receive_from_t>::start() noexcept -> bool;
 
         template<>
-        auto epoll_op<async_connect_t>::do_perform() noexcept -> void;
+        auto epoll_op_base_for<async_receive_from_t>::do_perform() noexcept -> void;
+
+        template<>
+        auto epoll_op_base_for<async_receive_from_t>::cancel() -> void;
 
 
-        template <typename Sexpr>
-        epoll_op<Sexpr>::epoll_op(int fd, epoll_context& context, epoll_context::epoll_data* data, Sexpr sexpr) noexcept:
-            Sexpr(std::move(sexpr)),
-            io_op(context, fd, data)
-        {
-            perform = +[](io_op* self) noexcept -> void {
-                COIO_ASSERT(self != nullptr);
-                static_cast<epoll_op*>(self)->do_perform();
-            };
+        template<>
+        auto epoll_op_base_for<async_send_to_t>::start() noexcept -> bool;
+
+        template<>
+        auto epoll_op_base_for<async_send_to_t>::do_perform() noexcept -> void;
+
+        template<>
+        auto epoll_op_base_for<async_send_to_t>::cancel() -> void;
+
+
+        template<>
+        auto epoll_op_base_for<async_accept_t>::start() noexcept -> bool;
+
+        template<>
+        auto epoll_op_base_for<async_accept_t>::do_perform() noexcept -> void;
+
+        template<>
+        auto epoll_op_base_for<async_accept_t>::cancel() -> void;
+
+
+        template<>
+        auto epoll_op_base_for<async_connect_t>::start() noexcept -> bool;
+
+        template<>
+        auto epoll_op_base_for<async_connect_t>::do_perform() noexcept -> void;
+
+        template<>
+        auto epoll_op_base_for<async_connect_t>::cancel() -> void;
+
+        template<typename Sexpr>
+        auto epoll_op_base_for<Sexpr>::do_perform_thunk(epoll_op_base* self) noexcept -> void {
+            COIO_ASSERT(self != nullptr);
+            static_cast<epoll_op_base_for*>(self)->do_perform();
         }
 
         template<typename Sexpr>
         template<typename Promise>
-        auto epoll_op<Sexpr>::await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> void {
+        auto epoll_op_base_for<Sexpr>::await_suspend_impl(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
             coro_ = this_coro;
             if constexpr (stoppable_promise<Promise>) {
                 unhandled_stopped_ = &stop_stoppable_coroutine_<Promise>;
             }
-            start();
+            return start();
         }
+
+
+        template<typename Sexpr, typename StopToken>
+        class epoll_op : public stoppable_op<epoll_op_base_for<Sexpr>, StopToken> {
+        private:
+            using base = stoppable_op<epoll_op_base_for<Sexpr>, StopToken>;
+        public:
+            using base::base;
+        };
     }
 }

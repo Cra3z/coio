@@ -239,7 +239,7 @@ namespace coio {
     template<typename Protocol, io_scheduler IoScheduler>
     class basic_socket {
     private:
-        using implementation_type = decltype(std::declval<IoScheduler&>().wrap_fd(std::declval<detail::socket_native_handle_type>()));
+        using implementation_type = decltype(std::declval<IoScheduler&>().make_io_object(std::declval<detail::socket_native_handle_type>()));
 
     public:
         using protocol_type = Protocol;
@@ -269,7 +269,7 @@ namespace coio {
             basic_socket(std::move(scheduler), detail::invalid_socket_handle) {}
 
         basic_socket(scheduler_type scheduler, native_handle_type handle) :
-            impl_(scheduler.wrap_fd(handle)) {}
+            impl_(scheduler.make_io_object(handle)) {}
 
         basic_socket(const basic_socket&) = delete;
 
@@ -303,7 +303,7 @@ namespace coio {
         */
         COIO_ALWAYS_INLINE auto open(const protocol_type& protocol = protocol_type()) -> void {
             if (is_open()) throw std::system_error{error::already_open, "open"};
-            impl_ = get_io_scheduler().wrap_fd(detail::socket::open(protocol.family(), protocol.type(), protocol.protocol_id()));
+            impl_ = get_io_scheduler().make_io_object(detail::socket::open(protocol.family(), protocol.type(), protocol.protocol_id()));
         }
 
         /**
@@ -409,13 +409,15 @@ namespace coio {
         /**
          * \brief start an asynchronous connect.
          * \param peer the remote endpoint to which the socket will be connected.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `void`.
          * \throw std::system_error on failure.
         */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) noexcept {
+        COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer, StopToken stop_token = {}) noexcept {
             if (not is_open()) open();
-            return get_io_scheduler().schedule_io(impl_, detail::async_connect_t{peer});
+            return get_io_scheduler().schedule_io(impl_, detail::async_connect_t{peer}, std::move(stop_token));
         }
 
     protected:
@@ -511,6 +513,7 @@ namespace coio {
         /**
          * \brief start an asynchronous accept.
          * \param peer the socket into which the new connection will be accepted.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `void`.
          * \throw std::system_error on failure.
          * \note
@@ -518,12 +521,12 @@ namespace coio {
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
          *  on the same socket object from different threads simultaneously.\n
          */
-        template<io_scheduler OtherScheduler>
+        template<io_scheduler OtherScheduler, stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_accept(protocol_socket_<OtherScheduler>& peer) {
+        COIO_ALWAYS_INLINE auto async_accept(protocol_socket_<OtherScheduler>& peer, StopToken stop_token = {}) {
             this->check_handle_valid("async_accept");
             return then(
-                this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}),
+                this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}, std::move(stop_token)),
                 [&peer](native_handle_type handle) noexcept {
                     peer = protocol_socket_<OtherScheduler>(peer.get_io_scheduler(), handle);
                 }
@@ -533,6 +536,7 @@ namespace coio {
         /**
          * \brief start an asynchronous accept.
          * \param other_scheduler the io_context object to be used for the newly accepted socket.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `protocol_type::socket<OtherScheduler>`.
          * \throw std::system_error on failure.
          * \note
@@ -540,12 +544,12 @@ namespace coio {
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
          *  on the same socket object from different threads simultaneously.\n
          */
-        template<io_scheduler OtherScheduler>
+        template<io_scheduler OtherScheduler, stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_accept(OtherScheduler other_scheduler) {
+        COIO_ALWAYS_INLINE auto async_accept(OtherScheduler other_scheduler, StopToken stop_token = {}) {
             this->check_handle_valid("async_accept");
             return then(
-                this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}),
+                this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}, std::move(stop_token)),
                 [other_scheduler](native_handle_type handle) noexcept {
                     return protocol_socket_<OtherScheduler>(other_scheduler, handle);
                 }
@@ -554,6 +558,7 @@ namespace coio {
 
         /**
          * \brief start an asynchronous accept.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `protocol_type::socket<scheduler_type>`.
          * \throw std::system_error on failure.
          * \note
@@ -561,9 +566,10 @@ namespace coio {
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
          *  on the same socket object from different threads simultaneously.\n
          */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_accept() {
-            return this->async_accept(this->get_io_scheduler());
+        COIO_ALWAYS_INLINE auto async_accept(StopToken stop_token = {}) {
+            return this->async_accept(this->get_io_scheduler(), std::move(stop_token));
         }
     };
 
@@ -627,6 +633,7 @@ namespace coio {
         /**
          * \brief receive some message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
@@ -636,13 +643,15 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.\n
          * 3) consider using `async_read` if you need to ensure that the requested amount of data is read before the asynchronous operation completes.
         */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
+        COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer, StopToken stop_token = {}) {
             this->check_handle_valid("async_read_some");
             return then(
                 this->get_io_scheduler().schedule_io(
                     this->impl_,
-                    detail::async_receive_t{buffer}
+                    detail::async_receive_t{buffer},
+                    std::move(stop_token)
                 ),
                 [total = buffer.size()](std::size_t bytes_transferred) -> std::size_t {
                     if (bytes_transferred == 0 and total > 0) [[unlikely]] {
@@ -656,6 +665,7 @@ namespace coio {
         /**
          * \brief send some message data asynchronously.
          * \param buffer the buffers containing the message part to send.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
@@ -665,26 +675,29 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.\n
          * 3) consider using the async_write function if you need to ensure that all data is written before the asynchronous operation completes.
         */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) {
+        COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer, StopToken stop_token = {}) {
             this->check_handle_valid("async_write_some");
-            return this->get_io_scheduler().schedule_io(this->impl_, detail::async_send_t{buffer});
+            return this->get_io_scheduler().schedule_io(this->impl_, detail::async_send_t{buffer}, std::move(stop_token));
         }
 
         /**
          * \brief same as `async_read_some`
          */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) {
-            return async_read_some(buffer);
+        COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer, StopToken stop_token = StopToken{}) {
+            return async_read_some(buffer, std::move(stop_token));
         }
 
         /**
          * \brief same as `async_write_some`
          */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer) {
-            return async_write_some(buffer);
+        COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer, StopToken stop_token = StopToken{}) {
+            return async_write_some(buffer, std::move(stop_token));
         }
     };
 
@@ -752,26 +765,31 @@ namespace coio {
         /**
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
          * `async_receive_from` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
-         *  on the same socket object from different threads simultaneously.
+         *  on the same socket object from different threads simultaneously.\n
+         * 3) consider using `async_read` if you need to ensure that the requested amount of data is read before the asynchronous operation completes.
         */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) {
+        COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer, StopToken stop_token = {}) {
             this->check_handle_valid("async_receive");
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
-                detail::async_receive_t{buffer}
+                detail::async_receive_t{buffer},
+                std::move(stop_token)
             );
         }
 
         /**
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
@@ -780,12 +798,14 @@ namespace coio {
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
          *  on the same socket object from different threads simultaneously.
         */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer) {
+        COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer, StopToken stop_token = {}) {
             this->check_handle_valid("async_send");
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
-                detail::async_send_t{buffer}
+                detail::async_send_t{buffer},
+                std::move(stop_token)
             );
         }
 
@@ -793,6 +813,7 @@ namespace coio {
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
          * \param peer an endpoint object that receives the endpoint of the remote sender of the datagram.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
@@ -801,12 +822,14 @@ namespace coio {
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
          *  on the same socket object from different threads simultaneously.
          */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_receive_from(std::span<std::byte> buffer, const endpoint& peer) {
+        COIO_ALWAYS_INLINE auto async_receive_from(std::span<std::byte> buffer, const endpoint& peer, StopToken stop_token = {}) {
             this->check_handle_valid("async_receive_from");
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
-                detail::async_receive_from_t{buffer, peer}
+                detail::async_receive_from_t{buffer, peer},
+                std::move(stop_token)
             );
         }
 
@@ -814,6 +837,7 @@ namespace coio {
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
          * \param peer the remote endpoint to which the data will be sent.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
          * \return an awaitable of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
@@ -822,12 +846,14 @@ namespace coio {
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
          *  on the same socket object from different threads simultaneously.
          */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_send_to(std::span<const std::byte> buffer, const endpoint& peer) {
+        COIO_ALWAYS_INLINE auto async_send_to(std::span<const std::byte> buffer, const endpoint& peer, StopToken stop_token = {}) {
             this->check_handle_valid("async_send_to");
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
-                detail::async_send_to_t{buffer, peer}
+                detail::async_send_to_t{buffer, peer},
+                std::move(stop_token)
             );
         }
     };

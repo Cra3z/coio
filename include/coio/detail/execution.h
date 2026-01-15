@@ -5,7 +5,11 @@
 #if __has_include(<stdexec/execution.hpp>) // https://github.com/NVIDIA/stdexec
 #include <stdexec/execution.hpp>
 namespace coio {
+#ifdef STDEXEC_NAMESPACE
+    namespace execution = STDEXEC_NAMESPACE;
+#else
     namespace execution = ::stdexec;
+#endif
 }
 #else
 #error "nvidia/stdexec not found."

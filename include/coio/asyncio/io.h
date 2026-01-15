@@ -21,20 +21,20 @@ namespace coio {
     template<typename T>
     concept io_device = input_device<T> and output_device<T>;
 
-    template<typename T>
-    concept async_input_device = requires (T t, std::span<std::byte> buffer) {
-        { t.async_read_some(buffer) } -> awaitable_value;
-        requires std::integral<detail::await_result_t<decltype(t.async_read_some(buffer))>>;
+    template<typename T, typename StopToken>
+    concept async_input_device = stoppable_token<StopToken> and requires (T t, std::span<std::byte> buffer, StopToken tok) {
+        { t.async_read_some(buffer, tok) } -> awaitable_value;
+        requires std::integral<detail::await_result_t<decltype(t.async_read_some(buffer, tok))>>;
     };
 
-    template<typename T>
-    concept async_output_device = requires (T t, std::span<const std::byte> buffer) {
-        { t.async_write_some(buffer) } -> awaitable_value;
-        requires std::integral<detail::await_result_t<decltype(t.async_write_some(buffer))>>;
+    template<typename T, typename StopToken>
+    concept async_output_device = stoppable_token<StopToken> and requires (T t, std::span<const std::byte> buffer, StopToken tok) {
+        { t.async_write_some(buffer, tok) } -> awaitable_value;
+        requires std::integral<detail::await_result_t<decltype(t.async_write_some(buffer, tok))>>;
     };
 
-    template<typename T>
-    concept async_io_device = async_input_device<T> and async_output_device<T>;
+    template<typename T, typename StopToken>
+    concept async_io_device = async_input_device<T, StopToken> and async_output_device<T, StopToken>;
 
     template<typename T>
     concept dynamic_buffer = requires (T t, const T& ct, std::size_t n) {
@@ -101,47 +101,55 @@ namespace coio {
         };
 
         struct async_read_fn {
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_input_device auto& device,
-                std::span<std::byte> buffer
+                async_input_device<StopToken> auto& device,
+                std::span<std::byte> buffer,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST {
-                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, device, buffer);
+                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, device, buffer, std::move(stop_token));
             }
 
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
                 const auto&,
-                async_input_device auto& device,
-                std::span<std::byte> buffer
+                async_input_device<StopToken> auto& device,
+                std::span<std::byte> buffer,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 const std::size_t total = buffer.size();
                 if (total == 0) co_return 0;
                 std::size_t remain = total;
                 do {
-                    remain -= co_await device.async_read_some(buffer.subspan(total - remain, remain));
+                    remain -= co_await device.async_read_some(buffer.subspan(total - remain, remain), stop_token);
                 }
                 while (remain > 0);
                 co_return total;
             }
 
+            template<stoppable_token StopToken = never_stop_token>
             COIO_STATIC_CALL_OP auto operator() (
-                async_input_device auto& device,
+                async_input_device<StopToken> auto& device,
                 dynamic_buffer auto& dyn_buffer,
-                std::size_t total
+                std::size_t total,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST {
-                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, device, dyn_buffer, total);
+                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, device, dyn_buffer, total, std::move(stop_token));
             }
 
+            template<stoppable_token StopToken = never_stop_token>
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
                 const auto&,
-                async_input_device auto& device,
+                async_input_device<StopToken> auto& device,
                 dynamic_buffer auto& dyn_buffer,
-                std::size_t total
+                std::size_t total,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
-                std::size_t bytes_transferred = co_await async_read_fn{}(device, dyn_buffer.prepare(total));
+                std::size_t bytes_transferred = co_await async_read_fn{}(device, dyn_buffer.prepare(total), std::move(stop_token));
                 COIO_ASSERT(bytes_transferred == total);
                 dyn_buffer.commit(bytes_transferred);
                 co_return total;
@@ -149,48 +157,56 @@ namespace coio {
         };
 
         struct async_write_fn {
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_output_device auto& device,
-                std::span<const std::byte> buffer
+                async_output_device<StopToken> auto& device,
+                std::span<const std::byte> buffer,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST {
-                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, device, buffer);
+                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, device, buffer, std::move(stop_token));
             }
 
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
                 const auto&,
-                async_output_device auto& device,
-                std::span<const std::byte> buffer
+                async_output_device<StopToken> auto& device,
+                std::span<const std::byte> buffer,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 const std::size_t total = buffer.size();
                 if (total == 0) co_return 0;
                 std::size_t remain = total;
                 do {
-                    remain -= co_await device.async_write_some(buffer.subspan(total - remain, remain));
+                    remain -= co_await device.async_write_some(buffer.subspan(total - remain, remain), stop_token);
                 }
                 while (remain > 0);
                 co_return total;
             }
 
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_output_device auto& device,
-                dynamic_buffer auto& dyn_buffer
+                async_output_device<StopToken> auto& device,
+                dynamic_buffer auto& dyn_buffer,
+                StopToken stop_token = {}
             ) {
-                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, device, dyn_buffer);
+                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, device, dyn_buffer, std::move(stop_token));
             }
 
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
                 const auto& alloc,
-                async_output_device auto& device,
-                dynamic_buffer auto& dyn_buffer
+                async_output_device<StopToken> auto& device,
+                dynamic_buffer auto& dyn_buffer,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 return then(
-                    async_write_fn{}(std::allocator_arg, alloc, device, dyn_buffer.data()),
+                    async_write_fn{}(std::allocator_arg, alloc, device, dyn_buffer.data(), std::move(stop_token)),
                     [&dyn_buffer](std::size_t bytes_transferred) {
                         dyn_buffer.consume(bytes_transferred);
                         return bytes_transferred;
@@ -211,18 +227,18 @@ namespace coio {
                     auto data = buffer.data();
                     auto begin = reinterpret_cast<const char*>(data.data());
                     auto end = begin + data.size();
-                    
+
                     for (auto it = begin + search_pos; it != end; ++it) {
                         if (*it == delim) {
                             return static_cast<std::size_t>(it - begin + 1);
                         }
                     }
-                    
+
                     search_pos = data.size();
-                    
+
                     std::size_t bytes_to_read = std::max<std::size_t>(512, buffer.capacity() - buffer.size());
                     if (bytes_to_read == 0) bytes_to_read = 512;
-                    
+
                     auto prep = buffer.prepare(bytes_to_read);
                     std::size_t n = device.read_some(prep);
                     if (n == 0) return 0;
@@ -240,16 +256,16 @@ namespace coio {
                 if (delim.size() == 1) {
                     return read_until_fn{}(device, buffer, delim[0]);
                 }
-                
+
                 std::size_t search_pos = 0;
                 for (;;) {
                     auto data = buffer.data();
                     auto begin = reinterpret_cast<const char*>(data.data());
                     auto size = data.size();
-                    
+
                     // Back up for partial matches at boundary
                     std::size_t start = search_pos > delim.size() - 1 ? search_pos - delim.size() + 1 : 0;
-                    
+
                     if (size >= delim.size()) {
                         for (std::size_t i = start; i <= size - delim.size(); ++i) {
                             if (std::memcmp(begin + i, delim.data(), delim.size()) == 0) {
@@ -257,12 +273,12 @@ namespace coio {
                             }
                         }
                     }
-                    
+
                     search_pos = size;
-                    
+
                     std::size_t bytes_to_read = std::max<std::size_t>(512, buffer.capacity() - buffer.size());
                     if (bytes_to_read == 0) bytes_to_read = 512;
-                    
+
                     auto prep = buffer.prepare(bytes_to_read);
                     std::size_t n = device.read_some(prep);
                     if (n == 0) return 0;
@@ -273,76 +289,85 @@ namespace coio {
 
         struct async_read_until_fn {
             // Read until char delimiter
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_input_device auto& device,
+                async_input_device<StopToken> auto& device,
                 dynamic_buffer auto& buffer,
-                char delim
+                char delim,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST {
                 return async_read_until_fn{}(
                     std::allocator_arg,
                     std::allocator<void>{},
                     device,
                     buffer,
-                    delim
+                    delim,
+                    std::move(stop_token)
                 );
             }
 
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
                 const auto&,
-                async_input_device auto& device,
+                async_input_device<StopToken> auto& device,
                 dynamic_buffer auto& buffer,
-                char delim
+                char delim,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 std::size_t search_pos = 0;
                 for (;;) {
                     auto data = buffer.data();
                     auto begin = reinterpret_cast<const char*>(data.data());
                     auto end = begin + data.size();
-                    
+
                     for (auto it = begin + search_pos; it != end; ++it) {
                         if (*it == delim) {
                             co_return static_cast<std::size_t>(it - begin + 1);
                         }
                     }
-                    
+
                     search_pos = data.size();
-                    
+
                     std::size_t bytes_to_read = std::max<std::size_t>(512, buffer.capacity() - buffer.size());
                     if (bytes_to_read == 0) bytes_to_read = 512;
-                    
+
                     auto prep = buffer.prepare(bytes_to_read);
-                    std::size_t n = co_await device.async_read_some(prep);
+                    std::size_t n = co_await device.async_read_some(prep, stop_token);
                     if (n == 0) co_return 0;
                     buffer.commit(n);
                 }
             }
 
-            // Read until string delimiter
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                async_input_device auto& device,
+                async_input_device<StopToken> auto& device,
                 dynamic_buffer auto& buffer,
-                std::string_view delim
+                std::string_view delim,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST {
                 return async_read_until_fn{}(
                     std::allocator_arg,
                     std::allocator<void>{},
                     device,
                     buffer,
-                    delim
+                    delim,
+                    std::move(stop_token)
                 );
             }
 
+            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
                 const auto& alloc,
-                async_input_device auto& device,
+                async_input_device<StopToken> auto& device,
                 dynamic_buffer auto& buffer,
-                std::string_view delim
+                std::string_view delim,
+                StopToken stop_token = {}
             ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 if (delim.empty()) co_return 0;
                 if (delim.size() == 1) {
@@ -351,7 +376,8 @@ namespace coio {
                         alloc,
                         device,
                         buffer,
-                        delim[0]
+                        delim[0],
+                        std::move(stop_token)
                     );
                 }
                 std::size_t search_pos = 0;
@@ -359,9 +385,9 @@ namespace coio {
                     auto data = buffer.data();
                     auto begin = reinterpret_cast<const char*>(data.data());
                     auto size = data.size();
-                    
+
                     std::size_t start = search_pos > delim.size() - 1 ? search_pos - delim.size() + 1 : 0;
-                    
+
                     if (size >= delim.size()) {
                         for (std::size_t i = start; i <= size - delim.size(); ++i) {
                             if (std::memcmp(begin + i, delim.data(), delim.size()) == 0) {
@@ -369,14 +395,14 @@ namespace coio {
                             }
                         }
                     }
-                    
+
                     search_pos = size;
-                    
+
                     std::size_t bytes_to_read = std::max<std::size_t>(512, buffer.capacity() - buffer.size());
                     if (bytes_to_read == 0) bytes_to_read = 512;
-                    
+
                     auto prep = buffer.prepare(bytes_to_read);
-                    std::size_t n = co_await device.async_read_some(prep);
+                    std::size_t n = co_await device.async_read_some(prep, stop_token);
                     if (n == 0) co_return 0;
                     buffer.commit(n);
                 }

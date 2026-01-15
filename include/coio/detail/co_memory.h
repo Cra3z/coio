@@ -142,9 +142,6 @@ namespace coio::detail {
     };
 
     template<typename Alloc>
-    concept valid_coroutine_alloctor_ = std::same_as<Alloc, void> or (std::is_pointer_v<typename std::allocator_traits<Alloc>::pointer> and std::is_object_v<typename std::allocator_traits<Alloc>::template rebind_alloc<default_align_t>>);
-
-    template<typename Alloc>
     struct promise_alloc_control {
         auto operator new (std::size_t n) ->void* requires std::same_as<Alloc, void> or std::default_initializable<Alloc> {
             return co_memory<Alloc>::allocate(std::conditional_t<std::same_as<Alloc, void>, std::allocator<void>, Alloc>(), n);

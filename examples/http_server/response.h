@@ -27,9 +27,9 @@ namespace http {
 
         status_type status = ok;
         std::multimap<std::string, std::string, detail::ci_less> headers;
-        std::string content;
+        std::span<const std::byte> content;
 
-        auto write_to(tcp_socket& socket) -> coio::task<>;
+        auto write_to(tcp_socket& socket, coio::inplace_stop_token stop_token) -> coio::task<>;
 
         static auto stock_reply(status_type status) -> response;
     };

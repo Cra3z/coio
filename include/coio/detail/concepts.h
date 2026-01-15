@@ -3,6 +3,7 @@
 #include <concepts>
 #include <coroutine>
 #include <ranges>
+#include "config.h"
 
 namespace coio {
     namespace detail {
@@ -43,6 +44,12 @@ namespace coio {
     concept boolean_testable = detail::boolean_testable_impl<T> and requires (T&& t) {
         { not static_cast<T&&>(t) } -> detail::boolean_testable_impl;
     };
+
+    template<typename Alloc>
+    concept simple_allocator = std::same_as<std::remove_cvref_t<Alloc>, std::allocator<void>> or (requires(Alloc alloc, std::size_t n) {
+        { alloc.allocate(n) } -> std::same_as<std::add_pointer_t<typename std::remove_cvref_t<Alloc>::value_type>>;
+        alloc.deallocate(alloc.allocate(n), n);
+    } and std::copy_constructible<std::remove_cvref_t<Alloc>> and std::equality_comparable<std::remove_cvref_t<Alloc>>);
 
     template<typename Promise>
     concept simple_promise = std::is_class_v<Promise> and requires (Promise promise) {

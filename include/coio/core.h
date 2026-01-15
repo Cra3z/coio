@@ -3,6 +3,8 @@
 #include <ranges>
 #include "execution_context.h"
 #include "detail/intrusive_stack.h"
+#include "utils/retain_ptr.h"
+#include "utils/stop_token.h"
 
 namespace coio {
     namespace detail {
@@ -135,23 +137,23 @@ namespace coio {
 
         template<typename Awaiter, typename Fn>
         struct then_awaiter {
-            decltype(auto) await_ready() noexcept(noexcept(std::declval<Awaiter&>().await_ready())) {
+            COIO_ALWAYS_INLINE decltype(auto) await_ready() noexcept(noexcept(std::declval<Awaiter&>().await_ready())) {
                 return inner_.await_ready();
             }
 
             template<typename Promise> requires requires (Awaiter inner, std::coroutine_handle<Promise> coro) { inner.await_suspend(coro); }
-            decltype(auto) await_suspend(std::coroutine_handle<Promise> this_coro) noexcept(noexcept(std::declval<Awaiter&>().await_suspend(this_coro))) {
+            COIO_ALWAYS_INLINE decltype(auto) await_suspend(std::coroutine_handle<Promise> this_coro) noexcept(noexcept(std::declval<Awaiter&>().await_suspend(this_coro))) {
                 return inner_.await_suspend(this_coro);
             }
 
-            decltype(auto) await_resume() noexcept(
+            COIO_ALWAYS_INLINE decltype(auto) await_resume() noexcept(
                 noexcept(std::declval<Awaiter&>().await_resume()) and
                 std::is_nothrow_invocable_v<Fn, await_result_t<Awaiter&>>
             ) requires (not std::is_void_v<await_result_t<Awaiter&>>) {
                 return std::invoke(std::move(fn_), inner_.await_resume());
             }
 
-            decltype(auto) await_resume() noexcept(
+            COIO_ALWAYS_INLINE decltype(auto) await_resume() noexcept(
                 noexcept(std::declval<Awaiter&>().await_resume()) and
                 std::is_nothrow_invocable_v<Fn>
             ) {
@@ -190,6 +192,65 @@ namespace coio {
                     std::move(fn)
                 };
             }
+        };
+
+        struct fire_and_forget {
+            class promise_type {
+            private:
+                template<typename Awaiter>
+                struct awaiter_wrapper {
+                    COIO_ALWAYS_INLINE decltype(auto) await_ready() noexcept {
+                        return inner_.await_ready();
+                    }
+
+                    template<typename Promise>
+                    COIO_ALWAYS_INLINE decltype(auto) await_suspend(std::coroutine_handle<Promise> this_coro) noexcept {
+                        return inner_.await_suspend(this_coro);
+                    }
+
+                   COIO_ALWAYS_INLINE auto await_resume() noexcept -> void {
+                        if (stopped_) return;
+                        void(inner_.await_resume());
+                    }
+
+                    Awaiter inner_;
+                    bool& stopped_;
+                };
+
+            public:
+                promise_type() = default;
+
+                template<awaitable Awaitable>
+                auto await_transform(Awaitable&& awt) noexcept {
+                    return awaiter_wrapper{get_awaiter(std::forward<Awaitable>(awt)), stopped_ = false};
+                }
+
+                static auto get_return_object() noexcept -> fire_and_forget {
+                    return {};
+                }
+
+                static auto initial_suspend() noexcept -> std::suspend_never {
+                    return {};
+                }
+
+                static auto final_suspend() noexcept -> std::suspend_never {
+                    return {};
+                }
+
+                static auto return_void() noexcept -> void {}
+
+                [[noreturn]]
+                static auto unhandled_exception() noexcept -> void {
+                    std::terminate();
+                }
+
+                auto unhandled_stopped() noexcept -> std::coroutine_handle<> {
+                    stopped_ = true;
+                    return std::coroutine_handle<promise_type>::from_promise(*this);
+                }
+            private:
+                bool stopped_ = false;
+            };
         };
 
         template<typename Promise>
@@ -259,107 +320,120 @@ namespace coio {
         template<typename... Types>
         using non_void = non_void_impl<type_list<>, std::index_sequence<>, type_list<Types...>, std::make_index_sequence<sizeof...(Types)>>;
 
-        struct when_all_state {
-            using count_type = std::atomic_unsigned_lock_free;
 
-            explicit when_all_state(count_type::value_type count) noexcept : count(count) {
-                COIO_ASSERT(count > 0);
-            }
+        namespace __when_all {
+            struct when_all_state {
+                using count_type = std::atomic_unsigned_lock_free;
 
-            [[nodiscard]]
-            auto arrive() noexcept -> std::coroutine_handle<> {
-                if (--count == 0) {
-                    if (stopped_.load(std::memory_order_relaxed)) {
-                        return stopped_callback_(continuation);
-                    }
-                    return continuation;
+                explicit when_all_state(count_type::value_type count) noexcept : count(count) {
+                    COIO_ASSERT(count > 0);
                 }
-                return std::noop_coroutine();
-            }
 
-            [[nodiscard]]
-            auto cancel() noexcept -> std::coroutine_handle<> {
-                stopped_.store(true, std::memory_order_relaxed);
-                return arrive();
-            }
+                [[nodiscard]]
+                auto arrive() noexcept -> std::coroutine_handle<> {
+                    if (--count == 0) {
+                        if (stopped_.load(std::memory_order_relaxed)) {
+                            return stopped_callback_(continuation);
+                        }
+                        return continuation;
+                    }
+                    return std::noop_coroutine();
+                }
 
-            count_type count;
-            std::coroutine_handle<> continuation;
-            unhandled_stopped_fn stopped_callback_= &default_unhandled_stopped_;
-            std::atomic<bool> stopped_{false};
-        };
+                [[nodiscard]]
+                auto cancel() noexcept -> std::coroutine_handle<> {
+                    stopped_.store(true, std::memory_order_relaxed);
+                    return arrive();
+                }
 
-        template<typename... WhenAllPromises>
-        COIO_ALWAYS_INLINE auto set_when_all_state(
-            std::array<std::coroutine_handle<>, sizeof...(WhenAllPromises)>& coros,
-            when_all_state& state
-        ) noexcept -> void {
-            [&coros, &state]<std::size_t... I>(std::index_sequence<I...>) noexcept {
-                (
-                    ...,
+                count_type count;
+                std::coroutine_handle<> continuation;
+                unhandled_stopped_fn stopped_callback_= &default_unhandled_stopped_;
+                std::atomic<bool> stopped_{false};
+            };
+
+            template<typename... WhenAllPromises>
+            COIO_ALWAYS_INLINE auto set_when_all_state(
+                std::array<std::coroutine_handle<>, sizeof...(WhenAllPromises)>& coros,
+                when_all_state& state
+            ) noexcept -> void {
+                [&coros, &state]<std::size_t... I>(std::index_sequence<I...>) noexcept {
                     (
-                        std::coroutine_handle<WhenAllPromises>::from_address(
-                            coros[I].address()
-                        ).promise().state_ = &state
-                    )
-                );
-                (..., (coros[I].resume()));
-            }(std::index_sequence_for<WhenAllPromises...>{});
-        }
-
-        template<typename ReturnType, std::size_t... I, typename RefTuple>
-        COIO_ALWAYS_INLINE auto filter_void_(std::index_sequence<I...>, RefTuple tpl) -> ReturnType {
-            return ReturnType(std::get<I>(std::move(tpl))...);
-        }
-
-        template<typename... WhenAllPromises>
-        COIO_ALWAYS_INLINE auto get_when_all_result(
-            std::array<std::coroutine_handle<>, sizeof...(WhenAllPromises)>& coros
-        ) {
-            using NonVoidTypes = typename non_void<typename WhenAllPromises::value_type...>::types;
-            using NonVoidIndices = typename non_void<typename WhenAllPromises::value_type...>::indices;
-            using ReturnType = std::conditional_t<std::same_as<NonVoidTypes, std::tuple<>>, void, NonVoidTypes>;
-            return (filter_void_<ReturnType>)(
-                NonVoidIndices{},
-                [&coros]<std::size_t... I>(std::index_sequence<I...>) {
-                    return std::forward_as_tuple(
-                        std::coroutine_handle<WhenAllPromises>::from_address(
-                            coros[I].address()
-                        ).promise().get_non_void_result()...
+                        ...,
+                        (
+                            std::coroutine_handle<WhenAllPromises>::from_address(
+                                coros[I].address()
+                            ).promise().state_ = &state
+                        )
                     );
-                }(std::index_sequence_for<WhenAllPromises...>{})
-            );
+                    (..., (coros[I].resume()));
+                }(std::index_sequence_for<WhenAllPromises...>{});
+            }
+
+            template<typename ReturnType, std::size_t... I, typename RefTuple>
+            COIO_ALWAYS_INLINE auto filter_void_(std::index_sequence<I...>, RefTuple tpl) -> ReturnType {
+                return ReturnType(std::get<I>(std::move(tpl))...);
+            }
+
+            template<typename... WhenAllPromises>
+            COIO_ALWAYS_INLINE auto get_when_all_result(
+                std::array<std::coroutine_handle<>, sizeof...(WhenAllPromises)>& coros
+            ) {
+                using NonVoidTypes = typename non_void<typename WhenAllPromises::value_type...>::types;
+                using NonVoidIndices = typename non_void<typename WhenAllPromises::value_type...>::indices;
+                using ReturnType = std::conditional_t<std::same_as<NonVoidTypes, std::tuple<>>, void, NonVoidTypes>;
+                return (filter_void_<ReturnType>)(
+                    NonVoidIndices{},
+                    [&coros]<std::size_t... I>(std::index_sequence<I...>) {
+                        return std::forward_as_tuple(
+                            std::coroutine_handle<WhenAllPromises>::from_address(
+                                coros[I].address()
+                            ).promise().get_non_void_result()...
+                        );
+                    }(std::index_sequence_for<WhenAllPromises...>{})
+                );
+            }
+
+            template<typename T, typename Alloc>
+            struct promise : promise_return_control<T>, promise_alloc_control<Alloc> {
+                using value_type = T;
+
+                promise() = default;
+
+                auto get_return_object() noexcept -> basic_task<promise> {
+                    return {std::coroutine_handle<promise>::from_promise(*this)};
+                }
+
+                auto unhandled_stopped() noexcept -> std::coroutine_handle<> {
+                    COIO_ASSERT(state_ != nullptr);
+                    return state_->cancel();
+                }
+
+                static auto initial_suspend() noexcept -> std::suspend_always {
+                    return {};
+                }
+
+                auto final_suspend() noexcept -> task_final_awaiter {
+                    COIO_ASSERT(state_ != nullptr);
+                    return {state_->arrive()};
+                }
+
+                when_all_state* state_ = nullptr;
+            };
+
+            template<typename T, typename Alloc = void>
+            using when_all_task = basic_task<promise<T, Alloc>>;
+
+            template<typename Alloc, typename Awaitable>
+            auto wrap(std::allocator_arg_t, const Alloc&, Awaitable awaitable) -> when_all_task<await_result_t<Awaitable>, Alloc> {
+                co_return co_await std::move(awaitable);
+            }
+
+            template<typename Awaitable>
+            auto wrap(Awaitable awaitable) {
+                return (wrap)(std::allocator_arg, std::allocator<void>{}, std::move(awaitable));
+            }
         }
-
-        template<typename T, typename Alloc>
-        struct when_all_promise : promise_return_control<T>, promise_alloc_control<Alloc> {
-            using value_type = T;
-
-            when_all_promise() = default;
-
-            auto get_return_object() noexcept -> basic_task<when_all_promise> {
-                return {std::coroutine_handle<when_all_promise>::from_promise(*this)};
-            }
-
-            auto unhandled_stopped() noexcept -> std::coroutine_handle<> {
-                COIO_ASSERT(state_ != nullptr);
-                return state_->cancel();
-            }
-
-            static auto initial_suspend() noexcept -> std::suspend_always {
-                return {};
-            }
-
-            auto final_suspend() noexcept -> task_final_awaiter {
-                COIO_ASSERT(state_ != nullptr);
-                return {state_->arrive()};
-            }
-
-            when_all_state* state_ = nullptr;
-        };
-
-        template<typename T, typename Alloc = void>
-        using when_all_task = basic_task<when_all_promise<T, Alloc>>;
 
         template<typename... Types>
         class when_all_t {
@@ -368,7 +442,7 @@ namespace coio {
             using non_void_indices = typename non_void<Types...>::indices;
             using return_type = std::conditional_t<std::same_as<non_void_types, std::tuple<>>, void, non_void_types>;
             using coros = std::array<std::coroutine_handle<>, sizeof...(Types)>;
-            using set_counter_fn = void(*)(coros&, when_all_state&) noexcept;
+            using set_counter_fn = void(*)(coros&, __when_all::when_all_state&) noexcept;
             using get_result_fn = return_type(*)(coros&);
 
             struct awaiter {
@@ -391,15 +465,15 @@ namespace coio {
                 }
 
                 when_all_t when_all_;
-                when_all_state state_{sizeof...(Types)};
+                __when_all::when_all_state state_{sizeof...(Types)};
             };
 
         public:
             template<typename... WhenAllTasks>
             when_all_t(WhenAllTasks... when_all_tasks) noexcept :
                 coros_{when_all_tasks.release()...},
-                set_state_(set_when_all_state<typename WhenAllTasks::promise_type...>),
-                get_result_(get_when_all_result<typename WhenAllTasks::promise_type...>)
+                set_state_(__when_all::set_when_all_state<typename WhenAllTasks::promise_type...>),
+                get_result_(__when_all::get_when_all_result<typename WhenAllTasks::promise_type...>)
             {}
 
             when_all_t(const when_all_t&) = delete;
@@ -436,121 +510,87 @@ namespace coio {
         };
 
         template<typename... Types, typename Alloc>
-        when_all_t(when_all_task<Types, Alloc>...) -> when_all_t<Types...>;
-
-        template<typename Alloc, typename Awaitable>
-        auto do_when_all_task(std::allocator_arg_t, const Alloc&, Awaitable awaitable) -> when_all_task<await_result_t<Awaitable>, Alloc> {
-            co_return co_await std::move(awaitable);
-        }
-
-        template<typename Awaitable>
-        auto do_when_all_task(Awaitable awaitable) {
-            return (do_when_all_task)(std::allocator_arg, std::allocator<void>{}, std::move(awaitable));
-        }
+        when_all_t(__when_all::when_all_task<Types, Alloc>...) -> when_all_t<Types...>;
 
         struct when_all_fn {
             template<awaitable_value... Awaitables> requires (sizeof...(Awaitables) > 0)
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST {
-                return when_all_t{(do_when_all_task)(std::forward<Awaitables>(awaitables))...};
+                return when_all_t{__when_all::wrap(std::forward<Awaitables>(awaitables))...};
             }
 
             template<typename Alloc, awaitable_value... Awaitables> requires (sizeof...(Awaitables) > 0)
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (std::allocator_arg_t, const Alloc& alloc, Awaitables&&... awaitables) COIO_STATIC_CALL_OP_CONST {
-                return when_all_t{(do_when_all_task)(std::allocator_arg, alloc, std::forward<Awaitables>(awaitables)...)};
+                return when_all_t{__when_all::wrap(std::allocator_arg, alloc, std::forward<Awaitables>(awaitables)...)};
             }
         };
 
-        template<typename T, typename Alloc>
-        struct sync_wait_promise : promise_return_control<T>, promise_alloc_control<Alloc> {
-            sync_wait_promise() = default;
 
-            auto get_return_object() noexcept -> basic_task<sync_wait_promise> {
-                return {std::coroutine_handle<sync_wait_promise>::from_promise(*this)};
-            }
+        namespace __sync_wait {
+            template<typename T>
+            struct promise : promise_return_control<T>, promise_alloc_control<void> {
+                promise() = default;
 
-            auto unhandled_stopped() noexcept -> std::coroutine_handle<> {
-                return complete();
-            }
-
-            static auto initial_suspend() noexcept -> std::suspend_always {
-                return {};
-            }
-
-            auto final_suspend() noexcept -> task_final_awaiter {
-                return {complete()};
-            }
-
-            auto complete() noexcept -> std::coroutine_handle<> {
-                finished_ = 1;
-                finished_.notify_all();
-                return continuation_;
-            }
-
-            std::atomic_unsigned_lock_free finished_{0};
-            std::coroutine_handle<> continuation_;
-        };
-
-        template<typename T, typename Alloc = void>
-        using sync_wait_task = basic_task<sync_wait_promise<T, Alloc>>;
-
-        template<typename T, typename Alloc>
-        auto operator co_await(sync_wait_task<T, Alloc>& sync_) {
-            struct awaiter {
-                static auto await_ready() noexcept -> bool {
-                    return false;
-                }
-
-                auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> std::coroutine_handle<> {
-                    coro_.promise().continuation_ = this_coro;
-                    return coro_;
-                }
-
-                static auto await_resume() noexcept -> void {}
-
-                std::coroutine_handle<typename sync_wait_task<T, Alloc>::promise_type> coro_;
-            };
-            return awaiter{sync_.handle};
-        }
-
-        struct fire_and_forget {
-            struct promise_type {
-                static auto get_return_object() noexcept -> fire_and_forget {
-                    return {};
-                }
-
-                static auto initial_suspend() noexcept -> std::suspend_never {
-                    return {};
-                }
-
-                static auto final_suspend() noexcept -> std::suspend_never {
-                    return {};
-                }
-
-                static auto return_void() noexcept -> void {}
-
-                [[noreturn]]
-                static auto unhandled_exception() noexcept -> void {
-                    std::terminate();
+                auto get_return_object() noexcept -> basic_task<promise> {
+                    return {std::coroutine_handle<promise>::from_promise(*this)};
                 }
 
                 auto unhandled_stopped() noexcept -> std::coroutine_handle<> {
-                    return std::coroutine_handle<promise_type>::from_promise(*this);
+                    return complete();
                 }
-            };
-        };
 
-        template<typename Awaitable>
-        auto do_sync_wait_task(Awaitable&& awaitable) -> sync_wait_task<await_result_t<Awaitable>> {
-            co_return co_await std::forward<Awaitable>(awaitable);
+                static auto initial_suspend() noexcept -> std::suspend_always {
+                    return {};
+                }
+
+                auto final_suspend() noexcept -> task_final_awaiter {
+                    return {complete()};
+                }
+
+                auto complete() noexcept -> std::coroutine_handle<> {
+                    finished_ = 1;
+                    finished_.notify_all();
+                    return continuation_;
+                }
+
+                std::atomic_unsigned_lock_free finished_{0};
+                std::coroutine_handle<> continuation_;
+            };
+
+            template<typename T>
+            using sync_wait_task = basic_task<promise<T>>;
+
+            template<typename T>
+            auto operator co_await(sync_wait_task<T>& sync_) {
+                struct awaiter {
+                    static auto await_ready() noexcept -> bool {
+                        return false;
+                    }
+
+                    auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> std::coroutine_handle<> {
+                        coro_.promise().continuation_ = this_coro;
+                        return coro_;
+                    }
+
+                    static auto await_resume() noexcept -> void {}
+
+                    std::coroutine_handle<promise<T>> coro_;
+                };
+                return awaiter{sync_.handle};
+            }
+
+            template<typename Awaitable>
+            auto wrap(Awaitable&& awaitable) -> sync_wait_task<await_result_t<Awaitable>> {
+                co_return co_await std::forward<Awaitable>(awaitable);
+            }
         }
 
         struct sync_wait_fn {
             template<awaitable Awaitable>
             COIO_STATIC_CALL_OP auto operator() (Awaitable&& awt) COIO_STATIC_CALL_OP_CONST -> optional_t<await_result_t<Awaitable>> {
                 using ResultType = await_result_t<Awaitable>;
-                auto sync_ = (do_sync_wait_task)(std::forward<Awaitable>(awt));
+                auto sync_ = __sync_wait::wrap(std::forward<Awaitable>(awt));
                 [&]() -> fire_and_forget {
                     co_await sync_;
                 }();
@@ -581,8 +621,6 @@ namespace coio {
         friend retain_base;
         friend retain_ptr<async_scope>;
     public:
-        struct token {}; // TODO: adaptation to p3149 (https://www.open-std.org/JTC1/SC22/WG21/docs/papers/2025/p3149r11.html)
-
         class join_sender {
             friend async_scope;
         private:
@@ -610,11 +648,7 @@ namespace coio {
                     return scope_.ref_count_.fetch_sub(1, std::memory_order_acq_rel) > 1;
                 }
 
-                auto await_resume() -> void {
-                    if (scope_.stop_source_.stop_requested()) {
-                        stopped_callback_(coro_).resume();
-                    }
-                }
+                static auto await_resume() noexcept -> void {}
 
             private:
                 async_scope& scope_;
@@ -651,14 +685,9 @@ namespace coio {
 
         template<awaitable_value Awaitable>
         auto spawn(Awaitable awt) -> void {
-            [](std::decay_t<Awaitable> awt_, retain_ptr<async_scope>) -> detail::fire_and_forget {
-                void(co_await std::move(awt_));
+            [](Awaitable spawned, retain_ptr<async_scope>) -> detail::fire_and_forget {
+                void(co_await std::move(spawned));
             }(std::move(awt), retain_ptr{this});
-        }
-
-        [[nodiscard]]
-        auto get_token() noexcept -> token {
-            return {};
         }
 
         [[nodiscard]]
@@ -677,7 +706,6 @@ namespace coio {
         }
 
     private:
-        std::stop_source stop_source_;
         detail::intrusive_stack<join_sender::awaiter> list_{&join_sender::awaiter::next_};
     };
 

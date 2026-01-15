@@ -6,24 +6,33 @@
 #include <liburing.h>
 #include <netinet/in.h>
 #include "../execution_context.h"
-#include "../detail/io_descriptions.h"
 #include "../detail/async_result.h"
+#include "../detail/io_descriptions.h"
+#include "../detail/stoppable_op.h"
 
 namespace coio {
     namespace detail {
         template<typename Sexpr>
+        class uring_op_base_for;
+
+        template<typename Sexpr, typename StopToken>
         class uring_op;
     }
 
     class uring_context : public detail::run_loop_base<uring_context> {
         template<typename Sexpr>
-        friend class detail::uring_op;
+        friend class detail::uring_op_base_for;
         friend run_loop_base;
 
     private:
-        struct io_op : operation_base {
-            using operation_base::operation_base;
-            auto (*complete)(io_op* op, int cqe_res) noexcept -> void = nullptr;
+        struct uring_op_base : operation_base {
+            using complete_fn_t = auto (*)(uring_op_base* op, int cqe_res) -> void;
+
+            uring_op_base(uring_context& context, complete_fn_t complete) noexcept : operation_base(context), complete(complete) {}
+
+            auto cancel() -> void;
+
+            const complete_fn_t complete = nullptr;
         };
 
     public:
@@ -32,7 +41,7 @@ namespace coio {
         public:
             using scheduler_concept = detail::io_scheduler_tag;
 
-            class fd_entry {
+            class io_object {
                 friend scheduler;
             private:
                 struct private_data {
@@ -53,19 +62,19 @@ namespace coio {
                 };
 
             public:
-                fd_entry(uring_context& ctx, int fd) noexcept : ctx_(&ctx), fd_(fd) {}
+                io_object(uring_context& ctx, int fd) noexcept : ctx_(&ctx), fd_(fd) {}
 
-                fd_entry(const fd_entry&) = delete;
+                io_object(const io_object&) = delete;
 
-                fd_entry(fd_entry&& other) noexcept :
+                io_object(io_object&& other) noexcept :
                     ctx_(other.ctx_),
                     fd_(std::exchange(other.fd_, -1)) {}
 
-                ~fd_entry() {
+                ~io_object() {
                     cancel();
                 }
 
-                auto operator= (fd_entry other) noexcept -> fd_entry& {
+                auto operator= (io_object other) noexcept -> io_object& {
                     std::ranges::swap(ctx_, other.ctx_);
                     std::ranges::swap(fd_, other.fd_);
                     return *this;
@@ -92,42 +101,43 @@ namespace coio {
                 int fd_ = -1;
             };
 
-            template<std::move_constructible Sexpr>
+            template<std::move_constructible Sexpr, stoppable_token StopToken>
             struct io_awaitable {
                 int fd;
                 uring_context* context;
                 Sexpr sexpr;
+                StopToken stop_token;
 
-                COIO_ALWAYS_INLINE auto operator co_await() && noexcept -> detail::uring_op<Sexpr> {
+                COIO_ALWAYS_INLINE auto operator co_await() && noexcept -> detail::uring_op<Sexpr, StopToken> {
                     COIO_ASSERT(fd != -1 and context != nullptr);
                     return {
+                        std::move(stop_token),
                         std::exchange(fd, -1),
                         *std::exchange(context, nullptr),
                         std::move(sexpr)
                     };
                 }
 
-    #ifdef COIO_ENABLE_SENDERS
+#ifdef COIO_ENABLE_SENDERS
                 COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                     return env{*context};
                 }
-    #endif
+#endif
             };
 
         public:
             using scheduler_base::scheduler_base;
 
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto wrap_fd(int fd) const -> fd_entry {
-                return fd_entry{*ctx_, fd};
+            COIO_ALWAYS_INLINE auto make_io_object(int fd) const -> io_object {
+                return io_object{*ctx_, fd};
             }
 
-            template<typename Sexpr>
+            template<typename Sexpr, stoppable_token StopToken>
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto schedule_io(fd_entry& entry, Sexpr sexpr) noexcept -> io_awaitable<Sexpr> {
-                return {entry.fd_, ctx_, std::move(sexpr)};
+            COIO_ALWAYS_INLINE auto schedule_io(io_object& obj, Sexpr sexpr, StopToken stop_token) noexcept -> io_awaitable<Sexpr, StopToken> {
+                return {obj.fd_, ctx_, std::move(sexpr), std::move(stop_token)};
             }
-
         };
 
     public:
@@ -140,6 +150,11 @@ namespace coio {
         ~uring_context();
 
         auto operator= (const uring_context&) -> uring_context& = delete;
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto get_uring() noexcept -> ::io_uring* {
+            return &uring_;
+        }
 
     private:
         auto do_one(bool infinite) -> bool;
@@ -187,22 +202,25 @@ namespace coio {
         };
 
         template<typename Sexpr>
-        class uring_op : private native_uring_sexpr<Sexpr>::type, public uring_context::io_op {
+        class uring_op_base_for : private native_uring_sexpr<Sexpr>::type, public uring_context::uring_op_base {
         private:
             using base1 = typename native_uring_sexpr<Sexpr>::type;
 
         public:
-            uring_op(int fd, uring_context& context, Sexpr sexpr) noexcept;
+            uring_op_base_for(int fd, uring_context& context, Sexpr sexpr) noexcept :
+                base1(std::move(sexpr)),
+                uring_op_base(context, &do_complete_thunk),
+                fd(fd) {}
 
             COIO_ALWAYS_INLINE static auto await_ready() noexcept -> bool {
                 return false;
             }
 
             template<typename Promise>
-            auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> bool;
+            auto await_suspend_impl(std::coroutine_handle<Promise> this_coro) noexcept -> bool;
 
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto await_resume() -> typename Sexpr::result_type {
+            COIO_ALWAYS_INLINE auto await_resume_impl() -> typename Sexpr::result_type {
                 return result.get(Sexpr::operation_name());
             }
 
@@ -211,9 +229,14 @@ namespace coio {
             auto start() noexcept -> bool = delete;
             // NOLINTEND(*-use-equals-delete)
 
-            auto do_complete(int cqe_res) noexcept -> void {
+            auto do_complete(int cqe_res) -> void {
                 if (cqe_res < 0) {
-                    result.error(std::error_code{-cqe_res, std::system_category()});
+                    if (-cqe_res == ECANCELED) {
+                        unhandled_stopped_(coro_).resume();
+                    }
+                    else {
+                        result.error(std::error_code{-cqe_res, std::system_category()});
+                    }
                 }
                 else {
                     if constexpr (std::is_void_v<typename Sexpr::result_type>) {
@@ -225,55 +248,59 @@ namespace coio {
                 }
             }
 
+            static auto do_complete_thunk(uring_op_base* self, int cqe_res) -> void;
+
         private:
             int fd;
             async_result<typename Sexpr::result_type> result;
         };
 
         template<>
-        auto uring_op<async_read_some_t>::start() noexcept -> bool;
+        auto uring_op_base_for<async_read_some_t>::start() noexcept -> bool;
 
         template<>
-        auto uring_op<async_write_some_t>::start() noexcept -> bool;
+        auto uring_op_base_for<async_write_some_t>::start() noexcept -> bool;
 
         template<>
-        auto uring_op<async_receive_t>::start() noexcept -> bool;
+        auto uring_op_base_for<async_receive_t>::start() noexcept -> bool;
 
         template<>
-        auto uring_op<async_send_t>::start() noexcept -> bool;
+        auto uring_op_base_for<async_send_t>::start() noexcept -> bool;
 
         template<>
-        auto uring_op<async_receive_from_t>::start() noexcept -> bool;
+        auto uring_op_base_for<async_receive_from_t>::start() noexcept -> bool;
 
         template<>
-        auto uring_op<async_send_to_t>::start() noexcept -> bool;
+        auto uring_op_base_for<async_send_to_t>::start() noexcept -> bool;
 
         template<>
-        auto uring_op<async_accept_t>::start() noexcept -> bool;
+        auto uring_op_base_for<async_accept_t>::start() noexcept -> bool;
 
         template<>
-        auto uring_op<async_connect_t>::start() noexcept -> bool;
+        auto uring_op_base_for<async_connect_t>::start() noexcept -> bool;
 
-        template <typename Sexpr>
-        uring_op<Sexpr>::uring_op(int fd, uring_context& context, Sexpr sexpr) noexcept:
-            base1(std::move(sexpr)),
-            io_op(context),
-            fd(fd)
-        {
-            this->complete = +[](io_op* self, int cqe_res) noexcept -> void {
-                COIO_ASSERT(self != nullptr);
-                static_cast<uring_op*>(self)->do_complete(cqe_res);
-            };
+        template<typename Sexpr>
+        auto uring_op_base_for<Sexpr>::do_complete_thunk(uring_op_base* self, int cqe_res) -> void {
+            COIO_ASSERT(self != nullptr);
+            static_cast<uring_op_base_for*>(self)->do_complete(cqe_res);
         }
 
         template<typename Sexpr>
         template<typename Promise>
-        auto uring_op<Sexpr>::await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
+        auto uring_op_base_for<Sexpr>::await_suspend_impl(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
             coro_ = this_coro;
             if constexpr (stoppable_promise<Promise>) {
                 unhandled_stopped_ = &stop_stoppable_coroutine_<Promise>;
             }
             return start();
         }
+
+        template<typename Sexpr, typename StopToken>
+        class uring_op : public stoppable_op<uring_op_base_for<Sexpr>, StopToken> {
+        private:
+            using base = stoppable_op<uring_op_base_for<Sexpr>, StopToken>;
+        public:
+            using base::base;
+        };
     }
 }

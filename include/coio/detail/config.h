@@ -94,23 +94,23 @@
 #endif
 
 #if COIO_OS_WINDOWS
-    #define COIO_HAS_EPOLL 0
-    #define COIO_HAS_IO_URING 0
-    #if __has_include(<ioapiset.h>)
-    #define COIO_HAS_IOCP 1
-    #else
-    #define COIO_HAS_IOCP 0
-    #endif
+#define COIO_HAS_EPOLL 0
+#define COIO_HAS_IO_URING 0
+#if __has_include(<ioapiset.h>)
+#define COIO_HAS_IOCP 1
+#else
+#define COIO_HAS_IOCP 0
+#endif
 #elif COIO_OS_LINUX
-    #define COIO_HAS_IOCP 0
-    #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 45) and __has_include(<sys/epoll.h>)
-    #define COIO_HAS_EPOLL 1
-    #else
-    #define COIO_HAS_EPOLL 0
-    #endif
-    #if __has_include(<liburing.h>)
-    #define COIO_HAS_IO_URING 1
-    #else
-    #define COIO_HAS_IO_URING 0
-    #endif
+#define COIO_HAS_IOCP 0
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 45) and __has_include(<sys/epoll.h>)
+#define COIO_HAS_EPOLL 1
+#else
+#define COIO_HAS_EPOLL 0
+#endif
+#if __has_include(<liburing.h>)
+#define COIO_HAS_IO_URING 1
+#else
+#define COIO_HAS_IO_URING 0
+#endif
 #endif

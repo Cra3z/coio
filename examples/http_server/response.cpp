@@ -3,7 +3,7 @@
 #include "response.h"
 
 namespace http {
-    static std::string_view status_string(response::status_type status) {
+    static auto status_string(response::status_type status) -> std::string_view {
         switch (status) {
         case response::ok: return "200 OK";
         case response::created: return "201 Created";
@@ -26,7 +26,7 @@ namespace http {
         }
     }
 
-    static std::string stock_content(response::status_type status) {
+    static auto stock_content(response::status_type status) -> std::string_view {
         switch (status) {
         case response::ok: return "";
         case response::bad_request: return "Bad Request\n";
@@ -39,31 +39,30 @@ namespace http {
         }
     }
 
-    auto response::write_to(tcp_socket& socket) -> coio::task<> {
-        using namespace std::string_view_literals;
-        co_await coio::async_write(socket, coio::as_bytes("HTTP/1.1 "sv));
-        co_await coio::async_write(socket, coio::as_bytes(status_string(status)));
-        co_await coio::async_write(socket, coio::as_bytes("\r\n"sv));
+    auto response::write_to(tcp_socket& socket, coio::inplace_stop_token stop_token) -> coio::task<> {
+        std::string line_and_headers;
+        line_and_headers.reserve(512);
+
+        line_and_headers += std::format("HTTP/1.1 {}\r\n", status_string(status));
 
         for (const auto& [name, value] : headers) {
-            co_await coio::async_write(socket, coio::as_bytes(name));
-            co_await coio::async_write(socket, coio::as_bytes(": "sv));
-            co_await coio::async_write(socket, coio::as_bytes(value));
-            co_await coio::async_write(socket, coio::as_bytes("\r\n"sv));
+            line_and_headers += std::format("{}: {}\r\n", name, value);
         }
 
-        co_await coio::async_write(socket, coio::as_bytes("\r\n"sv));
+        line_and_headers += "\r\n";
+        co_await coio::async_write(socket, coio::as_bytes(line_and_headers), stop_token);
 
-        co_await coio::async_write(socket, coio::as_bytes(content));
+        co_await coio::async_write(socket, content);
     }
 
 
     auto response::stock_reply(status_type status) -> response {
         response rep;
         rep.status = status;
-        rep.content = stock_content(status);
         rep.headers.emplace("Content-Length", std::to_string(rep.content.size()));
         rep.headers.emplace("Content-Type", "text/plain");
+        std::string_view default_content = stock_content(status);
+        rep.content = coio::as_bytes(default_content);
         return rep;
     }
 }

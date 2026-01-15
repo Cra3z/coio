@@ -29,7 +29,7 @@ namespace coio {
         template<io_scheduler IoScheduler>
         class pipe_base {
         private:
-            using implementation_type = decltype(std::declval<IoScheduler&>().wrap_fd(std::declval<pipe_native_handle_type>()));
+            using implementation_type = decltype(std::declval<IoScheduler&>().make_io_object(std::declval<pipe_native_handle_type>()));
 
         public:
             using native_handle_type = pipe_native_handle_type;
@@ -38,7 +38,7 @@ namespace coio {
         public:
             explicit pipe_base(scheduler_type scheduler) noexcept : pipe_base(std::move(scheduler), invalid_pipe_handle) {}
 
-            pipe_base(scheduler_type scheduler, native_handle_type handle) : impl_(scheduler.wrap_fd(handle)) {}
+            pipe_base(scheduler_type scheduler, native_handle_type handle) : impl_(scheduler.make_io_object(handle)) {}
 
             pipe_base(const pipe_base&) = delete;
 
@@ -92,12 +92,20 @@ namespace coio {
             return detail::pipe_read(this->native_handle(), buffer);
         }
 
+        /**
+         * \brief asynchronously read some data.
+         * \param buffer the buffer to read into.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
+         * \return an awaitable of `std::size_t`.
+         */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
+        COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer, StopToken stop_token = {}) {
             return then(
                 this->get_io_scheduler().schedule_io(
                     this->impl_,
-                    detail::async_read_some_t{buffer}
+                    detail::async_read_some_t{buffer},
+                    std::move(stop_token)
                 ),
                 [total = buffer.size()](std::size_t bytes_transferred) -> std::size_t {
                     if (bytes_transferred == 0 and total > 0) [[unlikely]] {
@@ -108,6 +116,7 @@ namespace coio {
             );
         }
     };
+
 
     template<io_scheduler IoScheduler>
     class pipe_writer: public detail::pipe_base<IoScheduler> {
@@ -121,9 +130,16 @@ namespace coio {
             return detail::pipe_write(this->native_handle(), buffer);
         }
 
+        /**
+         * \brief asynchronously write some data.
+         * \param buffer the buffer to write from.
+         * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
+         * \return an awaitable of `std::size_t`.
+         */
+        template<stoppable_token StopToken = never_stop_token>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) {
-            return this->get_io_scheduler().schedule_io(this->impl_, detail::async_write_some_t{buffer});
+        COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer, StopToken stop_token = {}) {
+            return this->get_io_scheduler().schedule_io(this->impl_, detail::async_write_some_t{buffer}, std::move(stop_token));
         }
     };
 

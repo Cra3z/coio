@@ -14,6 +14,7 @@
 #include "detail/op_queue.h"
 #include "task.h"
 #include "schedulers.h"
+#include "utils/stop_token.h"
 
 namespace coio {
     namespace detail {
@@ -222,6 +223,12 @@ namespace coio {
                     };
                 }
 
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto context() const noexcept -> Ctx& {
+                    COIO_ASSERT(ctx_ != nullptr);
+                    return *ctx_;
+                }
+
                 friend auto operator== (const scheduler_base& lhs, const scheduler_base& rhs) -> bool = default;
 
             protected:
@@ -256,7 +263,7 @@ namespace coio {
             }
 
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto get_stop_token() const noexcept -> std::stop_token {
+            COIO_ALWAYS_INLINE auto get_stop_token() const noexcept -> inplace_stop_token {
                 return stop_source_.get_token();
             }
 
@@ -317,7 +324,7 @@ namespace coio {
 
         protected:
             std::pmr::polymorphic_allocator<> allocator_;
-            std::stop_source stop_source_;
+            inplace_stop_source stop_source_;
             op_queue op_queue_;
             timer_queue timer_queue_{allocator_};
             std::atomic<std::size_t> work_count_{0};
