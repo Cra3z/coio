@@ -1,14 +1,13 @@
 #include <coio/core.h>
 #include <coio/asyncio/io.h>
 #include <coio/asyncio/epoll_context.h>
-#include <coio/asyncio/uring_context.h>
 #include <coio/net/socket.h>
 #include <coio/net/tcp.h>
 #include <coio/utils/signal_set.h>
 #include "common.h"
 
 #if COIO_OS_LINUX
-using io_context = coio::uring_context;
+using io_context = coio::epoll_context;
 #endif
 using tcp_socket = coio::tcp::socket<io_context::scheduler>;
 using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
