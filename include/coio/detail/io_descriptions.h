@@ -20,6 +20,26 @@ namespace coio::detail {
         std::span<const std::byte> buffer;
     };
 
+    struct async_read_some_at_t {
+        static auto operation_name() noexcept -> const char* {
+            return "async_read_some_at";
+        }
+
+        using result_type = std::size_t;
+        std::size_t offset = 0;
+        std::span<std::byte> buffer;
+    };
+
+    struct async_write_some_at_t {
+        static auto operation_name() noexcept -> const char* {
+            return "async_write_some_at";
+        }
+
+        using result_type = std::size_t;
+        std::size_t offset = 0;
+        std::span<const std::byte> buffer;
+    };
+
     struct async_receive_t {
         static auto operation_name() noexcept -> const char* {
             return "async_receive";

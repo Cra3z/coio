@@ -257,7 +257,7 @@ namespace coio {
         template<std::invocable Fn>
         struct call_once {
             auto operator() () -> void {
-                if (flag.exchange(false, std::memory_order_relaxed)) {
+                if (flag.exchange(false, std::memory_order_acq_rel)) {
                     std::invoke(fn);
                 }
             }

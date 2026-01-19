@@ -188,7 +188,7 @@ namespace coio {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
-            ::io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), 0);
+            ::io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), -1);
             ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});
@@ -204,7 +204,39 @@ namespace coio {
                 result.error(std::make_error_code(std::errc::no_buffer_space));
                 return false;
             }
-            ::io_uring_prep_write(sqe, fd, buffer.data(), buffer.size(), 0);
+            ::io_uring_prep_write(sqe, fd, buffer.data(), buffer.size(), -1);
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
+            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
+                result.error(std::error_code{ec, std::system_category()});
+                return false;
+            }
+            return true;
+        }
+
+        template<>
+        auto uring_op_base_for<async_read_some_at_t>::start() noexcept -> bool {
+            auto sqe = context_.allocate_sqe();
+            if (sqe == nullptr) {
+                result.error(std::make_error_code(std::errc::no_buffer_space));
+                return false;
+            }
+            ::io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), offset);
+            ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
+            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
+                result.error(std::error_code{ec, std::system_category()});
+                return false;
+            }
+            return true;
+        }
+
+        template<>
+        auto uring_op_base_for<async_write_some_at_t>::start() noexcept -> bool {
+            auto sqe = context_.allocate_sqe();
+            if (sqe == nullptr) {
+                result.error(std::make_error_code(std::errc::no_buffer_space));
+                return false;
+            }
+            ::io_uring_prep_write(sqe, fd, buffer.data(), buffer.size(), offset);
             ::io_uring_sqe_set_data(sqe, static_cast<uring_op_base*>(this));
             if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
                 result.error(std::error_code{ec, std::system_category()});

@@ -2,6 +2,7 @@
 #if COIO_HAS_EPOLL
 #include <sys/epoll.h>
 #include <sys/fcntl.h>
+#include <sys/stat.h>
 #include <coio/asyncio/epoll_context.h>
 #include "../common.h"
 
@@ -73,7 +74,14 @@ namespace coio {
     epoll_context::scheduler::io_object::io_object(epoll_context& ctx, int fd) :
         ctx_(ctx),
         fd_(fd),
-        data_(ctx.new_epoll_data()) {}
+        data_(ctx.new_epoll_data()) {
+        if (fd != -1 and (S_ISREG(fd) or S_ISDIR(fd))) [[unlikely]] {
+            throw std::system_error{
+                std::make_error_code(std::errc::operation_not_permitted),
+                "the target file `fd` doesn't support epoll"
+            };
+        }
+    }
 
     epoll_context::scheduler::io_object::~io_object() {
         cancel();
@@ -144,6 +152,8 @@ namespace coio {
             const int ready_count = ::epoll_wait(epoll_fd_, ready_events, epoll_max_wait_count, timeout);
             if (ready_count == -1 and errno == EINTR) continue;
             detail::throw_last_error(ready_count, "epoll_wait");
+
+            op_queue local_op_queue;
             for (int i = 0; i < ready_count; ++i) {
                 const auto& [event, data] = ready_events[i];
                 COIO_ASSERT(data.ptr != nullptr);
@@ -151,23 +161,26 @@ namespace coio {
                     interrupter_.reset();
                     continue;
                 }
+
                 const auto fd_data = static_cast<epoll_data*>(data.ptr);
+                epoll_op_base* op = nullptr;
+
                 // if (event & EPOLLPRI) {} TODO: handle EPOLLPRI for out-of-band data
                 if (event & EPOLLIN) {
-                    if (const auto op = fd_data->in_op.exchange(nullptr)) {
-                        op->next_ = nullptr;
-                        op->perform(op);
-                        op_queue_.enqueue(*op);
-                    }
+                    op = fd_data->in_op.exchange(nullptr);
                 }
                 if (event & EPOLLOUT) {
-                    if (const auto op = fd_data->out_op.exchange(nullptr)) {
-                        op->next_ = nullptr;
-                        op->perform(op);
-                        op_queue_.enqueue(*op);
-                    }
+                    op = fd_data->out_op.exchange(nullptr);
+                }
+
+                if (op != nullptr) {
+                    op->next_ = nullptr;
+                    op->perform(op);
+                    local_op_queue.unsynchronized_enqueue(*op);
                 }
             }
+
+            op_queue_.splice(std::move(local_op_queue));
         }
         while (infinite and not stop_requested());
         return false;

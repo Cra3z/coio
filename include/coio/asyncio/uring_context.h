@@ -43,24 +43,6 @@ namespace coio {
 
             class io_object {
                 friend scheduler;
-            private:
-                struct private_data {
-                    operation_base* in_op{nullptr};
-                    operation_base* out_op{nullptr};
-
-                    auto set_in_op(operation_base* op) -> void {
-                        std::atomic_ref{in_op}.store(op, std::memory_order_release);
-                    }
-
-                    auto get_in_op() const noexcept -> operation_base* {
-                        return std::atomic_ref{in_op}.load(std::memory_order_acquire);
-                    }
-
-                    auto exchange(operation_base* op) noexcept -> operation_base* {
-                        return std::atomic_ref{out_op}.exchange(op, std::memory_order_acq_rel);
-                    }
-                };
-
             public:
                 io_object(uring_context& ctx, int fd) noexcept : ctx_(&ctx), fd_(fd) {}
 
@@ -260,6 +242,12 @@ namespace coio {
 
         template<>
         auto uring_op_base_for<async_write_some_t>::start() noexcept -> bool;
+
+        template<>
+        auto uring_op_base_for<async_read_some_at_t>::start() noexcept -> bool;
+
+        template<>
+        auto uring_op_base_for<async_write_some_at_t>::start() noexcept -> bool;
 
         template<>
         auto uring_op_base_for<async_receive_t>::start() noexcept -> bool;

@@ -24,6 +24,10 @@ namespace coio::detail {
 
         auto enqueue(Op& op) -> void {
             std::scoped_lock _{op_queue_mtx_};
+            this->unsynchronized_enqueue(op);
+        }
+
+        auto unsynchronized_enqueue(Op& op) -> void {
             if (auto old_tail = std::exchange(op_queue_tail_, &op)) {
                 std::invoke(NextAccessor, old_tail) = &op;
             }
@@ -37,10 +41,7 @@ namespace coio::detail {
         auto bulk_enqueue(Ops&& ops) -> void {
             std::scoped_lock _{op_queue_mtx_};
             for (Op& op : ops) {
-                if (auto old_tail = std::exchange(op_queue_tail_, &op)) {
-                    std::invoke(NextAccessor, old_tail) = &op;
-                }
-                if (op_queue_head_ == nullptr) op_queue_head_ = &op;
+                this->unsynchronized_enqueue(op);
             }
         }
 
