@@ -49,9 +49,14 @@ namespace coio {
         class epoll_op_base;
 
         struct epoll_data {
+            explicit epoll_data(inplace_stop_token token) : on_stopped(std::move(token), std::bind_front(&epoll_data::cancel_ops, this)) {}
+
+            auto cancel_ops() -> void;
+
             std::atomic<bool> registered{false};
             std::atomic<epoll_op_base*> in_op{nullptr};
             std::atomic<epoll_op_base*> out_op{nullptr};
+            stop_callback_for_t<inplace_stop_token, decltype(std::bind_front(&epoll_data::cancel_ops, std::declval<epoll_data*>()))> on_stopped;
         };
 
         class epoll_op_base : public operation_base {
@@ -82,7 +87,7 @@ namespace coio {
         class scheduler : public scheduler_base {
             friend epoll_context;
         public:
-            using scheduler_concept = detail::io_scheduler_tag;
+            using scheduler_concept = detail::io_scheduler_t;
 
             class io_object {
                 friend scheduler;
@@ -145,11 +150,9 @@ namespace coio {
                     };
                 }
 
-    #ifdef COIO_ENABLE_SENDERS
                 COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                     return env{*context};
                 }
-    #endif
             };
 
         public:
@@ -324,7 +327,7 @@ namespace coio {
         auto epoll_op_base_for<Sexpr>::await_suspend_impl(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
             coro_ = this_coro;
             if constexpr (stoppable_promise<Promise>) {
-                unhandled_stopped_ = &stop_stoppable_coroutine_<Promise>;
+                unhandled_stopped_ = &stop_coroutine<Promise>;
             }
             return start();
         }

@@ -24,9 +24,9 @@ namespace {
         }
 
     private:
-        coio::run_loop loop;
+        coio::timed_run_loop loop;
         std::jthread thrd;
-        coio::work_guard<coio::run_loop> _{loop};
+        coio::work_guard<coio::timed_run_loop> _{loop};
     };
 }
 

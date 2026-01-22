@@ -10,10 +10,9 @@
 #include <stop_token>
 #include <utility>
 #include <vector>
-#include "detail/config.h"
+#include "detail/execution.h"
 #include "detail/op_queue.h"
-#include "task.h"
-#include "schedulers.h"
+#include "detail/unhandled_stopped.h"
 #include "utils/stop_token.h"
 
 namespace coio {
@@ -69,23 +68,21 @@ namespace coio {
                 operation_base* next_{};
             };
 
-#ifdef COIO_ENABLE_SENDERS
             struct env {
                 auto query(execution::get_completion_scheduler_t<execution::set_value_t>) const noexcept {
                     return ctx_.get_scheduler();
                 }
 
-                auto query(execution::get_stop_token_t) const noexcept -> std::stop_token {
+                auto query(get_stop_token_t) const noexcept -> std::stop_token {
                     return ctx_.get_stop_token();
                 }
 
-                auto query(execution::get_allocator_t) const noexcept -> std::pmr::polymorphic_allocator<> {
+                auto query(get_allocator_t) const noexcept -> std::pmr::polymorphic_allocator<> {
                     return ctx_.get_allocator();
                 }
 
                 Ctx& ctx_; // NOLINT(*-avoid-const-or-ref-data-members)
             };
-#endif
 
             class schedule_sender {
                 friend Ctx;
@@ -101,7 +98,7 @@ namespace coio {
                     auto await_suspend(std::coroutine_handle<Promise> this_coro) -> void {
                         this->coro_ = this_coro;
                         if constexpr (stoppable_promise<Promise>) {
-                            this->unhandled_stopped_ = &stop_stoppable_coroutine_<Promise>;
+                            this->unhandled_stopped_ = &stop_coroutine<Promise>;
                         }
                         this->next_ = nullptr;
                         this->context_.op_queue_.enqueue(*this);
@@ -114,11 +111,10 @@ namespace coio {
             public:
                 explicit schedule_sender(Ctx& context) noexcept : ctx_(&context) {}
 
-    #ifdef COIO_ENABLE_SENDERS
                 COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                     return env{*ctx_};
                 }
-    #endif
+
                 COIO_ALWAYS_INLINE auto operator co_await() const noexcept {
                     return op{*ctx_};
                 }
@@ -149,7 +145,7 @@ namespace coio {
                     auto await_suspend(std::coroutine_handle<Promise> this_coro) -> void {
                         this->coro_ = this_coro;
                         if constexpr (stoppable_promise<Promise>) {
-                            this->unhandled_stopped_ = &stop_stoppable_coroutine_<Promise>;
+                            this->unhandled_stopped_ = &stop_coroutine<Promise>;
                         }
                         this->context_.timer_queue_.add(*this);
                         if (deadline < this->context_.timer_queue_.earliest()) this->context_.interrupt();
@@ -176,11 +172,11 @@ namespace coio {
                     deadline_ = std::exchange(other.deadline_, {});
                     return *this;
                 }
-    #ifdef COIO_ENABLE_SENDERS
+
                 COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                     return env{*ctx_};
                 }
-    #endif
+
                 COIO_ALWAYS_INLINE auto operator co_await() && noexcept {
                     COIO_ASSERT(ctx_ != nullptr);
                     return op{*std::exchange(ctx_, {}), std::exchange(deadline_, {})};
@@ -333,7 +329,7 @@ namespace coio {
 
     template<typename ExecutionContext>
     concept execution_context = requires(ExecutionContext& context) {
-        { context.get_scheduler() } -> scheduler;
+        { context.get_scheduler() } -> execution::scheduler;
         context.work_started();
         context.work_finished();
     };
@@ -366,23 +362,18 @@ namespace coio {
         ExecutionContext* context_ = nullptr;
     };
 
-    inline constexpr auto make_work_guard = []<execution_context ExecutionContext>(ExecutionContext& context) noexcept {
-        return work_guard(context);
-    };
-
-
-    class run_loop : public detail::run_loop_base<run_loop> {
+    class timed_run_loop : public detail::run_loop_base<timed_run_loop> {
         friend run_loop_base;
     public:
         struct scheduler : scheduler_base {
-            using scheduler_concept = detail::scheduler_tag;
+            using scheduler_concept = execution::scheduler_t;
             using scheduler_base::scheduler_base;
         };
 
     public:
         using run_loop_base::run_loop_base;
 
-        ~run_loop() = default;
+        ~timed_run_loop() = default;
 
     private:
         auto do_one(bool infinite) -> bool {

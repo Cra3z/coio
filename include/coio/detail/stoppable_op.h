@@ -19,7 +19,7 @@ namespace coio::detail {
         auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> std::coroutine_handle<> {
             StopToken stop_token = std::get<StopToken>(std::move(stop_ctl_));
             if constexpr (stoppable_promise<Promise>) {
-                if (stop_token.stop_requested()) return (stop_stoppable_coroutine_<Promise>)(this_coro);
+                if (stop_token.stop_requested()) return (stop_coroutine<Promise>)(this_coro);
             }
             const auto suspended = this->await_suspend_impl(this_coro);
             stop_ctl_.template emplace<stop_callback_for_t<StopToken, callback_t>>(

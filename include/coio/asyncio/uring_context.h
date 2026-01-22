@@ -39,7 +39,7 @@ namespace coio {
         class scheduler : public scheduler_base {
             friend uring_context;
         public:
-            using scheduler_concept = detail::io_scheduler_tag;
+            using scheduler_concept = detail::io_scheduler_t;
 
             class io_object {
                 friend scheduler;
@@ -100,11 +100,9 @@ namespace coio {
                     };
                 }
 
-#ifdef COIO_ENABLE_SENDERS
                 COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                     return env{*context};
                 }
-#endif
             };
 
         public:
@@ -146,6 +144,7 @@ namespace coio {
         auto allocate_sqe() noexcept -> ::io_uring_sqe*;
 
     private:
+        std::mutex mtx_;
         ::io_uring uring_{};
     };
 
@@ -278,8 +277,9 @@ namespace coio {
         auto uring_op_base_for<Sexpr>::await_suspend_impl(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
             coro_ = this_coro;
             if constexpr (stoppable_promise<Promise>) {
-                unhandled_stopped_ = &stop_stoppable_coroutine_<Promise>;
+                unhandled_stopped_ = &stop_coroutine<Promise>;
             }
+            std::scoped_lock _{context_.mtx_};
             return start();
         }
 

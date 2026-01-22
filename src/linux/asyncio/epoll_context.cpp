@@ -41,6 +41,14 @@ namespace coio {
         }
     }
 
+    auto epoll_context::epoll_data::cancel_ops() -> void {
+        for (auto op : {in_op.exchange(nullptr), out_op.exchange(nullptr)}) {
+            if (op == nullptr) continue;
+            if (op->unhandled_stopped_ == nullptr) std::terminate();
+            op->unhandled_stopped_(op->coro_).resume();
+        }
+    }
+
     auto epoll_context::epoll_op_base::register_event(int event_type, uint32_t extra_flags) noexcept -> bool {
         const bool in_op_registered = data->in_op;
         const bool out_op_registered = data->out_op;
@@ -133,12 +141,16 @@ namespace coio {
 
         ::epoll_event ready_events[epoll_max_wait_count];
         int timeout = infinite ? -1 : 0;
-        do {
+        while (not stop_requested()) {
             timer_queue_.take_ready_timers(op_queue_);
             if (const auto op = op_queue_.try_dequeue()) {
                 op->coro_.resume();
                 return true;
             }
+
+            std::unique_lock lock{epoll_mtx_, std::try_to_lock};
+            if (not lock.owns_lock()) continue;
+            if (stop_requested()) break;
 
             if (infinite) {
                 using milliseconds = std::chrono::duration<int, std::milli>;
@@ -180,14 +192,16 @@ namespace coio {
                 }
             }
 
+            lock.unlock();
             op_queue_.splice(std::move(local_op_queue));
+
+            if (not infinite) break;
         }
-        while (infinite and not stop_requested());
         return false;
     }
 
     auto epoll_context::new_epoll_data() -> epoll_data* {
-        return allocator_.new_object<epoll_data>();
+        return allocator_.new_object<epoll_data>(stop_source_.get_token());
     }
 
     auto epoll_context::reclaim_epoll_data(epoll_data* data) noexcept -> void {

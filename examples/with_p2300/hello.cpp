@@ -3,7 +3,7 @@
 #include "../common.h"
 
 auto main() -> int {
-    coio::run_loop context;
+    coio::timed_run_loop context;
     auto emit_after = [&context](int i) -> coio::task<int> {
         coio::timer timer{context.get_scheduler()};
         co_await timer.async_wait(std::chrono::seconds(i));
@@ -11,7 +11,7 @@ auto main() -> int {
     };
 
     const auto tick = std::chrono::steady_clock::now();
-    auto [i, j, k] = coio::execution::sync_wait(coio::execution::when_all(
+    auto [i, j, k] = coio::this_thread::sync_wait(coio::execution::when_all(
         emit_after(1),
         emit_after(2),
         emit_after(3),

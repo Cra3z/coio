@@ -24,6 +24,7 @@ namespace coio {
     }
 
     auto uring_context::uring_op_base::cancel() -> void {
+        std::scoped_lock _{context_.mtx_};
         auto sqe = context_.allocate_sqe();
         if (sqe == nullptr) {
             throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
@@ -39,6 +40,7 @@ namespace coio {
 
     auto uring_context::scheduler::io_object::cancel() -> void {
         if (fd_ == -1) return;
+        std::scoped_lock _{ctx_->mtx_};
         auto sqe = ctx_->allocate_sqe();
         if (sqe == nullptr) {
             throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
@@ -60,13 +62,18 @@ namespace coio {
     auto uring_context::do_one(bool infinite) -> bool {
         if (stop_requested()) return false;
 
-        do {
+        while (not stop_requested()) {
             timer_queue_.take_ready_timers(op_queue_);
             if (const auto op = op_queue_.try_dequeue()) {
                 op->coro_.resume();
                 return true;
             }
 
+            std::unique_lock lock{mtx_, std::try_to_lock};
+            if (not lock.owns_lock()) continue;
+            if (stop_requested()) break;
+
+            op_queue local_op_queue;
             ::io_uring_cqe* cqe = nullptr;
             std::optional cqe_guard{scope_exit{[&] {
                 ::io_uring_cqe_seen(&uring_, cqe);
@@ -103,7 +110,7 @@ namespace coio {
                 if (auto user_data = ::io_uring_cqe_get_data(cqe); user_data and user_data != this) {
                     auto op = static_cast<uring_op_base*>(user_data);
                     op->complete(op, cqe->res);
-                    op_queue_.enqueue(*op);
+                    local_op_queue.unsynchronized_enqueue(*op);
                 }
             }
             cqe_guard.reset();
@@ -119,12 +126,16 @@ namespace coio {
                     if (auto user_data = ::io_uring_cqe_get_data(peeked_cqe); user_data and user_data != this) {
                         auto op = static_cast<uring_op_base*>(user_data);
                         op->complete(op, peeked_cqe->res);
-                        op_queue_.enqueue(*op);
+                        local_op_queue.unsynchronized_enqueue(*op);
                     }
                 }
             }
+
+            lock.unlock();
+            op_queue_.splice(std::move(local_op_queue));
+
+            if (not infinite) break;
         }
-        while (infinite and not stop_requested());
         return false;
     }
 
@@ -138,6 +149,7 @@ namespace coio {
     }
 
     auto uring_context::interrupt() -> void {
+        std::scoped_lock _{mtx_};
         auto sqe = allocate_sqe();
         if (sqe == nullptr) {
             throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};

@@ -30,7 +30,7 @@ namespace coio {
             auto await_suspend(std::coroutine_handle<Promise> this_coro) -> void {
                 coro_ = this_coro;
                 if constexpr (stoppable_promise<Promise>) {
-                    unhandled_stopped_ = &detail::stop_stoppable_coroutine_<Promise>;
+                    unhandled_stopped_ = &detail::stop_coroutine<Promise>;
                 }
                 owner_.awaiters_.push(*this);
             }

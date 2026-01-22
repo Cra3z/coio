@@ -101,6 +101,13 @@ namespace coio::detail {
             std::ranges::push_heap(underlying_, std::ranges::greater{}, Proj);
         }
 
+        auto remove(reference op) -> bool {
+            std::scoped_lock _{mtx_};
+            const bool erased = std::erase(underlying_, std::ref(op));
+            std::ranges::make_heap(underlying_, std::ranges::greater{}, Proj);
+            return erased;
+        }
+
         template<typename BaseOp, auto NextAccessor> requires std::derived_from<Op, BaseOp>
         auto take_ready_timers(op_queue<BaseOp, NextAccessor>& out) -> void {
             std::scoped_lock _{mtx_};

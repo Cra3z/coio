@@ -5,14 +5,14 @@
 
 using namespace std::chrono_literals;
 
-auto foo(coio::run_loop::scheduler sched) -> coio::task<int> {
+auto foo(coio::timed_run_loop::scheduler sched) -> coio::task<int> {
     coio::timer timer{sched};
     co_await timer.async_wait(1s);
     ::println("foo completed");
     co_return 114;
 }
 
-auto bar(coio::run_loop::scheduler sched) -> coio::task<int> {
+auto bar(coio::timed_run_loop::scheduler sched) -> coio::task<int> {
     coio::timer timer{sched};
     co_await timer.async_wait(2s);
     ::println("bar completed");
@@ -20,9 +20,9 @@ auto bar(coio::run_loop::scheduler sched) -> coio::task<int> {
 }
 
 auto main() -> int {
-    coio::run_loop context;
+    coio::timed_run_loop context;
     auto tick = std::chrono::steady_clock::now();
-    auto [i, j] = coio::sync_wait(coio::when_all(
+    auto [i, j] = coio::this_thread::sync_wait(coio::execution::when_all(
         foo(context.get_scheduler()),
         bar(context.get_scheduler()),
         [&context]() -> coio::task<> {

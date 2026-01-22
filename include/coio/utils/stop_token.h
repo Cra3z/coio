@@ -6,7 +6,9 @@
 #include <type_traits>
 #include <utility>
 #include "scope_exit.h"
+#include "type_traits.h"
 #include "../detail/elide.h"
+#include "../detail/execution.h"
 
 namespace coio {
     namespace detail {
@@ -54,6 +56,9 @@ namespace coio {
     concept unstoppable_token = stoppable_token<Token> and requires(const Token tok) {
         requires std::bool_constant<not Token::stop_possible()>::value;
     };
+
+    template<typename Env>
+    using stop_token_of_t = std::decay_t<std::invoke_result_t<get_stop_token_t, Env>>;
 
     class never_stop_token {
     private:
@@ -331,5 +336,52 @@ namespace coio {
 
     public:
         std::tuple<StopTokens...> tokens_;
+    };
+
+    template<stoppable_source StopSource, stoppable_token StopToken>
+    class stop_propagator {
+    public:
+        template<typename... Args> requires std::constructible_from<StopSource, Args...>
+        explicit stop_propagator(StopToken stop_token, Args&&... args) :
+            stop_source_(std::forward<Args>(args)...),
+            stop_callback_(
+                std::move(stop_token),
+                std::bind_front(&stop_propagator::stop_, std::ref(*this))
+            ) {}
+
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto get_token() const noexcept(noexcept(std::declval<StopSource&>().get_token())) {
+            return stop_source_.get_token();
+        }
+
+    private:
+        COIO_ALWAYS_INLINE auto stop_() -> void {
+            stop_source_.request_stop();
+        }
+
+    private:
+        using stop_cb_t = decltype(std::bind_front(
+            &stop_propagator::stop_,
+            std::ref(std::declval<stop_propagator&>())
+        ));
+
+        StopSource stop_source_;
+        COIO_NO_UNIQUE_ADDRESS stop_callback_for_t<StopToken, stop_cb_t> stop_callback_;
+    };
+
+    template<stoppable_source StopSource, stoppable_token StopToken>
+        requires std::same_as<std::decay_t<decltype(std::declval<StopSource>().get_token())>, StopToken>
+    class stop_propagator<StopSource, StopToken> {
+    public:
+        explicit stop_propagator(StopToken stop_token) noexcept : stop_token_(stop_token) {}
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto get_token() const noexcept -> StopToken {
+            return stop_token_;
+        }
+
+    private:
+        StopToken stop_token_;
     };
 }

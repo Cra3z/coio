@@ -1,6 +1,6 @@
 #pragma once
 #include <thread>
-#include "../schedulers.h"
+#include "../core.h"
 
 namespace coio {
     template<timed_scheduler Scheduler>
