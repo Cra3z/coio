@@ -37,11 +37,11 @@ namespace coio {
             auto operator= (const task_state_base&) -> task_state_base& = delete;
 
             template<typename... Args>
-            auto dispose_with_value(Args&&... args) -> void {
+            COIO_ALWAYS_INLINE auto dispose_with_value(Args&&... args) -> void {
                 result_.template emplace<1>(std::forward<Args>(args)...);
             }
 
-            auto dispose_with_exception(std::exception_ptr exp) noexcept -> void {
+            COIO_ALWAYS_INLINE auto dispose_with_exception(std::exception_ptr exp) noexcept -> void {
                 result_.template emplace<2>(std::move(exp));
             }
 
@@ -68,7 +68,7 @@ namespace coio {
                 rcvr_(std::move(rcvr)),
                 stop_propagator_(coio::get_stop_token(execution::get_env(rcvr_))) {}
 
-            auto start() & noexcept -> void {
+            COIO_ALWAYS_INLINE auto start() & noexcept -> void {
                 const auto coro = std::coroutine_handle<Promise>::from_address(this->coro_.address());
                 coro.promise().state_ = this;
                 coro.resume();
@@ -81,25 +81,20 @@ namespace coio {
             auto complete() noexcept -> std::coroutine_handle<> override {
                 switch (this->result_.index()) {
                 case 0: {
-                    execution::set_stopped(rcvr_);
+                    execution::set_stopped(std::move(rcvr_));
                     break;
                 }
                 case 1: {
                     if constexpr (std::same_as<T, void>) {
-                        execution::set_value(rcvr_);
+                        execution::set_value(std::move(rcvr_));
                     }
                     else {
-                        try {
-                            execution::set_value(rcvr_, static_cast<T>(std::get<1>(this->result_)));
-                        }
-                        catch (...) {
-                            execution::set_error(rcvr_, std::current_exception());
-                        }
+                        execution::set_value(std::move(rcvr_), static_cast<T>(std::get<1>(this->result_)));
                     }
                     break;
                 }
                 case 2: {
-                    execution::set_error(rcvr_, std::move(std::get<2>(this->result_)));
+                    execution::set_error(std::move(rcvr_), std::move(std::get<2>(this->result_)));
                     break;
                 }
                 default: unreachable();
@@ -302,7 +297,7 @@ namespace coio {
             return *this;
         }
 
-        explicit operator bool() const noexcept {
+        COIO_ALWAYS_INLINE explicit operator bool() const noexcept {
             return coro_ != nullptr;
         }
 
@@ -322,11 +317,11 @@ namespace coio {
             };
         }
 
-        auto swap(task& other) noexcept -> void {
+        COIO_ALWAYS_INLINE auto swap(task& other) noexcept -> void {
             std::swap(coro_, other.coro_);
         }
 
-        friend auto swap(task& lhs, task& rhs) noexcept -> void {
+        COIO_ALWAYS_INLINE friend auto swap(task& lhs, task& rhs) noexcept -> void {
             lhs.swap(rhs);
         }
 

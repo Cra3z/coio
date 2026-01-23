@@ -16,11 +16,42 @@ namespace coio {
         { static_cast<Scheduler&&>(sch).schedule_at(static_cast<Scheduler&&>(sch).now()) } -> awaitable_value;
     };
 
+    struct get_io_service_t : forwarding_query_t {
+        template<typename Env> requires requires(Env env) { env.query(std::declval<get_io_service_t>()); }
+        COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP decltype(auto) operator()(const Env& env) COIO_STATIC_CALL_OP_CONST noexcept {
+            return env.query(get_io_service_t{});
+        }
+    };
+
+    inline constexpr get_io_service_t get_io_service{};
+
     template<typename Scheduler>
     concept io_scheduler = scheduler<Scheduler> and
         std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_t>;
 
+    // template<typename Scheduler>
+    // concept io_scheduler = scheduler<Scheduler> and
+    //     std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_t> and
+    //     requires (Scheduler sched) {
+    //     { get_io_service(execution::get_env(sched)) } noexcept -> std::destructible;
+    //     };
+
     namespace detail {
+        template<typename, typename...>
+        struct merge_compl_sigs_helper;
+
+        template<typename... PrevSigs, typename... Sigs, typename... Rest>
+        struct merge_compl_sigs_helper<type_list<PrevSigs...>, execution::completion_signatures<Sigs...>, Rest...> :
+            merge_compl_sigs_helper<typename type_list<PrevSigs..., Sigs...>::unique, Rest...> {};
+
+        template<typename... Sigs>
+        struct merge_compl_sigs_helper<type_list<Sigs...>> {
+            using type = execution::completion_signatures<Sigs...>;
+        };
+
+        template<typename... CompletionSigs>
+        using merge_completion_signatures_t = typename merge_compl_sigs_helper<type_list<>, CompletionSigs...>::type;
+
         struct fire_and_forget {
             class promise_type {
             private:
@@ -177,43 +208,42 @@ namespace coio {
     private:
         template<execution::sender Upstream, execution::sender Body, typename Predicate, execution::receiver Receiver>
         struct state {
+            using operation_state_concept = execution::operation_state_t;
             struct receiver {
                 using receiver_concept = execution::receiver_t;
-                state* state_;
                 auto get_env() const noexcept -> execution::env_of_t<Receiver> {
-                    return execution::get_env(this->state_->rcvr_);
+                    return execution::get_env(state_->rcvr_);
                 }
 
                 auto set_value() && noexcept -> void {
-                    this->state_->run_next();
+                    state_->run_next();
                 }
 
                 template<typename Error>
                 auto set_error(Error&& e) && noexcept -> void {
-                    execution::set_error(std::move(this->state_->rcvr_), std::forward<Error>(e));
+                    execution::set_error(std::move(state_->rcvr_), std::forward<Error>(e));
                 }
 
                 auto set_stopped() && noexcept -> void {
-                    execution::set_stopped(std::move(this->state_->rcvr_));
+                    execution::set_stopped(std::move(state_->rcvr_));
                 }
-            };
 
-            using operation_state_concept = execution::operation_state_t;
+                state* state_; // never null
+            };
             using upstream_state          = execution::connect_result_t<Upstream, receiver>;
             using body_state              = execution::connect_result_t<Body, receiver>;
+
             struct connector {
                 template<execution::sender Sndr, execution::receiver Rcvr>
-                connector(Sndr&& sndr, Rcvr&& rcvr)
-                    : state_(execution::connect(std::forward<Sndr>(sndr), std::forward<Rcvr>(rcvr))) {}
-                connector(connector&&) = delete;
+                connector(Sndr&& sndr, Rcvr&& rcvr) :
+                    state_(execution::connect(std::forward<Sndr>(sndr), std::forward<Rcvr>(rcvr))) {}
+
+                connector(const connector&) = delete;
+
+                auto operator= (const connector&) -> connector& = delete;
+
                 body_state state_;
             };
-
-            Body                     body_;
-            Predicate                pred_;
-            Receiver                 rcvr_;
-            upstream_state           upstream_;
-            std::optional<connector> body_state_{};
 
             template<execution::sender Up, execution::sender By, typename Pred, execution::receiver Rcvr>
             state(Up&& up, By&& by, Pred&& pred, Rcvr&& rcvr) noexcept
@@ -227,17 +257,24 @@ namespace coio {
             }
 
             auto run_next() & noexcept -> void {
-                this->body_state_.reset();
-                if (this->pred_()) {
-                    execution::set_value(std::move(this->rcvr_));
+                body_state_.reset();
+                if (pred_()) {
+                    execution::set_value(std::move(rcvr_));
                 }
                 else {
-                    this->body_state_.emplace(std::forward<Body>(this->body_), receiver{this});
-                    execution::start(this->body_state_->state_);
+                    body_state_.emplace(std::forward<Body>(body_), receiver{this});
+                    execution::start(body_state_->state_);
                 }
             }
+
+            Body body_;
+            Predicate pred_;
+            Receiver rcvr_;
+            upstream_state upstream_;
+            std::optional<connector> body_state_{};
         };
-        template<execution::sender Upstream, execution::sender Body, typename Predicate>
+
+        template<execution::sender Upstream, execution::sender Body, typename Pred>
         struct sender {
             using sender_concept = execution::sender_t;
             using completion_signatures = execution::completion_signatures<
@@ -247,26 +284,26 @@ namespace coio {
                 execution::set_stopped_t()
             >;
 
-            Upstream  upstream;
-            Body      body;
-            Predicate predicate;
-
             template<execution::receiver Receiver>
             auto connect(Receiver&& receiver) {
-                return state<Upstream, Body, Predicate, std::remove_cvref_t<Receiver>>{
-                    std::move(this->upstream),
-                    std::move(this->body),
-                    std::move(this->predicate),
+                return state<Upstream, Body, Pred, std::remove_cvref_t<Receiver>>{
+                    std::move(upstream),
+                    std::move(body),
+                    std::move(pred),
                     std::forward<Receiver>(receiver)
                 };
             }
+
+            Upstream upstream;
+            Body body;
+            Pred pred;
         };
 
     public:
-        template<execution::sender Upstream, execution::sender Body, std::predicate<> Predicate>
-        COIO_STATIC_CALL_OP auto operator()(Upstream&& upstream, Body&& body, Predicate&& predicate) COIO_STATIC_CALL_OP_CONST {
-            return sender<std::remove_cvref_t<Upstream>, std::remove_cvref_t<Body>, std::remove_cvref_t<Predicate>>{
-                std::forward<Upstream>(upstream), std::forward<Body>(body), std::forward<Predicate>(predicate)
+        template<execution::sender Upstream, execution::sender Body, typename Pred> requires std::invocable<Pred> and boolean_testable<std::invoke_result_t<Pred>>
+        COIO_STATIC_CALL_OP auto operator()(Upstream&& upstream, Body&& body, Pred&& pred) COIO_STATIC_CALL_OP_CONST {
+            return sender<std::remove_cvref_t<Upstream>, std::remove_cvref_t<Body>, std::remove_cvref_t<Pred>>{
+                std::forward<Upstream>(upstream), std::forward<Body>(body), std::forward<Pred>(pred)
             };
         }
     };
@@ -294,149 +331,183 @@ namespace coio {
         template<execution::sender...>
         struct sender;
         
-        template<execution::sender... Sender> requires(sizeof...(Sender) > 0)
-        auto operator()(Sender&&... sndr) const -> sender<Sender...> {
-            return {std::forward<Sender>(sndr)...};
-        }
-    };
-
-    template<typename Receiver>
-    struct when_any_t::state_base {
-        std::size_t                   total{};
-        Receiver                        receiver{};
-        std::atomic<std::size_t>    done_count{};
-        std::atomic<std::size_t>    ready_count{};
-        inplace_stop_source source{};
-
-        template<typename R>
-        state_base(std::size_t tot, R&& rcvr) : total(tot), receiver(std::forward<R>(rcvr)) {}
-        virtual ~state_base() = default;
-        auto complete() -> bool {
-            if (this->done_count++ == 0) {
-                this->source.request_stop();
-                return true;
-            }
-            return false;
-        }
-        auto virtual notify_done() -> void = 0;
-        auto ready() -> void {
-            if (++this->ready_count == this->total) {
-                this->notify_done();
-            }
-        }
-    };
-
-    template<execution::receiver Receiver, typename Value, typename Error>
-    struct when_any_t::state_value : when_any_t::state_base<Receiver> {
-        std::optional<Error> error{};
-        std::optional<Value> value{};
-
-        template<typename R>
-        state_value(std::size_t tot, R&& rcvr) : state_base<Receiver>{tot, std::forward<R>(rcvr)} {}
-
-        auto notify_done() -> void override {
-            if (this->error) {
-                execution::set_error(std::move(this->receiver), std::move(*this->error));
-            } else if (this->value) {
-                std::visit(
-                    [this](auto&& m) {
-                        (void)this;
-                        std::apply(
-                            [this](auto&&... a) { execution::set_value(std::move(this->receiver), std::move(a)...); },
-                            m);
-                    },
-                    *this->value);
-            }
-            else {
-                execution::set_stopped(std::move(this->receiver));
-            }
+        template<execution::sender... Sender> requires (sizeof...(Sender) > 0)
+        COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator()(Sender&&... sndr) COIO_STATIC_CALL_OP_CONST -> sender<Sender...> {
+            return {{std::forward<Sender>(sndr)...}};
         }
     };
 
     template<typename Receiver>
     struct when_any_t::env {
-        when_any_t::state_base<Receiver>* state;
-        auto query(const get_stop_token_t&) const noexcept -> inplace_stop_token {
+        COIO_ALWAYS_INLINE auto query(get_stop_token_t) const noexcept -> inplace_stop_token {
             return this->state->source.get_token();
         }
-        //-dk:TODO when_any_t::env: set up query forwarding
+
+        template<typename Prop, typename... Args>
+            requires std::default_initializable<Prop> and
+                (forwarding_query(Prop{})) and
+                std::invocable<Prop, execution::env_of_t<Receiver>, Args...>
+        COIO_ALWAYS_INLINE decltype(auto) query(const Prop& prop, Args&&... args) const noexcept {
+            return prop(execution::get_env(state->receiver), std::forward<Args>(args)...);
+        }
+
+        state_base<Receiver>* state;
     };
 
+    // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
+    template<typename Receiver>
+    struct when_any_t::state_base {
+        template<typename Rcvr>
+        state_base(std::size_t total, Rcvr&& rcvr) : total(total), receiver(std::forward<Rcvr>(rcvr)) {}
+
+        state_base(const state_base&) = delete;
+
+        ~state_base() = default;
+
+        auto operator= (const state_base&) -> state_base& = delete;
+
+        virtual auto finish() -> void = 0;
+
+        COIO_ALWAYS_INLINE auto report() -> bool {
+            if (done_count++ == 0) {
+                source.request_stop();
+                return true;
+            }
+            return false;
+        }
+
+        COIO_ALWAYS_INLINE auto arrive() -> void {
+            if (++this->ready_count == this->total) {
+                this->finish();
+            }
+        }
+
+        std::size_t total{};
+        Receiver receiver{};
+        std::atomic<std::size_t> done_count{};
+        std::atomic<std::size_t> ready_count{};
+        inplace_stop_source source{};
+    };
+
+    // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
+    template<execution::receiver Receiver, typename Value, typename Error>
+    struct when_any_t::state_value : state_base<Receiver> {
+        template<typename Rcvr>
+        state_value(std::size_t total, Rcvr&& rcvr) : state_base<Receiver>{total, std::forward<Rcvr>(rcvr)} {}
+
+        COIO_ALWAYS_INLINE auto finish() -> void override {
+            switch (result.index()) {
+            case 0: {
+                execution::set_stopped(std::move(this->receiver));
+                break;
+            }
+            case 1: {
+                std::visit([this](auto&& tpl) {
+                    std::apply(
+                        [this](auto&&... values) {
+                            execution::set_value(std::move(this->receiver), std::move(values)...);
+                        },
+                        tpl
+                    );
+                }, std::get<1>(result));
+                break;
+            }
+            case 2: {
+                execution::set_error(std::move(this->receiver), std::move(std::get<2>(result)));
+                break;
+            }
+            default: unreachable();
+            }
+        }
+
+        std::variant<std::monostate, Value, Error> result;
+    };
+
+    // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
     template<std::size_t, execution::receiver Receiver, typename Value, typename Error>
     struct when_any_t::receiver {
         using receiver_concept = execution::receiver_t;
-        when_any_t::state_value<Receiver, Value, Error>* state;
 
-        auto get_env() const noexcept -> env<Receiver> { return {this->state}; }
+        COIO_ALWAYS_INLINE auto get_env() const noexcept -> env<Receiver> {
+            return {state};
+        }
+
+        template<typename... Args>
+        COIO_ALWAYS_INLINE auto set_value(Args&&... args) && noexcept -> void {
+            if (state->report()) {
+                state->result.template emplace<1>(
+                    std::in_place_type<std::tuple<std::decay_t<Args>...>>,
+                    std::forward<Args>(args)...
+                );
+            }
+            state->arrive();
+        }
+
         template<typename E>
-        auto set_error(E&& error) && noexcept -> void {
-            if (this->state->complete()) {
-                this->state->error.emplace(std::forward<E>(error));
+        COIO_ALWAYS_INLINE auto set_error(E&& error) && noexcept -> void {
+            if (state->report()) {
+                state->result.template emplace<2>(std::forward<E>(error));
             }
-            this->state->ready();
+            state->arrive();
         }
-        auto set_stopped() && noexcept -> void {
-            this->state->complete();
-            this->state->ready();
+
+        COIO_ALWAYS_INLINE auto set_stopped() && noexcept -> void {
+            state->report();
+            state->arrive();
         }
-        template<typename... A>
-        auto set_value(A&&... a) && noexcept -> void {
-            if (this->state->complete()) {
-                this->state->value.emplace(
-                    Value(std::in_place_type_t<std::tuple<std::decay_t<A>...>>(), std::forward<A>(a)...));
-            }
-            this->state->ready();
-        }
+
+        state_value<Receiver, Value, Error>* state;
     };
 
+    // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
     template<std::size_t... I, execution::receiver Receiver, typename Value, typename Error, execution::sender... Sender>
-    struct when_any_t::state<std::index_sequence<I...>, Receiver, Value, Error, Sender...> : when_any_t::state_value<Receiver, Value, Error> {
+    struct when_any_t::state<std::index_sequence<I...>, Receiver, Value, Error, Sender...> : state_value<Receiver, Value, Error> {
         using operation_state_concept = execution::operation_state_t;
-        using base = when_any_t::state_value<Receiver, Value, Error>;
+        using base = state_value<Receiver, Value, Error>;
         using value_type = Value;
         using error_type = Error;
         template<std::size_t J>
-        using receiver_at = when_any_t::receiver<J, Receiver, value_type, error_type>;
+        using receiver_at = receiver<J, Receiver, value_type, error_type>;
         using states_type = std::tuple<decltype(execution::connect(std::declval<Sender>(), std::declval<receiver_at<I>>()))...>;
 
-        template<typename R, typename P>
-        state(R&& rcvr, P&& s) :
-            base(sizeof...(Sender), std::forward<R>(rcvr)),
-            states{execution::connect(coio::forward_like<P>(std::get<I>(s)), receiver_at<I>{this})...} {}
+        template<typename Rcvr, typename Sndrs>
+        state(Rcvr&& rcvr, Sndrs&& when_any_sndrs) :
+            base(sizeof...(Sender), std::forward<Rcvr>(rcvr)),
+            states{
+                detail::elide{
+                    execution::connect,
+                    std::get<I>(std::forward<Sndrs>(when_any_sndrs)),
+                    receiver_at<I>{this}
+                }...
+            } {}
 
         state(state&&) = delete;
 
-        auto start() & noexcept -> void {
+        COIO_ALWAYS_INLINE auto start() & noexcept -> void {
             (..., execution::start(std::get<I>(this->states)));
         }
 
         states_type states;
     };
 
-    // template<execution::sender... Sender>
-    // struct when_any_t::sender {
-    //     using sender_concept = execution::sender_t;
-    //     using tlist = type_list<execution::completion_signatures_of_t<Sender>...>;
-    //     using completion_signatures = // TODO: extract from tlist;
-    //
-    //     template<execution::receiver Receiver>
-    //     auto connect(Receiver&& receiver) && -> state<
-    //         std::index_sequence_for<Sender...>,
-    //         std::remove_cvref_t<Receiver>,
-    //         detail::variant_from_list_t<
-    //             execution::detail::transform<detail::decayed_set_value_t,
-    //                                   detail::make_type_list_t<execution::detail::filter<
-    //                                       detail::is_set_value,
-    //                                       decltype(execution::get_completion_signatures(*this, execution::get_env(receiver)))>>>>,
-    //         detail::variant_from_list_t<
-    //             execution::detail::filter<detail::is_set_error,
-    //                                decltype(execution::get_completion_signatures(*this, execution::get_env(receiver)))>>,
-    //         Sender...> {
-    //         return {std::forward<Receiver>(receiver), std::move(this->senders)};
-    //     }
-    //
-    //     std::tuple<std::remove_cvref_t<Sender>...> senders;
-    // };
+    template<execution::sender... Sender>
+    struct when_any_t::sender {
+        using sender_concept = execution::sender_t;
+        using completion_signatures = detail::merge_completion_signatures_t<execution::completion_signatures_of_t<Sender>...>;
+
+        template<execution::receiver Receiver>
+        COIO_ALWAYS_INLINE auto connect(Receiver&& receiver) && -> state<
+            std::index_sequence_for<Sender...>,
+            std::remove_cvref_t<Receiver>,
+            execution::value_types_of_t<sender, execution::env_of_t<Receiver>>,
+            execution::error_types_of_t<sender, execution::env_of_t<Receiver>>,
+            Sender...
+        > {
+            return {std::forward<Receiver>(receiver), std::move(senders)};
+        }
+
+        std::tuple<std::remove_cvref_t<Sender>...> senders;
+    };
 
 
     using execution::just;
@@ -451,13 +522,13 @@ namespace coio {
     using execution::let_error;
     using execution::let_stopped;
 
-    using execution::when_all;
-
     using execution::schedule;
     using execution::continues_on;
     using execution::starts_on;
     using execution::on;
 
-    inline constexpr repeat_effect_until_t repeat_effect_until{};
+    using execution::when_all;
+
     inline constexpr when_any_t when_any{};
+    inline constexpr repeat_effect_until_t repeat_effect_until{};
 }

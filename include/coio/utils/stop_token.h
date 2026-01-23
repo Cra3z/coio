@@ -289,12 +289,14 @@ namespace coio {
             callback_type(union_stop_token token, Initializer&& init) :
                 cb_(std::forward<Initializer>(init)),
                 inners_{[&]<std::size_t... I>(std::index_sequence<I...>) {
-                    return tpl{(detail::elide{
-                        [&]<typename TokenI>(TokenI tok_i) {
-                            return stop_callback_for_t<TokenI, cbref>(tok_i, cb_);
-                        },
-                        std::get<I>(token.tokens_)
-                    }, ...)};
+                    return tpl{
+                        detail::elide{
+                            [&]<typename TokenI>(TokenI tok_i) {
+                                return stop_callback_for_t<TokenI, cbref>(tok_i, cb_);
+                            },
+                            std::get<I>(token.tokens_)
+                        }...
+                    };
                 }(std::index_sequence_for<StopTokens...>{})} {}
 
             callback_type(const callback_type&) = delete;

@@ -1,7 +1,6 @@
 #pragma once
 #include <utility>
 #include "../detail/config.h"
-#include "../detail/concepts.h" // IWYU pragma: keep
 #include "type_traits.h" // IWYU pragma: keep
 
 namespace coio {
@@ -38,9 +37,8 @@ namespace coio {
 #else
     template<typename T, typename U>
     COIO_ALWAYS_INLINE constexpr auto&& forward_like(U&& x) noexcept {
-        constexpr bool add_const = std::is_const_v<std::remove_reference_t<T>>;
         if constexpr (std::is_lvalue_reference_v<T>) {
-            if constexpr (add_const) {
+            if constexpr (std::is_const_v<std::remove_reference_t<T>>) {
                 return std::as_const(x);
             }
             else {
@@ -48,11 +46,11 @@ namespace coio {
             }
         }
         else {
-            if constexpr (add_const) {
+            if constexpr (std::is_const_v<std::remove_reference_t<T>>) {
                 return std::move(std::as_const(x));
             }
             else {
-                return std::move(x);
+                return std::move(x); // NOLINT(bugprone-move-forwarding-reference)
             }
         }
     }

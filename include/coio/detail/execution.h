@@ -193,5 +193,19 @@ namespace coio {
 
     namespace detail {
         struct io_scheduler_t : execution::scheduler_t {};
+
+        template<typename>
+        struct is_set_value : std::false_type {};
+
+        template<typename... Args>
+        struct is_set_value<execution::set_value_t(Args...)> : std::true_type {};
+
+        template<typename>
+        struct is_set_error : std::false_type {};
+
+        template<typename E>
+        struct is_set_error<execution::set_error_t(E)> : std::true_type {};
+
+
     }
 }
