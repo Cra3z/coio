@@ -2,7 +2,7 @@
 #include <coio/generator.h>
 #include "common.h"
 
-auto fibonacci(std::size_t n) ->coio::generator<int> {
+auto fibonacci(std::size_t n) -> coio::generator<int> {
     int a = 0, b = 1;
     while (n--) {
         co_yield b;
@@ -10,13 +10,59 @@ auto fibonacci(std::size_t n) ->coio::generator<int> {
     }
 }
 
-auto pmr_fibonacci(std::allocator_arg_t, std::pmr::polymorphic_allocator<>, std::size_t n) ->coio::generator<int, void, std::pmr::polymorphic_allocator<>> {
-    co_yield coio::elements_of{fibonacci(n)};
+auto iota(int n) -> coio::generator<int> {
+    for (int i = 0; i < n; ++i) co_yield i;
 }
 
-auto main() ->int {
-    std::pmr::monotonic_buffer_resource mem;
-    for (auto i : pmr_fibonacci(std::allocator_arg, &mem, 10)) {
-        ::println("{}", i);
+template<typename T>
+struct Node {
+    auto traverse_inorder() const -> coio::generator<const T&> {
+        if (left) {
+            co_yield coio::elements_of{left->traverse_inorder()};
+        }
+
+        co_yield value;
+
+        if (right) {
+            co_yield coio::elements_of{right->traverse_inorder()};
+        }
     }
+
+    T value;
+    Node *left{}, *right{};
+};
+
+auto main() -> int {
+    for (const auto& n : fibonacci(10)) {
+        ::println("{}", n);
+    }
+
+    ::println("=========");
+
+    for (const auto& n : iota(10) |
+        std::views::filter([](int i) noexcept { return i % 2 == 0; }) |
+        std::views::transform([](int i) noexcept { return i * i; })
+    ) {
+        ::println("{}", n);
+    }
+
+    ::println("=========");
+
+    std::array<Node<char>, 7> tree;
+    tree = {
+                        Node{'D', &tree[1], &tree[2]},
+//                            │
+//            ┌───────────────┴────────────────┐
+//            │                                │
+        Node{'B', &tree[3], &tree[4]},   Node{'F', &tree[5], &tree[6]},
+//            │                                │
+//    ┌───────┴─────────────┐          ┌───────┴──────────┐
+//    │                     │          │                  │
+Node{'A'},            Node{'C'}, Node{'E'},         Node{'G'}
+    };
+
+    for (char x : tree[0].traverse_inorder()) {
+        std::cout << x << ' ';
+    }
+    std::cout << '\n';
 }

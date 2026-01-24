@@ -86,6 +86,7 @@ namespace coio {
         using detail::execution_impl::sender_to;
         using detail::execution_impl::dependent_sender;
         using detail::execution_impl::enable_sender;
+        using detail::execution_impl::sends_stopped;
 
         using detail::execution_impl::receiver_t;
         using detail::execution_impl::receiver;
@@ -122,7 +123,6 @@ namespace coio {
         using detail::execution_impl::tag_of_t;
         using detail::execution_impl::write_env;
         using detail::execution_impl::read_env;
-        using detail::execution_impl::sends_stopped;
 
         using detail::execution_impl::default_domain;
         using detail::execution_impl::apply_sender_t;
@@ -206,6 +206,16 @@ namespace coio {
         template<typename E>
         struct is_set_error<execution::set_error_t(E)> : std::true_type {};
 
+        template<typename T>
+        using is_set_stop = std::is_same<T, execution::set_stopped_t()>;
 
+        template<typename T>
+        inline constexpr bool is_set_value_v = is_set_value<T>::value;
+
+        template<typename T>
+        inline constexpr bool is_set_error_v = is_set_error<T>::value;
+
+        template<typename T>
+        inline constexpr bool is_set_stopped_v = is_set_stop<T>::value;
     }
 }
