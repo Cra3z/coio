@@ -1,3 +1,4 @@
+// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
 #pragma once
 #include <atomic>
 #include <chrono>
@@ -12,7 +13,6 @@
 #include <vector>
 #include "detail/execution.h"
 #include "detail/op_queue.h"
-#include "detail/unhandled_stopped.h"
 #include "utils/stop_token.h"
 
 namespace coio {
@@ -49,6 +49,9 @@ namespace coio {
                 friend Ctx;
                 friend run_loop_base;
             public:
+                using operation_state_concept = execution::operation_state_t;
+
+            public:
                 operation_base(Ctx& context) noexcept : context_(context) {
                     ++context.work_count_;
                 }
@@ -61,20 +64,16 @@ namespace coio {
 
                 auto operator= (const operation_base&) -> operation_base& = delete;
 
+                virtual auto finish() -> void = 0;
+
             protected:
                 Ctx& context_;
-                std::coroutine_handle<> coro_;
-                unhandled_stopped_fn unhandled_stopped_ = &default_unhandled_stopped_;
                 operation_base* next_{};
             };
 
             struct env {
                 auto query(execution::get_completion_scheduler_t<execution::set_value_t>) const noexcept {
                     return ctx_.get_scheduler();
-                }
-
-                auto query(get_stop_token_t) const noexcept -> std::stop_token {
-                    return ctx_.get_stop_token();
                 }
 
                 auto query(get_allocator_t) const noexcept -> std::pmr::polymorphic_allocator<> {
@@ -87,26 +86,42 @@ namespace coio {
             class schedule_sender {
                 friend Ctx;
             private:
-                struct op : operation_base {
-                    using operation_base::operation_base;
+                template<typename Receiver>
+                struct op_state : operation_base {
+                public:
+                    op_state(Ctx& context, Receiver rcvr) noexcept : operation_base(context), rcvr_(std::move(rcvr)) {}
 
-                    static auto await_ready() noexcept -> bool {
-                        return false;
-                    }
-
-                    template<typename Promise>
-                    auto await_suspend(std::coroutine_handle<Promise> this_coro) -> void {
-                        this->coro_ = this_coro;
-                        if constexpr (stoppable_promise<Promise>) {
-                            this->unhandled_stopped_ = &stop_coroutine<Promise>;
+                    COIO_ALWAYS_INLINE auto start() & noexcept -> void try {
+                        if (coio::get_stop_token(execution::env(rcvr_)).stop_requested()) {
+                            execution::set_stopped(std::move(rcvr_));
+                            return;
                         }
-                        this->next_ = nullptr;
                         this->context_.op_queue_.enqueue(*this);
                         this->context_.interrupt();
                     }
+                    catch (...) {
+                        execution::set_error(std::move(rcvr_), std::current_exception());
+                    }
 
-                    static auto await_resume() noexcept -> void {}
+                    auto finish() -> void override {
+                        if (coio::get_stop_token(execution::env(rcvr_)).stop_requested()) {
+                            execution::set_stopped(std::move(rcvr_));
+                            return;
+                        }
+                        execution::set_value(std::move(rcvr_));
+                    }
+
+                private:
+                    Receiver rcvr_;
                 };
+
+            public:
+                using sender_concept = execution::sender_t;
+                using completion_signatures = execution::completion_signatures<
+                    execution::set_value_t(),
+                    execution::set_error_t(std::exception_ptr),
+                    execution::set_stopped_t()
+                >;
 
             public:
                 explicit schedule_sender(Ctx& context) noexcept : ctx_(&context) {}
@@ -115,8 +130,10 @@ namespace coio {
                     return env{*ctx_};
                 }
 
-                COIO_ALWAYS_INLINE auto operator co_await() const noexcept {
-                    return op{*ctx_};
+                template<execution::receiver_of<completion_signatures> Receiver>
+                COIO_ALWAYS_INLINE auto connect(Receiver rcvr) && noexcept {
+                    COIO_ASSERT(ctx_ != nullptr);
+                    return op_state{*std::exchange(ctx_, {}), std::move(rcvr)};
                 }
 
             private:
@@ -126,34 +143,36 @@ namespace coio {
             class sleep_sender {
                 friend Ctx;
             public:
+                using sender_concept = execution::sender_t;
+                using completion_signatures = execution::completion_signatures<
+                    execution::set_value_t(),
+                    execution::set_error_t(std::exception_ptr),
+                    execution::set_stopped_t()
+                >;
                 using clock_type = std::chrono::steady_clock;
                 using duration_type = clock_type::duration;
                 using time_point_type = clock_type::time_point;
 
-                struct op : operation_base {
-                    friend sleep_sender;
-                private:
-                    op(Ctx& context, time_point_type deadline) noexcept:
-                        operation_base(context), deadline(deadline) {}
-
-                public:
-                    static auto await_ready() noexcept -> bool {
-                        return false;
-                    }
-
-                    template<typename Promise>
-                    auto await_suspend(std::coroutine_handle<Promise> this_coro) -> void {
-                        this->coro_ = this_coro;
-                        if constexpr (stoppable_promise<Promise>) {
-                            this->unhandled_stopped_ = &stop_coroutine<Promise>;
-                        }
-                        this->context_.timer_queue_.add(*this);
-                        if (deadline < this->context_.timer_queue_.earliest()) this->context_.interrupt();
-                    }
-
-                    static auto await_resume() noexcept -> void {}
+                struct op_state_base : operation_base {
+                    op_state_base(Ctx& context, time_point_type deadline) noexcept: operation_base(context), deadline(deadline) {}
 
                     time_point_type deadline;
+                };
+
+                template<typename Receiver>
+                struct op_state : op_state_base {
+                public:
+                    op_state(Ctx& context, time_point_type deadline, Receiver rcvr) noexcept:
+                        op_state_base(context, deadline), rcvr(std::move(rcvr)) {}
+
+                    COIO_ALWAYS_INLINE auto start() & noexcept -> void try {
+                        if (this->context_.timer_queue_.add(*this)) this->context_.interrupt();
+                    }
+                    catch (...) {
+                        execution::set_error(std::move(rcvr), std::current_exception());
+                    }
+
+                    Receiver rcvr;
                 };
 
             public:
@@ -177,9 +196,10 @@ namespace coio {
                     return env{*ctx_};
                 }
 
-                COIO_ALWAYS_INLINE auto operator co_await() && noexcept {
+                template<execution::receiver_of<completion_signatures> Receiver>
+                COIO_ALWAYS_INLINE auto connect(Receiver rcvr) && noexcept {
                     COIO_ASSERT(ctx_ != nullptr);
-                    return op{*std::exchange(ctx_, {}), std::exchange(deadline_, {})};
+                    return op_state{*std::exchange(ctx_, {}), std::exchange(deadline_, {}), std::move(rcvr)};
                 }
 
             private:
@@ -189,6 +209,9 @@ namespace coio {
 
         private:
             class scheduler_base {
+            public:
+                using scheduler_concept = execution::scheduler_t;
+
             public:
                 explicit scheduler_base(Ctx& ctx) noexcept : ctx_(&ctx) {}
 
@@ -231,7 +254,7 @@ namespace coio {
                 Ctx* ctx_;
             };
 
-            using timer_queue = detail::timer_queue<typename sleep_sender::op, [](const typename sleep_sender::op& op) noexcept {
+            using timer_queue = detail::timer_queue<typename sleep_sender::op_state_base, [](const typename sleep_sender::op_state_base& op) noexcept {
                 return op.deadline;
             }, std::pmr::polymorphic_allocator<>>;
 
@@ -366,7 +389,6 @@ namespace coio {
         friend run_loop_base;
     public:
         struct scheduler : scheduler_base {
-            using scheduler_concept = execution::scheduler_t;
             using scheduler_base::scheduler_base;
         };
 
@@ -380,7 +402,7 @@ namespace coio {
             while (not stop_requested()) {
                 timer_queue_.take_ready_timers(op_queue_);
                 if (const auto op = op_queue_.try_dequeue()) {
-                    op->coro_.resume();
+                    op->finish();
                     return true;
                 }
                 if (not infinite) break;

@@ -179,15 +179,19 @@ namespace coio {
         async_scope() noexcept : retain_base(1) {}
 
         template<awaitable_value Awaitable>
-        auto spawn(Awaitable awt) -> void {
+        COIO_ALWAYS_INLINE auto spawn(Awaitable awt) -> void {
             [](Awaitable spawned, retain_ptr<async_scope>) -> detail::fire_and_forget {
                 void(co_await std::move(spawned));
             }(std::move(awt), retain_ptr{this});
         }
 
         [[nodiscard]]
-        auto join() noexcept -> join_sender {
+        COIO_ALWAYS_INLINE auto join() noexcept -> join_sender {
             return join_sender{*this};
+        }
+
+        COIO_ALWAYS_INLINE auto request_stop() -> void {
+            void(stop_source_.request_stop());
         }
 
     private:
@@ -201,6 +205,7 @@ namespace coio {
         }
 
     private:
+        inplace_stop_source stop_source_;
         detail::intrusive_stack<join_sender::awaiter> list_{&join_sender::awaiter::next_};
     };
     

@@ -96,9 +96,11 @@ namespace coio::detail {
         auto operator= (const timer_queue&) -> timer_queue& = delete;
 
         auto add(reference op) -> void {
+            const auto deadline = std::invoke(Proj, op);
             std::scoped_lock _{mtx_};
             underlying_.emplace_back(op);
             std::ranges::push_heap(underlying_, std::ranges::greater{}, Proj);
+            return deadline <= std::invoke(Proj, underlying_.front());
         }
 
         auto remove(reference op) -> bool {
