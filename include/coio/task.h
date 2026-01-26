@@ -205,12 +205,6 @@ namespace coio {
 
         template<typename T>
         struct task_promise_return : task_promise_base<T> {
-            using completion_signatures = execution::completion_signatures<
-                execution::set_value_t(T),
-                execution::set_error_t(std::exception_ptr),
-                execution::set_stopped_t()
-            >;
-
             COIO_ALWAYS_INLINE auto return_value(auto&& init) -> void {
                 this->state_->dispose_with_value(std::forward<decltype(init)>(init));
             }
@@ -218,12 +212,6 @@ namespace coio {
 
         template<>
         struct task_promise_return<void> : task_promise_base<void> {
-            using completion_signatures = execution::completion_signatures<
-                execution::set_value_t(),
-                execution::set_error_t(std::exception_ptr),
-                execution::set_stopped_t()
-            >;
-
             COIO_ALWAYS_INLINE auto return_void() -> void {
                 this->state_->dispose_with_value();
             }
@@ -274,7 +262,11 @@ namespace coio {
     public:
         using promise_type = detail::task_promise<task, T, Alloc>;
         using sender_concept = execution::sender_t;
-        using completion_signatures = promise_type::completion_signatures;
+        using completion_signatures =execution::completion_signatures<
+            detail::set_value_t<T>,
+            execution::set_error_t(std::exception_ptr),
+            execution::set_stopped_t()
+        >;;
 
     private:
         task(std::coroutine_handle<promise_type> coro) noexcept : coro_{coro} {}

@@ -1,8 +1,10 @@
+// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include "task.h"
 #include "execution_context.h"
 #include "detail/execution.h"
 #include "detail/intrusive_stack.h"
+#include "detail/manual_lifetime.h"
 #include "detail/unhandled_stopped.h"
 #include "utils/retain_ptr.h"
 
@@ -12,8 +14,8 @@ namespace coio {
     template<typename Scheduler>
     concept timed_scheduler = scheduler<Scheduler> and requires (Scheduler&& sch) {
         { static_cast<Scheduler&&>(sch).now() } -> specialization_of<std::chrono::time_point>;
-        { static_cast<Scheduler&&>(sch).schedule_after(static_cast<Scheduler&&>(sch).now().time_since_epoch()) } -> awaitable_value;
-        { static_cast<Scheduler&&>(sch).schedule_at(static_cast<Scheduler&&>(sch).now()) } -> awaitable_value;
+        { static_cast<Scheduler&&>(sch).schedule_after(static_cast<Scheduler&&>(sch).now().time_since_epoch()) } -> execution::sender;
+        { static_cast<Scheduler&&>(sch).schedule_at(static_cast<Scheduler&&>(sch).now()) } -> execution::sender;
     };
 
     struct get_io_service_t : forwarding_query_t {
@@ -53,7 +55,7 @@ namespace coio {
         using merge_completion_signatures_t = typename merge_compl_sigs_helper<type_list<>, CompletionSigs...>::type;
 
         struct fire_and_forget {
-            class promise_type {
+            class promise_type : public promise_alloc_control<void> {
             private:
                 template<typename Awaiter>
                 struct awaiter_wrapper {
@@ -72,15 +74,15 @@ namespace coio {
                     }
 
                     Awaiter inner_;
-                    bool& stopped_;
+                    bool& stopped_; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
                 };
 
             public:
                 promise_type() = default;
 
-                template<awaitable Awaitable>
-                auto await_transform(Awaitable&& awt) noexcept {
-                    return awaiter_wrapper{get_awaiter(std::forward<Awaitable>(awt)), stopped_ = false};
+                template<execution::sender Sndr>
+                auto await_transform(Sndr&& sndr) noexcept {
+                    return awaiter_wrapper{get_awaiter(execution::as_awaitable(std::forward<Sndr>(sndr))), stopped_ = false};
                 }
 
                 static auto get_return_object() noexcept -> fire_and_forget {
@@ -106,109 +108,13 @@ namespace coio {
                     stopped_ = true;
                     return std::coroutine_handle<promise_type>::from_promise(*this);
                 }
+
             private:
                 bool stopped_ = false;
             };
         };
     }
 
-    class async_scope : retain_base<async_scope> {
-        friend retain_base;
-        friend retain_ptr<async_scope>;
-    public:
-        class join_sender {
-            friend async_scope;
-        private:
-            class awaiter {
-                friend join_sender;
-                friend async_scope;
-            public:
-                awaiter(async_scope& scope) noexcept : scope_(scope) {}
-
-                awaiter(const awaiter&) = delete;
-
-                auto operator= (const awaiter&) -> awaiter& = delete;
-
-                auto await_ready() noexcept -> bool {
-                    return scope_.ref_count_.load(std::memory_order_acquire) == 0;
-                }
-
-                template<typename Promise>
-                auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
-                    coro_ = this_coro;
-                    scope_.list_.push(*this);
-                    if constexpr (stoppable_promise<Promise>) {
-                        stopped_callback_ = &detail::stop_coroutine<Promise>;
-                    }
-                    return scope_.ref_count_.fetch_sub(1, std::memory_order_acq_rel) > 1;
-                }
-
-                static auto await_resume() noexcept -> void {}
-
-            private:
-                async_scope& scope_;
-                std::coroutine_handle<> coro_;
-                detail::unhandled_stopped_fn stopped_callback_ = &detail::default_unhandled_stopped_;
-                awaiter* next_ = nullptr;
-            };
-
-        private:
-            join_sender(async_scope& scope) noexcept : scope_(&scope) {}
-
-        public:
-            join_sender(const join_sender&) = delete;
-
-            join_sender(join_sender&& other) noexcept : scope_(std::exchange(other.scope_, {})) {};
-
-            auto operator= (const join_sender&) -> join_sender& = delete;
-
-            auto operator= (join_sender&& other) noexcept -> join_sender& {
-                scope_ = std::exchange(other.scope_, {});
-                return *this;
-            }
-
-            auto operator co_await() && noexcept -> awaiter {
-                return awaiter{*std::exchange(scope_, nullptr)};
-            }
-
-        private:
-            async_scope* scope_;
-        };
-
-    public:
-        async_scope() noexcept : retain_base(1) {}
-
-        template<awaitable_value Awaitable>
-        COIO_ALWAYS_INLINE auto spawn(Awaitable awt) -> void {
-            [](Awaitable spawned, retain_ptr<async_scope>) -> detail::fire_and_forget {
-                void(co_await std::move(spawned));
-            }(std::move(awt), retain_ptr{this});
-        }
-
-        [[nodiscard]]
-        COIO_ALWAYS_INLINE auto join() noexcept -> join_sender {
-            return join_sender{*this};
-        }
-
-        COIO_ALWAYS_INLINE auto request_stop() -> void {
-            void(stop_source_.request_stop());
-        }
-
-    private:
-        auto do_lose() noexcept -> void {
-            auto node = list_.pop_all();
-            while (node) {
-                auto next = node->next_;
-                node->coro_.resume();
-                node = next;
-            }
-        }
-
-    private:
-        inplace_stop_source stop_source_;
-        detail::intrusive_stack<join_sender::awaiter> list_{&join_sender::awaiter::next_};
-    };
-    
     struct repeat_effect_until_t : execution::sender_adaptor_closure<repeat_effect_until_t> {
     private:
         template<execution::sender Upstream, execution::sender Body, typename Predicate, execution::receiver Receiver>
@@ -515,6 +421,109 @@ namespace coio {
     };
 
 
+    struct stop_when_t {
+        template<execution::sender Sndr, stoppable_token StopToken>
+        struct sender {
+            using sender_concept = execution::sender_t;
+
+            template<execution::receiver Rcvr>
+            struct state {
+                using operation_state_concept = execution::operation_state_t;
+                using first_stop_token_t = StopToken;
+                using second_stop_token_t = stop_token_of_t<execution::env_of_t<Rcvr>>;
+                using stop_cb_t = decltype(std::bind_front(&inplace_stop_source::request_stop, std::declval<inplace_stop_source*>()));
+
+                struct env {
+                    COIO_ALWAYS_INLINE auto query(get_stop_token_t) const noexcept {
+                        return st->source.get_token();
+                    }
+
+                    template<typename Prop, typename... Args>
+                        requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
+                            and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
+                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
+                        return prop(execution::get_env(st->rcvr), std::forward<Args>(args)...);
+                    }
+
+                    state* st;
+                };
+
+                struct receiver {
+                    using receiver_concept = execution::receiver_t;
+
+                    COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
+                        return env{st};
+                    }
+
+                    template<typename... Args>
+                    COIO_ALWAYS_INLINE auto set_value(Args&&... args) const noexcept -> void {
+                        execution::set_value(std::move(st->rcvr), std::forward<Args>(args)...);
+                    }
+
+                    template<typename E>
+                    COIO_ALWAYS_INLINE auto set_error(E&& e) const noexcept -> void {
+                        execution::set_error(std::move(st->rcvr), std::forward<E>(e));
+                    }
+
+                    COIO_ALWAYS_INLINE auto set_stopped() const noexcept -> void {
+                        execution::set_stopped(std::move(st->rcvr));
+                    }
+
+                    state* st;
+                };
+
+                using inner_state_t = execution::connect_result_t<Sndr, receiver>;
+
+                state(Sndr sndr, StopToken stop_token, Rcvr rcvr) :
+                    rcvr{std::move(rcvr)},
+                    first_stop_token(std::move(stop_token)),
+                    inner_state(execution::connect(std::move(sndr), receiver{this})) {}
+
+                COIO_ALWAYS_INLINE auto start() & noexcept -> void {
+                    auto stop_cb = std::bind_front(&inplace_stop_source::request_stop, &source);
+                    first_stop_cb.construct(first_stop_token, stop_cb);
+                    second_stop_cb.construct(get_stop_token(execution::get_env(rcvr)), stop_cb);
+                    execution::start(inner_state);
+                }
+
+                ~state() {
+                    second_stop_cb.destroy();
+                    first_stop_cb.destroy();
+                }
+
+                Rcvr rcvr;
+                inplace_stop_source source{};
+                first_stop_token_t first_stop_token;
+                detail::manual_lifetime<stop_callback_for_t<first_stop_token_t, stop_cb_t>> first_stop_cb;
+                detail::manual_lifetime<stop_callback_for_t<second_stop_token_t, stop_cb_t>> second_stop_cb;
+                inner_state_t inner_state;
+            };
+
+            template<typename E>
+            COIO_ALWAYS_INLINE auto get_completion_signatures(const E& e) const noexcept {
+                return execution::get_completion_signatures(sndr, e);
+            }
+
+            template<execution::receiver Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && -> state<Rcvr> {
+                return state<Rcvr>{std::move(sndr), std::move(stop_token), std::move(rcvr)};
+            }
+
+            StopToken stop_token;
+            Sndr sndr;
+        };
+
+        template<execution::sender Sndr, stoppable_token StopToken>
+        COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator()(Sndr sndr, StopToken stop_token) COIO_STATIC_CALL_OP_CONST noexcept  {
+            if constexpr (unstoppable_token<StopToken>) {
+                return std::move(sndr);
+            }
+            else {
+                return sender<Sndr, StopToken>{std::move(stop_token), std::move(sndr)};
+            }
+        }
+    };
+
     using execution::just;
     using execution::just_error;
     using execution::just_stopped;
@@ -536,4 +545,104 @@ namespace coio {
 
     inline constexpr when_any_t when_any{};
     inline constexpr repeat_effect_until_t repeat_effect_until{};
+    inline constexpr stop_when_t stop_when{};
+
+
+    class async_scope : retain_base<async_scope> {
+        friend retain_base;
+        friend retain_ptr<async_scope>;
+    public:
+        class join_sender {
+            friend async_scope;
+        private:
+            class awaiter {
+                friend join_sender;
+                friend async_scope;
+            public:
+                awaiter(async_scope& scope) noexcept : scope_(scope) {}
+
+                awaiter(const awaiter&) = delete;
+
+                auto operator= (const awaiter&) -> awaiter& = delete;
+
+                auto await_ready() noexcept -> bool {
+                    return scope_.ref_count_.load(std::memory_order_acquire) == 0;
+                }
+
+                template<typename Promise>
+                auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
+                    coro_ = this_coro;
+                    scope_.list_.push(*this);
+                    if constexpr (stoppable_promise<Promise>) {
+                        stopped_callback_ = &detail::stop_coroutine<Promise>;
+                    }
+                    return scope_.ref_count_.fetch_sub(1, std::memory_order_acq_rel) > 1;
+                }
+
+                static auto await_resume() noexcept -> void {}
+
+            private:
+                async_scope& scope_;
+                std::coroutine_handle<> coro_;
+                detail::unhandled_stopped_fn stopped_callback_ = &detail::default_unhandled_stopped_;
+                awaiter* next_ = nullptr;
+            };
+
+        private:
+            join_sender(async_scope& scope) noexcept : scope_(&scope) {}
+
+        public:
+            join_sender(const join_sender&) = delete;
+
+            join_sender(join_sender&& other) noexcept : scope_(std::exchange(other.scope_, {})) {};
+
+            auto operator= (const join_sender&) -> join_sender& = delete;
+
+            auto operator= (join_sender&& other) noexcept -> join_sender& {
+                scope_ = std::exchange(other.scope_, {});
+                return *this;
+            }
+
+            auto operator co_await() && noexcept -> awaiter {
+                return awaiter{*std::exchange(scope_, nullptr)};
+            }
+
+        private:
+            async_scope* scope_;
+        };
+
+    public:
+        async_scope() noexcept : retain_base(1) {}
+
+        template<execution::sender Sndr>
+        COIO_ALWAYS_INLINE auto spawn(Sndr sndr) -> void {
+            auto allocator = get_allocator(execution::get_env(sndr));
+            [](std::allocator_arg_t, auto, auto spawned, retain_ptr<async_scope>) -> detail::fire_and_forget {
+                void(co_await std::move(spawned));
+            }(std::allocator_arg, allocator, stop_when(std::move(sndr), stop_source_.get_token()), retain_ptr{this});
+        }
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto join() noexcept -> join_sender {
+            return join_sender{*this};
+        }
+
+        COIO_ALWAYS_INLINE auto request_stop() -> void {
+            void(stop_source_.request_stop());
+        }
+
+    private:
+        auto do_lose() noexcept -> void {
+            auto node = list_.pop_all();
+            while (node) {
+                auto next = node->next_;
+                node->coro_.resume();
+                node = next;
+            }
+        }
+
+    private:
+        inplace_stop_source stop_source_;
+        detail::intrusive_stack<join_sender::awaiter> list_{&join_sender::awaiter::next_};
+    };
 }

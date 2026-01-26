@@ -1,43 +1,67 @@
 #pragma once
-#include <exception>
 #include <type_traits>
 #include <variant>
-#include "config.h"
+#include "execution.h"
+#include "coio/utils/utility.h"
 
 namespace coio::detail {
-    template<typename T>
+    template<typename T, typename E>
     class async_result {
+    public:
+        using receiver_concept = execution::receiver_t;
+        using value_type = T;
+        using error_type = E;
+        using completion_signaturs = execution::completion_signatures<
+            detail::set_value_t<value_type>,
+            execution::set_error_t(error_type),
+            execution::set_stopped_t()
+        >;
+
     public:
         async_result() = default;
 
         template<typename... Args> requires (std::is_void_v<T> and sizeof...(Args) == 0) or (std::constructible_from<T, Args...>)
-        auto value(Args&&... args) noexcept(std::is_nothrow_move_assignable_v<T>) {
+        auto set_value(Args&&... args) noexcept(std::is_nothrow_move_assignable_v<T>) {
             result_.template emplace<1>(std::forward<Args>(args)...);
         }
 
-        auto error(std::error_code ec) noexcept -> void {
-            COIO_ASSERT(ec);
-            result_.template emplace<2>(std::move(ec));
+        auto set_error(error_type e) noexcept -> void {
+            result_.template emplace<2>(std::move(e));
         }
 
-        auto ready() const noexcept -> bool {
-            return result_.index() > 0;
+        auto set_stopped() noexcept -> void {
+            result_.template emplace<0>();
         }
 
-        [[nodiscard]]
-        auto get(const char* error_message) -> T {
-            COIO_ASSERT(result_.index() != 0);
-            if (result_.index() == 1) {
-                return T(*std::get_if<1>(&result_));
+        template<execution::receiver_of<completion_signaturs> Rcvr>
+        auto forward_to(Rcvr&& rcvr) noexcept -> void {
+            switch (result_.index()) {
+            case 0: {
+                execution::set_stopped(std::forward<Rcvr>(rcvr));
+                break;
             }
-            throw std::system_error{*std::get_if<2>(&result_), error_message};
+            case 1: {
+                if constexpr (std::is_void_v<T>) {
+                    execution::set_value(std::forward<Rcvr>(rcvr));
+                }
+                else {
+                    execution::set_value(std::forward<Rcvr>(rcvr), value_type(std::get<1>(result_)));
+                }
+                break;
+            }
+            case 2: {
+                execution::set_error(std::forward<Rcvr>(rcvr), std::move(std::get<2>(result_)));
+                break;
+            }
+            default: unreachable();
+            }
         }
 
     private:
         std::variant<
             std::monostate,
-            std::conditional_t<std::is_void_v<T>, std::nullptr_t, T>,
-            std::error_code
+            std::conditional_t<std::is_void_v<value_type>, std::monostate, value_type>,
+            error_type
         > result_;
     };
 }

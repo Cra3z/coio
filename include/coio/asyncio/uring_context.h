@@ -19,10 +19,10 @@ namespace coio {
         class uring_op;
     }
 
-    class uring_context : public detail::run_loop_base<uring_context> {
+    class uring_context : public detail::loop_base<uring_context> {
         template<typename Sexpr>
         friend class detail::uring_op_base_for;
-        friend run_loop_base;
+        friend loop_base;
 
     private:
         struct uring_op_base : operation_base {
@@ -233,7 +233,7 @@ namespace coio {
 
         private:
             int fd;
-            async_result<typename Sexpr::result_type> result;
+            async_result<typename Sexpr::result_type, std::error_code> result;
         };
 
         template<>

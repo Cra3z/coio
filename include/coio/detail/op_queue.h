@@ -36,13 +36,15 @@ namespace coio::detail {
 
         template<typename Ops> requires
             std::ranges::input_range<Ops> and
-            std::ranges::borrowed_range<Ops> and
             std::convertible_to<std::ranges::range_reference_t<Ops>, Op&>
-        auto bulk_enqueue(Ops&& ops) -> void {
+        auto bulk_enqueue(Ops&& ops) -> std::size_t {
             std::scoped_lock _{op_queue_mtx_};
+            std::size_t count = 0;
             for (Op& op : ops) {
                 this->unsynchronized_enqueue(op);
+                ++count;
             }
+            return count;
         }
 
         [[nodiscard]]
@@ -95,7 +97,7 @@ namespace coio::detail {
 
         auto operator= (const timer_queue&) -> timer_queue& = delete;
 
-        auto add(reference op) -> void {
+        auto add(reference op) -> bool {
             const auto deadline = std::invoke(Proj, op);
             std::scoped_lock _{mtx_};
             underlying_.emplace_back(op);
@@ -105,7 +107,7 @@ namespace coio::detail {
 
         auto remove(reference op) -> bool {
             std::scoped_lock _{mtx_};
-            const bool erased = std::erase(underlying_, std::ref(op));
+            const bool erased = std::erase_if(underlying_, [&op](reference i) noexcept { return &i == &op; });
             std::ranges::make_heap(underlying_, std::ranges::greater{}, Proj);
             return erased;
         }

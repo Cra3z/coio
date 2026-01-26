@@ -16,29 +16,29 @@ namespace coio {
         struct check_type_alias_exists;
 
         template<typename StopToken>
-        struct stop_callback_traits;
+        struct stoppable_token_traits;
 
         template<typename StopToken> requires requires {
             typename check_type_alias_exists<StopToken::template callback_type>;
         }
-        struct stop_callback_traits<StopToken> {
+        struct stoppable_token_traits<StopToken> {
             template<typename Fn>
             using callback_type = typename StopToken::template callback_type<Fn>;
         };
 
         template<>
-        struct stop_callback_traits<std::stop_token> {
+        struct stoppable_token_traits<std::stop_token> {
             template<typename Fn>
             using callback_type = std::stop_callback<Fn>;
         };
     }
 
     template<typename StopToken, typename Callback>
-    using stop_callback_for_t = typename detail::stop_callback_traits<StopToken>::template callback_type<Callback>;
+    using stop_callback_for_t = typename detail::stoppable_token_traits<StopToken>::template callback_type<Callback>;
 
     template<typename StopToken>
     concept stoppable_token = requires(const StopToken& token) {
-        typename detail::check_type_alias_exists<detail::stop_callback_traits<StopToken>::template callback_type>;
+        typename detail::check_type_alias_exists<detail::stoppable_token_traits<StopToken>::template callback_type>;
         { token.stop_requested() } noexcept -> std::same_as<bool>;
         { token.stop_possible() } noexcept -> std::same_as<bool>;
         { StopToken(token) } noexcept;

@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 #include "detail/execution.h"
+#include "detail/manual_lifetime.h"
 #include "detail/op_queue.h"
 #include "utils/stop_token.h"
 
@@ -42,12 +43,12 @@ namespace coio {
         };
 
         template<typename Ctx>
-        class run_loop_base {
+        class loop_base {
             friend Ctx;
         public:
             class operation_base {
                 friend Ctx;
-                friend run_loop_base;
+                friend loop_base;
             public:
                 using operation_state_concept = execution::operation_state_t;
 
@@ -71,6 +72,50 @@ namespace coio {
                 operation_base* next_{};
             };
 
+            template<typename Receiver, typename Base>
+            class cancellable : public Base {
+            private:
+                using stop_token_t = stop_token_of_t<execution::env_of_t<Receiver>>;
+
+            public:
+                template<typename... Args>
+                cancellable(Receiver rcvr, Args&&... args) noexcept : Base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
+
+                auto start() & noexcept -> void {
+                    auto stop_token = coio::get_stop_token(execution::get_env(rcvr_));
+                    static_assert(std::same_as<decltype(stop_token), stop_token_t>);
+                    if (stop_token.stop_requested()) {
+                        execution::set_stopped(std::move(rcvr_));
+                        return;
+                    }
+                    start_impl();
+                    stop_cb_.construct(
+                        std::move(stop_token),
+                        std::bind_front(&cancellable::cancel, this)
+                    );
+                }
+
+                auto finish() -> void {
+                    stop_cb_.destroy();
+                    if (coio::get_stop_token(execution::get_env(rcvr_)).stop_requested()) {
+                        execution::set_stopped(std::move(rcvr_));
+                        return;
+                    }
+                    finish_impl();
+                }
+
+                virtual auto start_impl() noexcept -> void = 0;
+
+                virtual auto finish_impl() noexcept -> void = 0;
+
+                virtual auto cancel() -> void {}
+
+            protected:
+                using callback_t = decltype(std::bind_front(&cancellable::cancel, std::declval<cancellable*>()));
+                Receiver rcvr_;
+                manual_lifetime<stop_callback_for_t<stop_token_t, callback_t>> stop_cb_;
+            };
+
             struct env {
                 auto query(execution::get_completion_scheduler_t<execution::set_value_t>) const noexcept {
                     return ctx_.get_scheduler();
@@ -87,32 +132,19 @@ namespace coio {
                 friend Ctx;
             private:
                 template<typename Receiver>
-                struct op_state : operation_base {
-                public:
-                    op_state(Ctx& context, Receiver rcvr) noexcept : operation_base(context), rcvr_(std::move(rcvr)) {}
+                struct op_state : cancellable<Receiver, operation_base> {
+                    using base = cancellable<Receiver, operation_base>;
 
-                    COIO_ALWAYS_INLINE auto start() & noexcept -> void try {
-                        if (coio::get_stop_token(execution::env(rcvr_)).stop_requested()) {
-                            execution::set_stopped(std::move(rcvr_));
-                            return;
-                        }
+                    op_state(Ctx& context, Receiver rcvr) noexcept : base(std::move(rcvr), context) {}
+
+                    auto start_impl() noexcept -> void override {
                         this->context_.op_queue_.enqueue(*this);
                         this->context_.interrupt();
                     }
-                    catch (...) {
-                        execution::set_error(std::move(rcvr_), std::current_exception());
-                    }
 
-                    auto finish() -> void override {
-                        if (coio::get_stop_token(execution::env(rcvr_)).stop_requested()) {
-                            execution::set_stopped(std::move(rcvr_));
-                            return;
-                        }
-                        execution::set_value(std::move(rcvr_));
+                    auto finish_impl() noexcept -> void override {
+                        execution::set_value(std::move(this->rcvr_));
                     }
-
-                private:
-                    Receiver rcvr_;
                 };
 
             public:
@@ -153,26 +185,32 @@ namespace coio {
                 using duration_type = clock_type::duration;
                 using time_point_type = clock_type::time_point;
 
-                struct op_state_base : operation_base {
-                    op_state_base(Ctx& context, time_point_type deadline) noexcept: operation_base(context), deadline(deadline) {}
+                struct state_base : operation_base {
+                    state_base(Ctx& context, time_point_type deadline) noexcept: operation_base(context), deadline(deadline) {}
 
                     time_point_type deadline;
                 };
 
                 template<typename Receiver>
-                struct op_state : op_state_base {
-                public:
-                    op_state(Ctx& context, time_point_type deadline, Receiver rcvr) noexcept:
-                        op_state_base(context, deadline), rcvr(std::move(rcvr)) {}
+                struct state : cancellable<Receiver, state_base> {
+                    using base = cancellable<Receiver, state_base>;
 
-                    COIO_ALWAYS_INLINE auto start() & noexcept -> void try {
+                    state(Ctx& context, time_point_type deadline, Receiver rcvr) noexcept: base(std::move(rcvr), context, deadline) {}
+
+                    auto start_impl() noexcept -> void override {
                         if (this->context_.timer_queue_.add(*this)) this->context_.interrupt();
                     }
-                    catch (...) {
-                        execution::set_error(std::move(rcvr), std::current_exception());
+
+                    auto finish_impl() noexcept -> void override {
+                        execution::set_value(std::move(this->rcvr_));
                     }
 
-                    Receiver rcvr;
+                    auto cancel() -> void override {
+                        if (this->context_.timer_queue_.remove(*this)) {
+                            this->context_.op_queue_.enqueue(*this);
+                            this->context_.interrupt();
+                        }
+                    }
                 };
 
             public:
@@ -199,7 +237,7 @@ namespace coio {
                 template<execution::receiver_of<completion_signatures> Receiver>
                 COIO_ALWAYS_INLINE auto connect(Receiver rcvr) && noexcept {
                     COIO_ASSERT(ctx_ != nullptr);
-                    return op_state{*std::exchange(ctx_, {}), std::exchange(deadline_, {}), std::move(rcvr)};
+                    return state{*std::exchange(ctx_, {}), std::exchange(deadline_, {}), std::move(rcvr)};
                 }
 
             private:
@@ -254,21 +292,21 @@ namespace coio {
                 Ctx* ctx_;
             };
 
-            using timer_queue = detail::timer_queue<typename sleep_sender::op_state_base, [](const typename sleep_sender::op_state_base& op) noexcept {
+            using timer_queue = detail::timer_queue<typename sleep_sender::state_base, [](const typename sleep_sender::state_base& op) noexcept {
                 return op.deadline;
             }, std::pmr::polymorphic_allocator<>>;
 
             using op_queue = detail::op_queue<operation_base, &operation_base::next_>;
 
         private:
-            run_loop_base() = default;
+            loop_base() = default;
 
-            explicit run_loop_base(std::pmr::memory_resource& memory_resource) noexcept : allocator_(&memory_resource) {}
+            explicit loop_base(std::pmr::memory_resource& memory_resource) noexcept : allocator_(&memory_resource) {}
 
         public:
-            run_loop_base(const run_loop_base&) = delete;
+            loop_base(const loop_base&) = delete;
 
-            auto operator= (const run_loop_base&) -> run_loop_base& = delete;
+            auto operator= (const loop_base&) -> loop_base& = delete;
 
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto get_scheduler() noexcept {
@@ -385,17 +423,17 @@ namespace coio {
         ExecutionContext* context_ = nullptr;
     };
 
-    class timed_run_loop : public detail::run_loop_base<timed_run_loop> {
-        friend run_loop_base;
+    class time_loop : public detail::loop_base<time_loop> {
+        friend loop_base;
     public:
         struct scheduler : scheduler_base {
             using scheduler_base::scheduler_base;
         };
 
     public:
-        using run_loop_base::run_loop_base;
+        using loop_base::loop_base;
 
-        ~timed_run_loop() = default;
+        ~time_loop() = default;
 
     private:
         auto do_one(bool infinite) -> bool {

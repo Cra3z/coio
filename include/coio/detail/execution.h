@@ -217,5 +217,18 @@ namespace coio {
 
         template<typename T>
         inline constexpr bool is_set_stopped_v = is_set_stop<T>::value;
+
+        template<typename... Args>
+        struct set_value_helper {
+            using type = execution::set_value_t(Args...);
+        };
+
+        template<>
+        struct set_value_helper<void> {
+            using type = execution::set_value_t();
+        };
+
+        template<typename... Args>
+        using set_value_t = typename set_value_helper<Args...>::type;
     }
 }

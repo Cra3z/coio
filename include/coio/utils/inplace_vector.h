@@ -87,9 +87,9 @@ namespace coio {
             clear();
         }
 
-        auto operator= (const inplace_vector&) ->inplace_vector& = default;
+        auto operator= (const inplace_vector&) -> inplace_vector& = default;
 
-        constexpr auto operator= (const inplace_vector& other) ->inplace_vector& requires
+        constexpr auto operator= (const inplace_vector& other) -> inplace_vector& requires
             std::copyable<value_type> and
             (not(
                 std::is_trivially_destructible_v<value_type> and
@@ -101,9 +101,9 @@ namespace coio {
             return *this;
         }
 
-        auto operator= (inplace_vector&& other) ->inplace_vector& = default;
+        auto operator= (inplace_vector&& other) -> inplace_vector& = default;
 
-        constexpr auto operator= (inplace_vector&& other) noexcept(std::is_nothrow_move_assignable_v<value_type> and std::is_nothrow_move_constructible_v<value_type>) ->inplace_vector& requires (not(
+        constexpr auto operator= (inplace_vector&& other) noexcept(std::is_nothrow_move_assignable_v<value_type> and std::is_nothrow_move_constructible_v<value_type>) -> inplace_vector& requires (not(
                 std::is_trivially_destructible_v<value_type> and
                 std::is_trivially_move_constructible_v<value_type> and
                 std::is_trivially_move_assignable_v<value_type>
@@ -113,12 +113,12 @@ namespace coio {
             return *this;
         }
 
-        constexpr auto operator= (std::initializer_list<value_type> ilist) ->inplace_vector& {
+        constexpr auto operator= (std::initializer_list<value_type> ilist) -> inplace_vector& {
             assign_range(ilist);
             return *this;
         }
 
-        constexpr auto assign(size_type count, const_reference value) ->void requires std::copy_constructible<value_type> {
+        constexpr auto assign(size_type count, const_reference value) -> void requires std::copy_constructible<value_type> {
             size_type i = 0;
             auto old_size = cur_size_;
             while (count--) {
@@ -133,7 +133,7 @@ namespace coio {
         }
 
         template<cpp17_input_iterator InputIt> requires std::constructible_from<value_type, detail::cpp17_iter_reference_t<InputIt>> and std::assignable_from<value_type&, std::iter_reference_t<InputIt>>
-        constexpr auto assign(InputIt first, InputIt last) ->void {
+        constexpr auto assign(InputIt first, InputIt last) -> void {
             if constexpr (cpp17_random_access_iterator<InputIt>) {
                 if (std::distance(first, last) > N) throw std::bad_alloc{};
             }
@@ -150,12 +150,12 @@ namespace coio {
             if (i < old_size) erase(cbegin() + i, cend());
         }
 
-        constexpr auto assign(std::initializer_list<value_type> ilist) ->void requires std::assignable_from<value_type&, const_reference> {
+        constexpr auto assign(std::initializer_list<value_type> ilist) -> void requires std::assignable_from<value_type&, const_reference> {
             assign_range(ilist);
         }
 
         template<container_compatible_range<value_type> Range> requires std::assignable_from<value_type&, std::ranges::range_reference_t<Range>>
-        constexpr auto assign_range(Range&& r) ->void {
+        constexpr auto assign_range(Range&& r) -> void {
             if constexpr (std::ranges::sized_range<Range> or std::ranges::random_access_range<Range>) {
                 if (std::ranges::distance(std::forward<Range>(r)) > N) throw std::bad_alloc{};
             }
@@ -174,144 +174,144 @@ namespace coio {
         }
 
         [[nodiscard]]
-        constexpr auto begin() noexcept ->iterator {
+        constexpr auto begin() noexcept -> iterator {
             return empty() ? nullptr : std::addressof(storages_[0]);
         }
 
         [[nodiscard]]
-        constexpr auto begin() const noexcept ->const_iterator {
+        constexpr auto begin() const noexcept -> const_iterator {
             return empty() ? nullptr : std::addressof(storages_[0]);
         }
 
         [[nodiscard]]
-        constexpr auto cbegin() const noexcept ->const_iterator {
+        constexpr auto cbegin() const noexcept -> const_iterator {
             return begin();
         }
 
         [[nodiscard]]
-        constexpr auto rbegin() noexcept ->reverse_iterator {
+        constexpr auto rbegin() noexcept -> reverse_iterator {
             return std::make_reverse_iterator(end());
         }
 
         [[nodiscard]]
-        constexpr auto rbegin() const noexcept ->const_reverse_iterator {
+        constexpr auto rbegin() const noexcept -> const_reverse_iterator {
             return std::make_reverse_iterator(end());
         }
 
         [[nodiscard]]
-        constexpr auto crbegin() const noexcept ->const_reverse_iterator {
+        constexpr auto crbegin() const noexcept -> const_reverse_iterator {
             return rbegin();
         }
 
         [[nodiscard]]
-        constexpr auto end() noexcept ->iterator {
+        constexpr auto end() noexcept -> iterator {
             return empty() ? nullptr : begin() + size();
         }
 
         [[nodiscard]]
-        constexpr auto end() const noexcept ->const_iterator {
+        constexpr auto end() const noexcept -> const_iterator {
             return empty() ? nullptr : begin() + size();
         }
 
         [[nodiscard]]
-        constexpr auto cend() const noexcept ->const_iterator {
+        constexpr auto cend() const noexcept -> const_iterator {
             return end();
         }
 
         [[nodiscard]]
-        constexpr auto rend() noexcept ->reverse_iterator {
+        constexpr auto rend() noexcept -> reverse_iterator {
             return std::make_reverse_iterator(begin());
         }
 
         [[nodiscard]]
-        constexpr auto rend() const noexcept ->const_reverse_iterator {
+        constexpr auto rend() const noexcept -> const_reverse_iterator {
             return std::make_reverse_iterator(begin());
         }
 
         [[nodiscard]]
-        constexpr auto crend() const noexcept ->const_reverse_iterator {
+        constexpr auto crend() const noexcept -> const_reverse_iterator {
             return rend();
         }
 
         [[nodiscard]]
-        static constexpr auto capacity() noexcept ->size_type {
+        static constexpr auto capacity() noexcept -> size_type {
             return N;
         }
 
         [[nodiscard]]
-        static constexpr auto max_size() noexcept ->size_type {
+        static constexpr auto max_size() noexcept -> size_type {
             return N;
         }
 
         [[nodiscard]]
-        constexpr auto size() const noexcept ->size_type {
+        constexpr auto size() const noexcept -> size_type {
             return cur_size_;
         }
 
         [[nodiscard]]
-        constexpr auto empty() const noexcept ->bool {
+        constexpr auto empty() const noexcept -> bool {
             return cur_size_ == 0;
         }
 
         [[nodiscard]]
-        constexpr auto data() noexcept ->pointer {
+        constexpr auto data() noexcept -> pointer {
             return begin();
         }
 
         [[nodiscard]]
-        constexpr auto data() const noexcept ->const_pointer {
+        constexpr auto data() const noexcept -> const_pointer {
             return begin();
         }
 
         [[nodiscard]]
-        constexpr auto front() noexcept ->reference {
+        constexpr auto front() noexcept -> reference {
             return *begin();
         }
 
         [[nodiscard]]
-        constexpr auto front() const noexcept ->const_reference {
+        constexpr auto front() const noexcept -> const_reference {
             return *begin();
         }
 
         [[nodiscard]]
-        constexpr auto back() noexcept ->reference {
+        constexpr auto back() noexcept -> reference {
             return *rbegin();
         }
 
         [[nodiscard]]
-        constexpr auto back() const noexcept ->const_reference {
+        constexpr auto back() const noexcept -> const_reference {
             return *rbegin();
         }
 
         [[nodiscard]]
-        constexpr auto operator[] (size_type index) noexcept ->reference {
+        constexpr auto operator[] (size_type index) noexcept -> reference {
             return *(begin() + index);
         }
 
         [[nodiscard]]
-        constexpr auto operator[] (size_type index) const noexcept ->const_reference {
+        constexpr auto operator[] (size_type index) const noexcept -> const_reference {
             return *(begin() + index);
         }
 
         [[nodiscard]]
-        constexpr auto at(size_type index) ->reference {
+        constexpr auto at(size_type index) -> reference {
             if (index >= cur_size_) throw std::out_of_range{"`index` too big."};
             return (*this)[index];
         }
 
         [[nodiscard]]
-        constexpr auto at(size_type index) const ->const_reference {
+        constexpr auto at(size_type index) const -> const_reference {
             if (index >= cur_size_) throw std::out_of_range{"`index` too big."};
             return (*this)[index];
         }
 
-        constexpr static auto reserve(size_type count) ->void {
+        constexpr static auto reserve(size_type count) -> void {
             if (count > N) throw std::bad_alloc{};
         }
 
-        constexpr static auto shrink_to_fit() noexcept ->void {}
+        constexpr static auto shrink_to_fit() noexcept -> void {}
 
-        constexpr auto resize(size_type count) ->void requires std::default_initializable<value_type> {
+        constexpr auto resize(size_type count) -> void requires std::default_initializable<value_type> {
             if (count > N) throw std::bad_alloc{};
             if (count >= cur_size_) {
                 if (try_emplace_back_n_(count - cur_size_) == nullptr) throw std::bad_alloc{};
@@ -319,7 +319,7 @@ namespace coio {
             else erase(cbegin() + count, cend());
         }
 
-        constexpr auto resize(size_type count, const_reference value) ->void requires std::copy_constructible<value_type> {
+        constexpr auto resize(size_type count, const_reference value) -> void requires std::copy_constructible<value_type> {
             if (count > N) throw std::bad_alloc{};
             if (count >= cur_size_) {
                 if (try_emplace_back_n_(count - cur_size_, value) == nullptr) throw std::bad_alloc{};
@@ -328,49 +328,49 @@ namespace coio {
         }
 
         template<typename... Args> requires std::constructible_from<value_type, Args...>
-        constexpr auto try_emplace_back(Args&&... args) ->pointer {
+        constexpr auto try_emplace_back(Args&&... args) -> pointer {
             return try_emplace_back_n_(1, std::forward<Args>(args)...);
         }
 
-        constexpr auto try_push_back(const_reference value) ->pointer requires std::copy_constructible<value_type> {
+        constexpr auto try_push_back(const_reference value) -> pointer requires std::copy_constructible<value_type> {
             return try_emplace_back(value);
         }
 
-        constexpr auto try_push_back(value_type&& value) ->pointer {
+        constexpr auto try_push_back(value_type&& value) -> pointer {
             return try_emplace_back(std::move(value));
         }
 
         template<typename... Args> requires std::constructible_from<value_type, Args...>
-        constexpr auto emplace_back(Args&&... args) ->reference {
+        constexpr auto emplace_back(Args&&... args) -> reference {
             if (try_emplace_back(std::forward<Args>(args)...) == nullptr) throw std::bad_alloc{};
             return back();
         }
 
-        constexpr auto push_back(const_reference value) ->reference requires std::copy_constructible<value_type> {
+        constexpr auto push_back(const_reference value) -> reference requires std::copy_constructible<value_type> {
             return emplace_back(value);
         }
 
-        constexpr auto push_back(value_type&& value) ->reference {
+        constexpr auto push_back(value_type&& value) -> reference {
             return emplace_back(std::move(value));
         }
 
         template<typename... Args> requires std::constructible_from<value_type, Args...>
-        constexpr auto unchecked_emplace_back(Args&&... args) ->reference {
+        constexpr auto unchecked_emplace_back(Args&&... args) -> reference {
             auto p = try_emplace_back(std::forward<Args>(args)...);
             COIO_ASSERT(p != nullptr);
             return *p;
         }
 
-        constexpr auto unchecked_push_back(const_reference value) ->reference {
+        constexpr auto unchecked_push_back(const_reference value) -> reference {
             return unchecked_emplace_back(value);
         }
 
-        constexpr auto unchecked_push_back(value_type&& value) ->reference {
+        constexpr auto unchecked_push_back(value_type&& value) -> reference {
             return unchecked_emplace_back(std::move(value));
         }
 
         template<container_compatible_range<value_type> Range>
-        constexpr auto append_range(Range&& r) ->void {
+        constexpr auto append_range(Range&& r) -> void {
             if constexpr (std::ranges::sized_range<Range> or std::ranges::random_access_range<Range>) {
                 if (std::ranges::distance(r) + cur_size_ > N) throw std::bad_alloc{};
             }
@@ -390,7 +390,7 @@ namespace coio {
         }
 
         template<container_compatible_range<value_type> Range>
-        constexpr auto try_append_range(Range&& r) ->std::ranges::borrowed_iterator_t<Range> {
+        constexpr auto try_append_range(Range&& r) -> std::ranges::borrowed_iterator_t<Range> {
             auto n = cur_size_;
             auto it = std::ranges::begin(r);
             for (; it != std::ranges::end(r) and n != N; ++it) {
@@ -401,30 +401,30 @@ namespace coio {
         }
 
         template<typename... Args> requires std::constructible_from<value_type, Args...>
-        constexpr auto emplace(const_iterator pos, Args&&... args) ->iterator {
+        constexpr auto emplace(const_iterator pos, Args&&... args) -> iterator {
             auto index = pos - cbegin();
             emplace_back(std::forward<Args>(args)...);
             shift_right_(index, 1);
             return begin() + index;
         }
 
-        constexpr auto insert(const_iterator pos, size_type count, const_reference value) ->iterator requires std::copyable<value_type> {
+        constexpr auto insert(const_iterator pos, size_type count, const_reference value) -> iterator requires std::copyable<value_type> {
             auto index = pos - cbegin();
             if (try_emplace_back_n_(count, value) == nullptr) throw std::bad_alloc{};
             shift_right_(index, count);
             return begin() + index;
         }
 
-        constexpr auto insert(const_iterator pos, const_reference value) ->iterator {
+        constexpr auto insert(const_iterator pos, const_reference value) -> iterator {
             return insert(pos, 1, value);
         }
 
-        constexpr auto insert(const_iterator pos, value_type&& value) ->iterator {
+        constexpr auto insert(const_iterator pos, value_type&& value) -> iterator {
             return emplace(pos, std::move(value));
         }
 
         template<cpp17_input_iterator InputIt> requires std::constructible_from<value_type, detail::cpp17_iter_reference_t<InputIt>>
-        constexpr auto insert(const_iterator pos, InputIt first, InputIt last) ->iterator {
+        constexpr auto insert(const_iterator pos, InputIt first, InputIt last) -> iterator {
             if constexpr (cpp17_random_access_iterator<InputIt>) {
                 if (std::distance(first, last) + cur_size_ > N) throw std::bad_alloc{};
             }
@@ -445,12 +445,12 @@ namespace coio {
             return begin() + index;
         }
 
-        constexpr auto insert(const_iterator pos, std::initializer_list<value_type> ilist) ->iterator {
+        constexpr auto insert(const_iterator pos, std::initializer_list<value_type> ilist) -> iterator {
             return insert(pos, ilist.begin(), ilist.end());
         }
 
         template<container_compatible_range<value_type> Range>
-        constexpr auto insert_range(const_iterator pos, Range&& r) ->iterator {
+        constexpr auto insert_range(const_iterator pos, Range&& r) -> iterator {
             auto old_size = cur_size_;
             auto index = pos - cbegin();
             append_range(std::forward<Range>(r));
@@ -458,11 +458,11 @@ namespace coio {
             return begin() + index;
         }
 
-        constexpr auto erase(const_iterator pos) ->iterator {
+        constexpr auto erase(const_iterator pos) -> iterator {
             return erase(pos, std::ranges::next(pos));
         }
 
-        constexpr auto erase(const_iterator first, const_iterator last) ->iterator {
+        constexpr auto erase(const_iterator first, const_iterator last) -> iterator {
             auto index = std::ranges::distance(cbegin(), first);
             if (first != last) [[likely]] {
                 auto count = std::ranges::distance(first, last);
@@ -473,16 +473,16 @@ namespace coio {
             return begin() + index;
         }
 
-        constexpr auto pop_back() ->void {
+        constexpr auto pop_back() -> void {
             COIO_ASSERT(not empty());
             void(erase(std::ranges::prev(end())));
         }
 
-        constexpr auto clear() noexcept ->void {
+        constexpr auto clear() noexcept -> void {
             void(erase(begin(), end()));
         }
 
-        constexpr auto swap(inplace_vector& other) noexcept(std::is_nothrow_swappable_v<value_type> and std::is_nothrow_move_constructible_v<value_type>) ->void {
+        constexpr auto swap(inplace_vector& other) noexcept(std::is_nothrow_swappable_v<value_type> and std::is_nothrow_move_constructible_v<value_type>) -> void {
             size_type i = 0;
             for (; i < std::min(cur_size_, other.cur_size_); ++i) {
                 std::ranges::swap((*this)[i], other[i]);
@@ -501,11 +501,11 @@ namespace coio {
             }
         }
 
-        friend constexpr auto swap(inplace_vector& lhs, inplace_vector& rhs) noexcept(noexcept(lhs.swap(rhs))) ->void {
+        friend constexpr auto swap(inplace_vector& lhs, inplace_vector& rhs) noexcept(noexcept(lhs.swap(rhs))) -> void {
             lhs.swap(rhs);
         }
 
-        friend constexpr auto operator== (const inplace_vector& lhs, const inplace_vector& rhs) noexcept(noexcept(std::declval<const_reference>() == std::declval<const_reference>())) ->bool requires std::equality_comparable<value_type> {
+        friend constexpr auto operator== (const inplace_vector& lhs, const inplace_vector& rhs) noexcept(noexcept(std::declval<const_reference>() == std::declval<const_reference>())) -> bool requires std::equality_comparable<value_type> {
             if (lhs.size() != rhs.size()) return false;
             for (size_type i = 0; i < lhs.size(); ++i) {
                 if (not(lhs[i] == rhs[i])) return false;
@@ -520,7 +520,7 @@ namespace coio {
     private:
 
         template<typename... Args>
-        constexpr auto try_emplace_back_n_(size_type count, Args&&... args) ->pointer {
+        constexpr auto try_emplace_back_n_(size_type count, Args&&... args) -> pointer {
             if (cur_size_ + count > N) return nullptr;
             auto n = cur_size_;
             try {
@@ -552,7 +552,7 @@ namespace coio {
     };
 
     template<typename T, std::size_t N, typename U = T>
-    constexpr auto erase(inplace_vector<T, N>& c, const U& value) ->typename inplace_vector<T, N>::size_type {
+    constexpr auto erase(inplace_vector<T, N>& c, const U& value) -> typename inplace_vector<T, N>::size_type {
         auto [first, last] = std::ranges::remove(c, value);
         auto r = std::ranges::distance(first, last);
         void(c.erase(first, last));
@@ -560,7 +560,7 @@ namespace coio {
     }
 
     template<typename T, std::size_t N>
-    constexpr auto erase_if(inplace_vector<T, N>& c, std::predicate<const T&> auto pred) ->typename inplace_vector<T, N>::size_type {
+    constexpr auto erase_if(inplace_vector<T, N>& c, std::predicate<const T&> auto pred) -> typename inplace_vector<T, N>::size_type {
         auto [first, last] = std::ranges::remove_if(c, pred);
         auto r = std::ranges::distance(first, last);
         void(c.erase(first, last));
