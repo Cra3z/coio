@@ -230,5 +230,16 @@ namespace coio {
 
         template<typename... Args>
         using set_value_t = typename set_value_helper<Args...>::type;
+
+        template<typename Prop, typename Env, typename Default>
+        [[nodiscard]]
+        auto query_or(const Prop& prop, const Env& env, Default default_value) noexcept {
+            if constexpr (requires { prop(env); }) {
+                return prop(env);
+            }
+            else {
+                return std::move(default_value);
+            }
+        }
     }
 }

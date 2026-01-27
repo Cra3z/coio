@@ -12,7 +12,7 @@
 namespace coio {
     template<typename Mutex>
     concept basic_async_lockable = requires (Mutex&& mtx) {
-        { mtx.lock() } -> awaitable_value;
+        { mtx.lock() } -> execution::sender;
         { mtx.unlock() } -> std::same_as<void>;
         requires std::same_as<detail::await_result_t<decltype(mtx.lock())>, void>;
     };
@@ -315,7 +315,7 @@ namespace coio {
                 lock_guard.unlock();
                 auto current = counter_.load(std::memory_order_acquire);
                 do {
-                    if (current < 0 or current >= max()) std::terminate();
+                    if (current == max()) std::terminate();
                 }
                 while (not counter_.compare_exchange_weak(
                     current, current + 1,

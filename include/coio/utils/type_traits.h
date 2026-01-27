@@ -210,4 +210,6 @@ namespace coio {
     template<typename T, typename U>
     using const_like_t = add_const_if_t<std::is_const_v<U>, T>;
 
+    template<typename...>
+    inline constexpr bool always_false = false;
 }

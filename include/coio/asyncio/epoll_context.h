@@ -210,17 +210,24 @@ namespace coio {
                 epoll_op_base(context, fd, data) {}
 
         protected:
-            // NOLINTBEGIN(*-use-equals-delete)
-            auto do_cancel() -> void = delete;
+            auto do_cancel() -> void {
+                static_assert(always_false<Sexpr>, "this operation isn't supported");
+            }
 
-            auto do_start() noexcept -> bool = delete;
+            auto do_start() noexcept -> bool {
+                static_assert(always_false<Sexpr>, "this operation isn't supported");
+                unreachable();
+            }
 
-            auto do_perform() noexcept -> void = delete;
-            // NOLINTEND(*-use-equals-delete)
+            auto do_perform() noexcept -> void {
+                static_assert(always_false<Sexpr>, "this operation isn't supported");
+            }
 
-            auto perform() noexcept -> void override;
+            auto perform() noexcept -> void override {
+                do_perform();
+            }
 
-        private:
+        protected:
             async_result<typename Sexpr::result_type, std::error_code> result;
         };
 
@@ -302,11 +309,6 @@ namespace coio {
 
         template<>
         auto epoll_op_base_for<async_connect_t>::do_cancel() -> void;
-
-        template<typename Sexpr>
-        auto epoll_op_base_for<Sexpr>::perform() noexcept -> void {
-            this->do_perform();
-        }
 
         template<typename Sexpr, typename Rcvr>
         class epoll_op : public epoll_context::cancellable<Rcvr, epoll_op_base_for<Sexpr>> {

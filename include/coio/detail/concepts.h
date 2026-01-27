@@ -148,12 +148,6 @@ namespace coio {
     template<typename Awaitable, typename PromiseType = void>
     concept awaitable = awaiter<typename detail::awaitable_traits<Awaitable>::awaiter_type, PromiseType>;
 
-    template<typename Awaitable, typename Promise = void>
-    concept awaitable_value =
-        std::move_constructible<std::remove_cvref_t<Awaitable>> and
-        std::constructible_from<std::remove_cvref_t<Awaitable>, Awaitable> and
-        awaitable<Awaitable, Promise>;
-
     template<typename Range>
     concept elements_move_insertable_range = std::ranges::forward_range<Range> and std::move_constructible<std::ranges::range_value_t<Range>> and requires (Range range, std::ranges::iterator_t<Range> it) {
         range.insert(it, std::declval<std::ranges::range_value_t<Range>>());

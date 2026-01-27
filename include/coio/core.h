@@ -31,13 +31,6 @@ namespace coio {
     concept io_scheduler = scheduler<Scheduler> and
         std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_t>;
 
-    // template<typename Scheduler>
-    // concept io_scheduler = scheduler<Scheduler> and
-    //     std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_t> and
-    //     requires (Scheduler sched) {
-    //     { get_io_service(execution::get_env(sched)) } noexcept -> std::destructible;
-    //     };
-
     namespace detail {
         template<typename, typename...>
         struct merge_compl_sigs_helper;
@@ -82,7 +75,18 @@ namespace coio {
 
                 template<execution::sender Sndr>
                 auto await_transform(Sndr&& sndr) noexcept {
-                    return awaiter_wrapper{get_awaiter(execution::as_awaitable(std::forward<Sndr>(sndr))), stopped_ = false};
+                    if constexpr (awaiter<std::invoke_result_t<execution::as_awaitable_t, Sndr, promise_type&>, promise_type>) {
+                        return awaiter_wrapper{
+                            execution::as_awaitable(std::forward<Sndr>(sndr), *this),
+                            stopped_ = false
+                        };
+                    }
+                    else {
+                        return awaiter_wrapper{
+                            detail::get_awaiter_impl<promise_type>(execution::as_awaitable(std::forward<Sndr>(sndr), *this)),
+                            stopped_ = false
+                        };
+                    }
                 }
 
                 static auto get_return_object() noexcept -> fire_and_forget {
@@ -230,7 +234,7 @@ namespace coio {
         template<execution::receiver, typename, typename>
         struct state_value;
 
-        template<std::size_t, execution::receiver, typename, typename>
+        template<execution::receiver, typename, typename>
         struct receiver;
 
         template<typename, execution::receiver, typename, typename, execution::sender...>
@@ -335,7 +339,7 @@ namespace coio {
     };
 
     // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
-    template<std::size_t, execution::receiver Receiver, typename Value, typename Error>
+    template<execution::receiver Receiver, typename Value, typename Error>
     struct when_any_t::receiver {
         using receiver_concept = execution::receiver_t;
 
@@ -378,8 +382,8 @@ namespace coio {
         using value_type = Value;
         using error_type = Error;
         template<std::size_t J>
-        using receiver_at = receiver<J, Receiver, value_type, error_type>;
-        using states_type = std::tuple<decltype(execution::connect(std::declval<Sender>(), std::declval<receiver_at<I>>()))...>;
+        using receiver_at = receiver<Receiver, value_type, error_type>;
+        using states_type = std::tuple<execution::connect_result_t<Sender, receiver_at<I>>...>;
 
         template<typename Rcvr, typename Sndrs>
         state(Rcvr&& rcvr, Sndrs&& when_any_sndrs) :
@@ -433,56 +437,61 @@ namespace coio {
                 using second_stop_token_t = stop_token_of_t<execution::env_of_t<Rcvr>>;
                 using stop_cb_t = decltype(std::bind_front(&inplace_stop_source::request_stop, std::declval<inplace_stop_source*>()));
 
+                struct pair_t {
+                    COIO_NO_UNIQUE_ADDRESS Rcvr rcvr;
+                    inplace_stop_source source;
+                };
+
                 struct env {
                     COIO_ALWAYS_INLINE auto query(get_stop_token_t) const noexcept {
-                        return st->source.get_token();
+                        return p->source.get_token();
                     }
 
                     template<typename Prop, typename... Args>
                         requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
                             and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
                     COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
-                        return prop(execution::get_env(st->rcvr), std::forward<Args>(args)...);
+                        return prop(execution::get_env(p->rcvr), std::forward<Args>(args)...);
                     }
 
-                    state* st;
+                    pair_t* p;
                 };
 
                 struct receiver {
                     using receiver_concept = execution::receiver_t;
 
                     COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
-                        return env{st};
+                        return env{p};
                     }
 
                     template<typename... Args>
                     COIO_ALWAYS_INLINE auto set_value(Args&&... args) const noexcept -> void {
-                        execution::set_value(std::move(st->rcvr), std::forward<Args>(args)...);
+                        execution::set_value(std::move(p->rcvr), std::forward<Args>(args)...);
                     }
 
                     template<typename E>
                     COIO_ALWAYS_INLINE auto set_error(E&& e) const noexcept -> void {
-                        execution::set_error(std::move(st->rcvr), std::forward<E>(e));
+                        execution::set_error(std::move(p->rcvr), std::forward<E>(e));
                     }
 
                     COIO_ALWAYS_INLINE auto set_stopped() const noexcept -> void {
-                        execution::set_stopped(std::move(st->rcvr));
+                        execution::set_stopped(std::move(p->rcvr));
                     }
 
-                    state* st;
+                    pair_t* p;
                 };
 
                 using inner_state_t = execution::connect_result_t<Sndr, receiver>;
 
                 state(Sndr sndr, StopToken stop_token, Rcvr rcvr) :
-                    rcvr{std::move(rcvr)},
+                    pair{std::move(rcvr)},
                     first_stop_token(std::move(stop_token)),
-                    inner_state(execution::connect(std::move(sndr), receiver{this})) {}
+                    inner_state(execution::connect(std::move(sndr), receiver{&pair})) {}
 
                 COIO_ALWAYS_INLINE auto start() & noexcept -> void {
-                    auto stop_cb = std::bind_front(&inplace_stop_source::request_stop, &source);
+                    auto stop_cb = std::bind_front(&inplace_stop_source::request_stop, &pair.source);
                     first_stop_cb.construct(first_stop_token, stop_cb);
-                    second_stop_cb.construct(get_stop_token(execution::get_env(rcvr)), stop_cb);
+                    second_stop_cb.construct(get_stop_token(execution::get_env(pair.rcvr)), stop_cb);
                     execution::start(inner_state);
                 }
 
@@ -491,8 +500,7 @@ namespace coio {
                     first_stop_cb.destroy();
                 }
 
-                Rcvr rcvr;
-                inplace_stop_source source{};
+                pair_t pair;
                 first_stop_token_t first_stop_token;
                 detail::manual_lifetime<stop_callback_for_t<first_stop_token_t, stop_cb_t>> first_stop_cb;
                 detail::manual_lifetime<stop_callback_for_t<second_stop_token_t, stop_cb_t>> second_stop_cb;
@@ -616,10 +624,10 @@ namespace coio {
 
         template<execution::sender Sndr>
         COIO_ALWAYS_INLINE auto spawn(Sndr sndr) -> void {
-            auto allocator = get_allocator(execution::get_env(sndr));
+            auto allocator = detail::query_or(get_allocator, execution::get_env(sndr), std::allocator<void>{});
             [](std::allocator_arg_t, auto, auto spawned, retain_ptr<async_scope>) -> detail::fire_and_forget {
                 void(co_await std::move(spawned));
-            }(std::allocator_arg, allocator, stop_when(std::move(sndr), stop_source_.get_token()), retain_ptr{this});
+            }(std::allocator_arg, std::move(allocator), stop_when(std::move(sndr), stop_source_.get_token()), retain_ptr{this});
         }
 
         [[nodiscard]]

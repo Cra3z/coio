@@ -8,6 +8,7 @@ namespace coio::detail {
     template<typename T, typename E>
     class async_result {
     public:
+        using sender_concept = execution::sender_t;
         using receiver_concept = execution::receiver_t;
         using value_type = T;
         using error_type = E;
@@ -55,6 +56,19 @@ namespace coio::detail {
             }
             default: unreachable();
             }
+        }
+
+        template<execution::receiver_of<completion_signaturs> Rcvr>
+        auto connect(Rcvr rcvr) && noexcept {
+            struct state {
+                auto start() & noexcept -> void {
+                    self_.forward_to(std::move(rcvr_));
+                }
+
+                async_result self_;
+                Rcvr rcvr_;
+            };
+            return state{std::move(*this), std::move(rcvr)};
         }
 
     private:

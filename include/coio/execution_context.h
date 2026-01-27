@@ -53,15 +53,11 @@ namespace coio {
                 using operation_state_concept = execution::operation_state_t;
 
             public:
-                operation_base(Ctx& context) noexcept : context_(context) {
-                    ++context.work_count_;
-                }
+                operation_base(Ctx& context) noexcept : context_(context) {}
 
                 operation_base(const operation_base&) = delete;
 
-                ~operation_base() {
-                    --context_.work_count_;
-                }
+                ~operation_base() = default;
 
                 auto operator= (const operation_base&) -> operation_base& = delete;
 
@@ -82,21 +78,25 @@ namespace coio {
                 cancellable(Receiver rcvr, Args&&... args) noexcept : Base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
 
                 auto start() & noexcept -> void {
+                    ++this->context_.work_count_;
                     auto stop_token = coio::get_stop_token(execution::get_env(rcvr_));
                     static_assert(std::same_as<decltype(stop_token), stop_token_t>);
                     if (stop_token.stop_requested()) {
-                        execution::set_stopped(std::move(rcvr_));
+                        finish();
                         return;
                     }
                     start_impl();
-                    stop_cb_.construct(
+                    stop_cb_.emplace(
                         std::move(stop_token),
                         std::bind_front(&cancellable::cancel, this)
                     );
                 }
 
                 auto finish() -> void {
-                    stop_cb_.destroy();
+                    scope_exit _{[this]() noexcept {
+                        --this->context_.work_count_;
+                    }};
+                    stop_cb_.reset();
                     if (coio::get_stop_token(execution::get_env(rcvr_)).stop_requested()) {
                         execution::set_stopped(std::move(rcvr_));
                         return;
@@ -113,7 +113,7 @@ namespace coio {
             protected:
                 using callback_t = decltype(std::bind_front(&cancellable::cancel, std::declval<cancellable*>()));
                 Receiver rcvr_;
-                manual_lifetime<stop_callback_for_t<stop_token_t, callback_t>> stop_cb_;
+                std::optional<stop_callback_for_t<stop_token_t, callback_t>> stop_cb_;
             };
 
             struct env {

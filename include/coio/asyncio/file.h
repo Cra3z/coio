@@ -272,17 +272,14 @@ namespace coio {
             /**
              * \brief asynchronously read some data.
              * \param buffer the buffer to read into.
-             * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
              * \return an awaitable of `std::size_t`.
              */
-            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer, StopToken stop_token = {}) {
+            COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
                 return then(
                     this->get_io_scheduler().schedule_io(
                         this->impl_,
-                        detail::async_read_some_t{buffer},
-                        std::move(stop_token)
+                        detail::async_read_some_t{buffer}
                     ),
                     [total = buffer.size()](std::size_t bytes_transferred) -> std::size_t {
                         if (bytes_transferred == 0 and total > 0) [[unlikely]] {
@@ -309,13 +306,11 @@ namespace coio {
             /**
              * \brief asynchronously write some data.
              * \param buffer the buffer to write from.
-             * \param stop_token a stoppable token to cancel the operation (default: never_stop_token).
              * \return an awaitable of `std::size_t`.
              */
-            template<stoppable_token StopToken = never_stop_token>
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer, StopToken stop_token = {}) {
-                return this->get_io_scheduler().schedule_io(this->impl_, detail::async_write_some_t{buffer}, std::move(stop_token));
+            COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) {
+                return this->get_io_scheduler().schedule_io(this->impl_, detail::async_write_some_t{buffer});
             }
         };
 
@@ -348,21 +343,17 @@ namespace coio {
              * The file position is not changed by this operation.
              * \param offset The offset at which the data will be read.
              * \param buffer A buffer to receive the data read from the file.
-             * \param stop_token A stoppable token to cancel the operation (default: never_stop_token).
              * \return An awaitable of `std::size_t` representing the number of bytes read.
              * \throw std::system_error if EOF is reached when buffer is not empty or on other failures.
              */
-            template<stoppable_token StopToken = never_stop_token>
             COIO_ALWAYS_INLINE auto async_read_some_at(
                 std::size_t offset,
-                std::span<std::byte> buffer,
-                StopToken stop_token = {}
+                std::span<std::byte> buffer
             ) {
                 return then(
                     this->get_io_scheduler().schedule_io(
                         this->impl_,
-                        detail::async_read_some_at_t{offset, buffer},
-                        std::move(stop_token)
+                        detail::async_read_some_at_t{offset, buffer}
                     ),
                     [total = buffer.size()](std::size_t bytes_transferred) -> std::size_t {
                         if (bytes_transferred == 0 and total > 0) [[unlikely]] {
@@ -394,20 +385,16 @@ namespace coio {
              * The file position is not changed by this operation.
              * \param offset The offset at which the data will be written.
              * \param buffer The data to be written to the file.
-             * \param stop_token A stoppable token to cancel the operation (default: never_stop_token).
              * \return An awaitable of `std::size_t` representing the number of bytes written.
              * \throw std::system_error on failure.
              */
-            template<stoppable_token StopToken = never_stop_token>
             COIO_ALWAYS_INLINE auto async_write_some_at(
                 std::size_t offset,
-                std::span<const std::byte> buffer,
-                StopToken stop_token = {}
+                std::span<const std::byte> buffer
             ) -> std::size_t {
                 return this->get_io_scheduler().schedule_io(
                     this->impl_,
-                    detail::async_write_some_at_t{offset, buffer},
-                    std::move(stop_token)
+                    detail::async_write_some_at_t{offset, buffer}
                 );
             }
         };
