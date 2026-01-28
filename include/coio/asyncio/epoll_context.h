@@ -127,7 +127,8 @@ namespace coio {
             struct io_sender {
                 using sender_concept = execution::sender_t;
                 using completion_signatures = execution::completion_signatures<
-                    execution::set_value_t(typename Sexpr::result_type),
+                    detail::set_value_t<typename Sexpr::result_type>,
+                    execution::set_error_t(std::error_code),
                     execution::set_error_t(std::exception_ptr),
                     execution::set_stopped_t()
                 >;

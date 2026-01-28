@@ -12,7 +12,7 @@ namespace coio::detail {
         using receiver_concept = execution::receiver_t;
         using value_type = T;
         using error_type = E;
-        using completion_signaturs = execution::completion_signatures<
+        using completion_signatures = execution::completion_signatures<
             detail::set_value_t<value_type>,
             execution::set_error_t(error_type),
             execution::set_stopped_t()
@@ -22,7 +22,7 @@ namespace coio::detail {
         async_result() = default;
 
         template<typename... Args> requires (std::is_void_v<T> and sizeof...(Args) == 0) or (std::constructible_from<T, Args...>)
-        auto set_value(Args&&... args) noexcept(std::is_nothrow_move_assignable_v<T>) {
+        auto set_value(Args&&... args) noexcept {
             result_.template emplace<1>(std::forward<Args>(args)...);
         }
 
@@ -34,7 +34,7 @@ namespace coio::detail {
             result_.template emplace<0>();
         }
 
-        template<execution::receiver_of<completion_signaturs> Rcvr>
+        template<execution::receiver_of<completion_signatures> Rcvr>
         auto forward_to(Rcvr&& rcvr) noexcept -> void {
             switch (result_.index()) {
             case 0: {
@@ -58,9 +58,11 @@ namespace coio::detail {
             }
         }
 
-        template<execution::receiver_of<completion_signaturs> Rcvr>
+        template<execution::receiver_of<completion_signatures> Rcvr>
         auto connect(Rcvr rcvr) && noexcept {
             struct state {
+                using operation_state_concept = execution::operation_state_t;
+
                 auto start() & noexcept -> void {
                     self_.forward_to(std::move(rcvr_));
                 }

@@ -132,7 +132,6 @@ namespace coio {
                 return coro;
             }
 
-            [[nodiscard]]
             COIO_ALWAYS_INLINE auto await_resume() -> T {
                 switch (this->result_.index()) {
                 case 1: {
@@ -161,20 +160,20 @@ namespace coio {
             stop_propagator<inplace_stop_source, stop_token_of_rcvr> stop_propagator_;
         };
 
+        template<typename TaskType, typename T, typename Alloc>
+        struct task_promise;
 
         struct task_final_awaiter {
             COIO_ALWAYS_INLINE static auto await_ready() noexcept -> bool {
                 return false;
             }
 
-            COIO_ALWAYS_INLINE auto await_suspend(std::coroutine_handle<>) const noexcept -> std::coroutine_handle<> {
-                if (continuation) return continuation;
-                return std::noop_coroutine();
+            template<typename TaskType, typename T, typename Alloc>
+            COIO_ALWAYS_INLINE auto await_suspend(std::coroutine_handle<task_promise<TaskType, T, Alloc>> this_coro) const noexcept -> std::coroutine_handle<> {
+                return this_coro.promise().state_->complete();
             }
 
             COIO_ALWAYS_INLINE static auto await_resume() noexcept -> void {}
-
-            std::coroutine_handle<> continuation;
         };
 
 
@@ -186,8 +185,8 @@ namespace coio {
                 return {};
             }
 
-            COIO_ALWAYS_INLINE auto final_suspend() const noexcept -> task_final_awaiter {
-                return {state_->complete()};
+            COIO_ALWAYS_INLINE static auto final_suspend() noexcept -> task_final_awaiter {
+                return {};
             }
 
             COIO_ALWAYS_INLINE auto unhandled_exception() noexcept -> void {

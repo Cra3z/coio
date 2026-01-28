@@ -207,8 +207,8 @@ namespace coio {
     auto epoll_context::cancel_op(int event, epoll_op_base* op) -> void {
         COIO_ASSERT(op != nullptr);
         const auto data = op->data;
-        [[maybe_unused]] const auto registered_op = event == EPOLLIN ? data->in_op.exchange(nullptr) : data->out_op.exchange(nullptr);
-        COIO_ASSERT(registered_op == op);
+        const auto registered_op = event == EPOLLIN ? data->in_op.exchange(nullptr) : data->out_op.exchange(nullptr);
+        COIO_ASSERT(registered_op == nullptr or registered_op == op); // if there is a registered operation, it shall be `op`
         op->immediate_complete();
     }
 

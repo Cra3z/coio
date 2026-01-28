@@ -107,7 +107,6 @@ namespace coio {
                 return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, device, buffer);
             }
 
-            
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
@@ -116,7 +115,6 @@ namespace coio {
                 std::span<std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 const std::size_t total = buffer.size();
-                if (total == 0) co_return 0;
                 std::size_t remain = total;
                 do {
                     remain -= co_await device.async_read_some(buffer.subspan(total - remain, remain));
@@ -149,7 +147,6 @@ namespace coio {
         };
 
         struct async_write_fn {
-            [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 async_output_device auto& device,
                 std::span<const std::byte> buffer
@@ -157,7 +154,6 @@ namespace coio {
                 return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, device, buffer);
             }
 
-            [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
                 const auto&,
@@ -165,7 +161,6 @@ namespace coio {
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
                 const std::size_t total = buffer.size();
-                if (total == 0) co_return 0;
                 std::size_t remain = total;
                 do {
                     remain -= co_await device.async_write_some(buffer.subspan(total - remain, remain));
@@ -174,8 +169,6 @@ namespace coio {
                 co_return total;
             }
 
-            
-            [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 async_output_device auto& device,
                 dynamic_buffer auto& dyn_buffer
@@ -183,8 +176,6 @@ namespace coio {
                 return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, device, dyn_buffer);
             }
 
-            
-            [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 std::allocator_arg_t,
                 const auto& alloc,

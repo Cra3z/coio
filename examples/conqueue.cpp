@@ -67,6 +67,4 @@ auto main() -> int {
         start_reader(workers[4].scheduler(), "reader-3"),
         start_reader(workers[5].scheduler(), "reader-4")
     )).value();
-
-    ::debug("==");
 }

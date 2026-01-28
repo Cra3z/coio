@@ -80,22 +80,19 @@ namespace coio {
                 auto start() & noexcept -> void {
                     ++this->context_.work_count_;
                     auto stop_token = coio::get_stop_token(execution::get_env(rcvr_));
-                    static_assert(std::same_as<decltype(stop_token), stop_token_t>);
                     if (stop_token.stop_requested()) {
                         finish();
                         return;
                     }
-                    start_impl();
                     stop_cb_.emplace(
                         std::move(stop_token),
                         std::bind_front(&cancellable::cancel, this)
                     );
+                    start_impl();
                 }
 
                 auto finish() -> void {
-                    scope_exit _{[this]() noexcept {
-                        --this->context_.work_count_;
-                    }};
+                    --this->context_.work_count_;
                     stop_cb_.reset();
                     if (coio::get_stop_token(execution::get_env(rcvr_)).stop_requested()) {
                         execution::set_stopped(std::move(rcvr_));
@@ -138,8 +135,9 @@ namespace coio {
                     op_state(Ctx& context, Receiver rcvr) noexcept : base(std::move(rcvr), context) {}
 
                     auto start_impl() noexcept -> void override {
-                        this->context_.op_queue_.enqueue(*this);
-                        this->context_.interrupt();
+                        auto& context = this->context_;
+                        context.op_queue_.enqueue(*this);
+                        context.interrupt();
                     }
 
                     auto finish_impl() noexcept -> void override {

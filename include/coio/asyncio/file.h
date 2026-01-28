@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <utility>
 #include "../core.h"
+#include "../detail/async_result.h"
 #include "../detail/error.h"
 #include "../detail/io_descriptions.h"
 #include "../utils/zstring_view.h"
@@ -350,16 +351,20 @@ namespace coio {
                 std::size_t offset,
                 std::span<std::byte> buffer
             ) {
-                return then(
+                return let_value(
                     this->get_io_scheduler().schedule_io(
                         this->impl_,
                         detail::async_read_some_at_t{offset, buffer}
                     ),
-                    [total = buffer.size()](std::size_t bytes_transferred) -> std::size_t {
+                    [total = buffer.size()](std::size_t bytes_transferred) noexcept -> detail::async_result<std::size_t, std::error_code> {
+                        detail::async_result<std::size_t, std::error_code> result;
                         if (bytes_transferred == 0 and total > 0) [[unlikely]] {
-                            throw std::system_error{coio::error::eof, "async_read_some"};
+                            result.set_error(error::eof);
                         }
-                        return bytes_transferred;
+                        else {
+                            result.set_value(bytes_transferred);
+                        }
+                        return result;
                     }
                 );
             }
