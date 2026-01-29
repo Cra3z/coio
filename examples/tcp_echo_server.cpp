@@ -27,12 +27,13 @@ auto handle_connection(tcp_socket socket) -> coio::task<> {
 }
 
 auto start_server(io_context::scheduler sched) -> coio::task<> {
+    using namespace std::chrono_literals;
     tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8086}};
     ::println("server \"{}\" start...", acceptor.local_endpoint());
     coio::async_scope scope;
     try {
         while (true) {
-            tcp_socket socket = co_await acceptor.async_accept();
+            auto socket = co_await acceptor.async_accept();
             scope.spawn(handle_connection(std::move(socket)));
         }
     }

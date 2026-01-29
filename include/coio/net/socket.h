@@ -411,7 +411,7 @@ namespace coio {
         /**
          * \brief start an asynchronous connect.
          * \param peer the remote endpoint to which the socket will be connected.
-         * \return an awaitable of `void`.
+         * \return a sender of `void`.
          * \throw std::system_error on failure.
         */
         COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) noexcept {
@@ -512,14 +512,14 @@ namespace coio {
         /**
          * \brief start an asynchronous accept.
          * \param peer the socket into which the new connection will be accepted.
-         * \return an awaitable of `void`.
+         * \return a sender of `void`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
          *  on the same socket object from different threads simultaneously.\n
          */
-        template<io_scheduler OtherScheduler, stoppable_token StopToken = never_stop_token>
+        template<io_scheduler OtherScheduler>
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_accept(protocol_socket_<OtherScheduler>& peer) {
             this->check_handle_valid("async_accept");
@@ -534,14 +534,14 @@ namespace coio {
         /**
          * \brief start an asynchronous accept.
          * \param other_scheduler the io_context object to be used for the newly accepted socket.
-         * \return an awaitable of `protocol_type::socket<OtherScheduler>`.
+         * \return a sender of `protocol_type::socket<OtherScheduler>`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
          *  on the same socket object from different threads simultaneously.\n
          */
-        template<io_scheduler OtherScheduler, stoppable_token StopToken = never_stop_token>
+        template<io_scheduler OtherScheduler>
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_accept(OtherScheduler other_scheduler) {
             this->check_handle_valid("async_accept");
@@ -555,7 +555,7 @@ namespace coio {
 
         /**
          * \brief start an asynchronous accept.
-         * \return an awaitable of `protocol_type::socket<scheduler_type>`.
+         * \return a sender of `protocol_type::socket<scheduler_type>`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
@@ -628,7 +628,7 @@ namespace coio {
         /**
          * \brief receive some message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
-         * \return an awaitable of `std::size_t`.
+         * \return a sender of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `read`, `read_some`, `receive`,
@@ -661,7 +661,7 @@ namespace coio {
         /**
          * \brief send some message data asynchronously.
          * \param buffer the buffers containing the message part to send.
-         * \return an awaitable of `std::size_t`.
+         * \return a sender of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `write`, `write_some`, `send`,
@@ -757,7 +757,7 @@ namespace coio {
         /**
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
-         * \return an awaitable of `std::size_t`.
+         * \return a sender of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
@@ -778,7 +778,7 @@ namespace coio {
         /**
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
-         * \return an awaitable of `std::size_t`.
+         * \return a sender of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
@@ -799,7 +799,7 @@ namespace coio {
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
          * \param peer an endpoint object that receives the endpoint of the remote sender of the datagram.
-         * \return an awaitable of `std::size_t`.
+         * \return a sender of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
@@ -820,7 +820,7 @@ namespace coio {
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
          * \param peer the remote endpoint to which the data will be sent.
-         * \return an awaitable of `std::size_t`.
+         * \return a sender of `std::size_t`.
          * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or

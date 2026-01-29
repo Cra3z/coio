@@ -207,7 +207,7 @@ namespace coio {
         struct is_set_error<execution::set_error_t(E)> : std::true_type {};
 
         template<typename T>
-        using is_set_stop = std::is_same<T, execution::set_stopped_t()>;
+        using is_set_stopped = std::is_same<T, execution::set_stopped_t()>;
 
         template<typename T>
         inline constexpr bool is_set_value_v = is_set_value<T>::value;
@@ -216,7 +216,7 @@ namespace coio {
         inline constexpr bool is_set_error_v = is_set_error<T>::value;
 
         template<typename T>
-        inline constexpr bool is_set_stopped_v = is_set_stop<T>::value;
+        inline constexpr bool is_set_stopped_v = is_set_stopped<T>::value;
 
         template<typename... Args>
         struct set_value_helper {

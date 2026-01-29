@@ -21,17 +21,16 @@ auto start_server(http::tcp_acceptor& acceptor, http::io_context_pool& pool, con
     http::router router(static_dir);
     ::debug("Static files directory: {}", static_dir.string());
     coio::async_scope scope;
-    scope.spawn(signal_watchdog(pool));
+    // scope.spawn(signal_watchdog(pool));
     try {
         while (true) {
             auto sched = pool.get_scheduler();
-            auto stop_token = sched.context().get_stop_token();
-            http::tcp_socket socket = co_await acceptor.async_accept(sched, stop_token);
+            http::tcp_socket socket = co_await acceptor.async_accept(sched);
+            auto endpoint = socket.remote_endpoint();
             scope.spawn(http::connection(
                 std::move(socket),
-                socket.remote_endpoint(),
-                router,
-                stop_token
+                endpoint,
+                router
             ));
         }
     }
@@ -61,7 +60,7 @@ auto main() -> int try {
     acceptor.bind({coio::ipv6_address::any(), port});
     acceptor.listen();
     ::debug("server started at http://localhost:{}", port);
-    coio::sync_wait(start_server(acceptor, pool, static_dir));
+    coio::this_thread::sync_wait(start_server(acceptor, pool, static_dir));
 }
 catch (const std::invalid_argument& e) {
     ::debug("[FATAL] {}", e.what());

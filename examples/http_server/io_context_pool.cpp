@@ -8,6 +8,9 @@ namespace http {
         threads_.reserve(count);
         for (std::size_t i = 0; i < count; ++i) {
             work_guards_.emplace_back(*io_contexts_.emplace_back(std::make_unique<io_context>()));
+        }
+
+        for (std::size_t i = 0; i < count; ++i) {
             threads_.emplace_back([this, i] {
                 io_contexts_[i]->run();
             });

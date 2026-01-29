@@ -25,10 +25,10 @@ namespace coio {
         friend loop_base;
 
     private:
-        struct uring_op_base : operation_base {
+        struct uring_op_base : node {
             using complete_fn_t = auto (*)(uring_op_base* op, int cqe_res) -> void;
 
-            uring_op_base(uring_context& context, complete_fn_t complete) noexcept : operation_base(context), complete(complete) {}
+            uring_op_base(uring_context& context, complete_fn_t complete) noexcept : node(context), complete(complete) {}
 
             auto cancel() -> void;
 

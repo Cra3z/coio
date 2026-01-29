@@ -1,6 +1,6 @@
+// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <type_traits>
-#include <tuple>
 
 namespace coio {
     template<typename... Types>
@@ -99,6 +99,15 @@ namespace coio {
 
         template<typename... OutTypes, typename First, typename... Rest>
         struct type_list_unique_helper<type_list<OutTypes...>, type_list<First, Rest...>> : type_list_unique_helper<type_list<OutTypes..., First>, typename type_list_remove_helper<type_list<>, type_list<First, Rest...>, First>::type> {};
+
+        template<typename OutTypeList, typename TypeList, template<typename> typename Pred>
+        struct type_list_filter_helper {
+            using type = OutTypeList;
+        };
+
+        template<typename... Ts, typename First, typename... Rest, template<typename> typename Pred>
+        struct type_list_filter_helper<type_list<Ts...>, type_list<First, Rest...>, Pred> :
+            type_list_filter_helper<std::conditional_t<Pred<First>::value, type_list<Ts..., First>, type_list<Ts...>>, type_list<Rest...>, Pred> {};
     }
 
     template<typename... Types>
@@ -151,6 +160,8 @@ namespace coio {
 
         using unique = typename detail::type_list_unique_helper<type_list<>, type_list>::type;
 
+        template<template<typename> typename Pred>
+        using filter = typename detail::type_list_filter_helper<type_list<>, type_list, Pred>::type;
     };
 
     template<>
@@ -196,6 +207,8 @@ namespace coio {
 
         using unique = type_list;
 
+        template<template<typename> typename Pred>
+        using filter = type_list;
     };
 
     template<typename T>

@@ -1,3 +1,4 @@
+// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <concepts>
 #include <mutex>
@@ -259,7 +260,7 @@ namespace coio {
 
 
     namespace detail {
-        template<std::invocable Fn>
+        template<typename Fn>
         struct call_once {
             auto operator() () -> void {
                 if (flag.exchange(false, std::memory_order_acq_rel)) {
@@ -273,7 +274,7 @@ namespace coio {
     }
 
     template<stoppable_token... StopTokens> requires (sizeof...(StopTokens) >= 2)
-    class union_stop_token {
+    class stop_combiner {
     private:
         using tlist = type_list<StopTokens...>;
 
@@ -286,7 +287,7 @@ namespace coio {
 
         public:
             template<typename Initializer>
-            callback_type(union_stop_token token, Initializer&& init) :
+            callback_type(stop_combiner token, Initializer&& init) :
                 cb_(std::forward<Initializer>(init)),
                 inners_{[&]<std::size_t... I>(std::index_sequence<I...>) {
                     return tpl{
@@ -311,7 +312,7 @@ namespace coio {
         };
 
     public:
-        union_stop_token(StopTokens... stop_tokens) noexcept : tokens_(std::move(stop_tokens)...) {}
+        stop_combiner(StopTokens... stop_tokens) noexcept : tokens_(std::move(stop_tokens)...) {}
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto stop_possible() const noexcept -> bool {
@@ -323,22 +324,23 @@ namespace coio {
             return (any_stop_requested_)(std::index_sequence_for<StopTokens...>{});
         }
 
-        friend auto operator== (const union_stop_token& lhs, const union_stop_token& rhs) -> bool = default;
+        friend auto operator== (const stop_combiner& lhs, const stop_combiner& rhs) -> bool = default;
 
     private:
         template<std::size_t... I>
-        COIO_ALWAYS_INLINE auto any_stop_possible_(std::index_sequence<I...>) noexcept {
+        COIO_ALWAYS_INLINE auto any_stop_possible_(std::index_sequence<I...>) const noexcept {
             return ( ... or std::get<I>(tokens_).stop_possible() );
         }
 
         template<std::size_t... I>
-        COIO_ALWAYS_INLINE auto any_stop_requested_(std::index_sequence<I...>) noexcept {
+        COIO_ALWAYS_INLINE auto any_stop_requested_(std::index_sequence<I...>) const noexcept {
             return ( ... or std::get<I>(tokens_).stop_requested() );
         }
 
     public:
         std::tuple<StopTokens...> tokens_;
     };
+
 
     template<stoppable_source StopSource, stoppable_token StopToken>
     class stop_propagator {

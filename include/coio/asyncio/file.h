@@ -273,7 +273,7 @@ namespace coio {
             /**
              * \brief asynchronously read some data.
              * \param buffer the buffer to read into.
-             * \return an awaitable of `std::size_t`.
+             * \return a sender of `std::size_t`.
              */
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
@@ -307,7 +307,7 @@ namespace coio {
             /**
              * \brief asynchronously write some data.
              * \param buffer the buffer to write from.
-             * \return an awaitable of `std::size_t`.
+             * \return a sender of `std::size_t`.
              */
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) {
@@ -344,7 +344,7 @@ namespace coio {
              * The file position is not changed by this operation.
              * \param offset The offset at which the data will be read.
              * \param buffer A buffer to receive the data read from the file.
-             * \return An awaitable of `std::size_t` representing the number of bytes read.
+             * \return a sender of `std::size_t` representing the number of bytes read.
              * \throw std::system_error if EOF is reached when buffer is not empty or on other failures.
              */
             COIO_ALWAYS_INLINE auto async_read_some_at(
@@ -390,7 +390,7 @@ namespace coio {
              * The file position is not changed by this operation.
              * \param offset The offset at which the data will be written.
              * \param buffer The data to be written to the file.
-             * \return An awaitable of `std::size_t` representing the number of bytes written.
+             * \return a sender of `std::size_t` representing the number of bytes written.
              * \throw std::system_error on failure.
              */
             COIO_ALWAYS_INLINE auto async_write_some_at(

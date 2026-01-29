@@ -211,6 +211,7 @@ namespace coio {
 
         template<>
         struct task_promise_return<void> : task_promise_base<void> {
+            // ReSharper disable once CppMemberFunctionMayBeConst
             COIO_ALWAYS_INLINE auto return_void() -> void {
                 this->state_->dispose_with_value();
             }

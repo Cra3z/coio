@@ -33,19 +33,23 @@ namespace coio {
 
     namespace detail {
         template<typename, typename...>
-        struct merge_compl_sigs_helper;
+        struct completion_signature_helper;
 
         template<typename... PrevSigs, typename... Sigs, typename... Rest>
-        struct merge_compl_sigs_helper<type_list<PrevSigs...>, execution::completion_signatures<Sigs...>, Rest...> :
-            merge_compl_sigs_helper<typename type_list<PrevSigs..., Sigs...>::unique, Rest...> {};
+        struct completion_signature_helper<type_list<PrevSigs...>, execution::completion_signatures<Sigs...>, Rest...> :
+            completion_signature_helper<typename type_list<PrevSigs..., Sigs...>::unique, Rest...> {};
 
         template<typename... Sigs>
-        struct merge_compl_sigs_helper<type_list<Sigs...>> {
-            using type = execution::completion_signatures<Sigs...>;
+        struct completion_signature_helper<type_list<Sigs...>> {
+            using types = type_list<Sigs...>;
+            using set_value_types = types::template filter<is_set_value>;
+            using set_error_types = types::template filter<is_set_error>;
+            using set_stopped_types = types::template filter<is_set_stopped>;
+            using merged_signatures = execution::completion_signatures<Sigs...>;
         };
 
         template<typename... CompletionSigs>
-        using merge_completion_signatures_t = typename merge_compl_sigs_helper<type_list<>, CompletionSigs...>::type;
+        using merge_completion_signatures_t = typename completion_signature_helper<type_list<>, CompletionSigs...>::merged_signatures;
 
         struct fire_and_forget {
             class promise_type : public promise_alloc_control<void> {
@@ -118,110 +122,6 @@ namespace coio {
             };
         };
     }
-
-    struct repeat_effect_until_t : execution::sender_adaptor_closure<repeat_effect_until_t> {
-    private:
-        template<execution::sender Upstream, execution::sender Body, typename Predicate, execution::receiver Receiver>
-        struct state {
-            using operation_state_concept = execution::operation_state_t;
-            struct receiver {
-                using receiver_concept = execution::receiver_t;
-                auto get_env() const noexcept -> execution::env_of_t<Receiver> {
-                    return execution::get_env(state_->rcvr_);
-                }
-
-                auto set_value() && noexcept -> void {
-                    state_->run_next();
-                }
-
-                template<typename Error>
-                auto set_error(Error&& e) && noexcept -> void {
-                    execution::set_error(std::move(state_->rcvr_), std::forward<Error>(e));
-                }
-
-                auto set_stopped() && noexcept -> void {
-                    execution::set_stopped(std::move(state_->rcvr_));
-                }
-
-                state* state_; // never null
-            };
-            using upstream_state          = execution::connect_result_t<Upstream, receiver>;
-            using body_state              = execution::connect_result_t<Body, receiver>;
-
-            struct connector {
-                template<execution::sender Sndr, execution::receiver Rcvr>
-                connector(Sndr&& sndr, Rcvr&& rcvr) :
-                    state_(execution::connect(std::forward<Sndr>(sndr), std::forward<Rcvr>(rcvr))) {}
-
-                connector(const connector&) = delete;
-
-                auto operator= (const connector&) -> connector& = delete;
-
-                body_state state_;
-            };
-
-            template<execution::sender Up, execution::sender By, typename Pred, execution::receiver Rcvr>
-            state(Up&& up, By&& by, Pred&& pred, Rcvr&& rcvr) noexcept
-                : body_(std::forward<By>(by)),
-                  pred_(std::forward<Pred>(pred)),
-                  rcvr_(std::forward<Rcvr>(rcvr)),
-                  upstream_(execution::connect(std::forward<Upstream>(up), receiver{this})) {}
-
-            auto start() & noexcept -> void {
-                execution::start(upstream_);
-            }
-
-            auto run_next() & noexcept -> void {
-                body_state_.reset();
-                if (pred_()) {
-                    execution::set_value(std::move(rcvr_));
-                }
-                else {
-                    body_state_.emplace(std::forward<Body>(body_), receiver{this});
-                    execution::start(body_state_->state_);
-                }
-            }
-
-            Body body_;
-            Predicate pred_;
-            Receiver rcvr_;
-            upstream_state upstream_;
-            std::optional<connector> body_state_{};
-        };
-
-        template<execution::sender Upstream, execution::sender Body, typename Pred>
-        struct sender {
-            using sender_concept = execution::sender_t;
-            using completion_signatures = execution::completion_signatures<
-                execution::set_value_t(),
-                //-dk:TODO add error types of upstream and body
-                //-dk:TODO add stopped only if upstream or body can be stopped
-                execution::set_stopped_t()
-            >;
-
-            template<execution::receiver Receiver>
-            auto connect(Receiver&& receiver) {
-                return state<Upstream, Body, Pred, std::remove_cvref_t<Receiver>>{
-                    std::move(upstream),
-                    std::move(body),
-                    std::move(pred),
-                    std::forward<Receiver>(receiver)
-                };
-            }
-
-            Upstream upstream;
-            Body body;
-            Pred pred;
-        };
-
-    public:
-        template<execution::sender Upstream, execution::sender Body, typename Pred> requires std::invocable<Pred> and boolean_testable<std::invoke_result_t<Pred>>
-        COIO_STATIC_CALL_OP auto operator()(Upstream&& upstream, Body&& body, Pred&& pred) COIO_STATIC_CALL_OP_CONST {
-            return sender<std::remove_cvref_t<Upstream>, std::remove_cvref_t<Body>, std::remove_cvref_t<Pred>>{
-                std::forward<Upstream>(upstream), std::forward<Body>(body), std::forward<Pred>(pred)
-            };
-        }
-    };
 
 
     struct when_any_t {
@@ -408,7 +308,6 @@ namespace coio {
     template<execution::sender... Sender>
     struct when_any_t::sender {
         using sender_concept = execution::sender_t;
-        using completion_signatures = detail::merge_completion_signatures_t<execution::completion_signatures_of_t<Sender>...>;
 
         template<execution::receiver Receiver>
         COIO_ALWAYS_INLINE auto connect(Receiver&& receiver) && -> state<
@@ -421,7 +320,21 @@ namespace coio {
             return {std::forward<Receiver>(receiver), std::move(senders)};
         }
 
+        template<typename Self, typename... Env>
+        static consteval auto get_completion_signatures() noexcept {
+            static_assert(std::same_as<Self, sender>);
+            return detail::merge_completion_signatures_t<execution::completion_signatures_of_t<Sender, Env...>...>{};
+        }
+
         std::tuple<std::remove_cvref_t<Sender>...> senders;
+    };
+
+
+    struct when_any_with_variant_t {
+        template<execution::sender... Sender> requires (sizeof...(Sender) > 0)
+        COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator()(Sender&&... sndr) COIO_STATIC_CALL_OP_CONST {
+            return execution::into_variant(when_any_t{}(std::forward<Sender>(sndr)...));
+        }
     };
 
 
@@ -433,77 +346,67 @@ namespace coio {
             template<execution::receiver Rcvr>
             struct state {
                 using operation_state_concept = execution::operation_state_t;
-                using first_stop_token_t = StopToken;
-                using second_stop_token_t = stop_token_of_t<execution::env_of_t<Rcvr>>;
-                using stop_cb_t = decltype(std::bind_front(&inplace_stop_source::request_stop, std::declval<inplace_stop_source*>()));
+                using stop_token_t = stop_combiner<StopToken, stop_token_of_t<execution::env_of_t<Rcvr>>>;
 
-                struct pair_t {
-                    COIO_NO_UNIQUE_ADDRESS Rcvr rcvr;
-                    inplace_stop_source source;
+                struct data_t {
+                    explicit data_t(Rcvr rcvr, StopToken prev_token) :
+                        rcvr{rcvr},
+                        stop_token(std::move(prev_token), get_stop_token(execution::get_env(this->rcvr))) {}
+
+                    Rcvr rcvr;
+                    stop_token_t stop_token;
                 };
 
                 struct env {
-                    COIO_ALWAYS_INLINE auto query(get_stop_token_t) const noexcept {
-                        return p->source.get_token();
+                    COIO_ALWAYS_INLINE auto query(get_stop_token_t) const noexcept -> stop_token_t {
+                        return d->stop_token;
                     }
 
                     template<typename Prop, typename... Args>
                         requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
                             and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
                     COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
-                        return prop(execution::get_env(p->rcvr), std::forward<Args>(args)...);
+                        return prop(execution::get_env(d->rcvr), std::forward<Args>(args)...);
                     }
 
-                    pair_t* p;
+                    data_t* d;
                 };
 
                 struct receiver {
                     using receiver_concept = execution::receiver_t;
 
                     COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
-                        return env{p};
+                        return env{d};
                     }
 
                     template<typename... Args>
                     COIO_ALWAYS_INLINE auto set_value(Args&&... args) const noexcept -> void {
-                        execution::set_value(std::move(p->rcvr), std::forward<Args>(args)...);
+                        execution::set_value(std::move(d->rcvr), std::forward<Args>(args)...);
                     }
 
                     template<typename E>
                     COIO_ALWAYS_INLINE auto set_error(E&& e) const noexcept -> void {
-                        execution::set_error(std::move(p->rcvr), std::forward<E>(e));
+                        execution::set_error(std::move(d->rcvr), std::forward<E>(e));
                     }
 
                     COIO_ALWAYS_INLINE auto set_stopped() const noexcept -> void {
-                        execution::set_stopped(std::move(p->rcvr));
+                        execution::set_stopped(std::move(d->rcvr));
                     }
 
-                    pair_t* p;
+                    data_t* d;
                 };
 
                 using inner_state_t = execution::connect_result_t<Sndr, receiver>;
 
                 state(Sndr sndr, StopToken stop_token, Rcvr rcvr) :
-                    pair{std::move(rcvr)},
-                    first_stop_token(std::move(stop_token)),
-                    inner_state(execution::connect(std::move(sndr), receiver{&pair})) {}
+                    data{std::move(rcvr), std::move(stop_token)},
+                    inner_state(execution::connect(std::move(sndr), receiver{&data})) {}
 
                 COIO_ALWAYS_INLINE auto start() & noexcept -> void {
-                    auto stop_cb = std::bind_front(&inplace_stop_source::request_stop, &pair.source);
-                    first_stop_cb.construct(first_stop_token, stop_cb);
-                    second_stop_cb.construct(get_stop_token(execution::get_env(pair.rcvr)), stop_cb);
                     execution::start(inner_state);
                 }
 
-                ~state() {
-                    second_stop_cb.destroy();
-                    first_stop_cb.destroy();
-                }
-
-                pair_t pair;
-                first_stop_token_t first_stop_token;
-                detail::manual_lifetime<stop_callback_for_t<first_stop_token_t, stop_cb_t>> first_stop_cb;
-                detail::manual_lifetime<stop_callback_for_t<second_stop_token_t, stop_cb_t>> second_stop_cb;
+                data_t data;
                 inner_state_t inner_state;
             };
 
@@ -550,9 +453,11 @@ namespace coio {
     using execution::on;
 
     using execution::when_all;
+    using execution::when_all_with_variant;
 
     inline constexpr when_any_t when_any{};
-    inline constexpr repeat_effect_until_t repeat_effect_until{};
+    inline constexpr when_any_with_variant_t when_any_with_variant{};
+
     inline constexpr stop_when_t stop_when{};
 
 

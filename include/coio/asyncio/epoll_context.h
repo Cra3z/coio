@@ -11,10 +11,7 @@
 namespace coio {
     namespace detail {
         template<typename Sexpr>
-        class epoll_op_base_for;
-
-        template<typename Sexpr, typename Rcvr>
-        class epoll_op;
+        class epoll_state_base_for;
 
         class reactor_interrupter {
         public:
@@ -43,30 +40,26 @@ namespace coio {
 
     class epoll_context : public detail::loop_base<epoll_context> {
         template<typename Sexpr>
-        friend class detail::epoll_op_base_for;
+        friend class detail::epoll_state_base_for;
         friend loop_base;
     private:
-        class epoll_op_base;
+        class epoll_node;
 
         struct epoll_data {
             std::atomic<bool> registered{false};
-            std::atomic<epoll_op_base*> in_op{nullptr};
-            std::atomic<epoll_op_base*> out_op{nullptr};
+            std::atomic<epoll_node*> in_op{nullptr};
+            std::atomic<epoll_node*> out_op{nullptr};
         };
 
-        class epoll_op_base : public operation_base {
+        class epoll_node : public node {
             friend epoll_context;
         public:
-            epoll_op_base(epoll_context& context, int fd, epoll_data* data) noexcept : operation_base(context), fd(fd), data(data) {}
+            epoll_node(epoll_context& context, int fd, epoll_data* data) noexcept : node(context), fd(fd), data(data) {}
 
         protected:
             [[nodiscard]]
             auto register_event(int event_type, uint32_t extra_flags) noexcept -> bool;
 
-            COIO_ALWAYS_INLINE auto immediate_complete() -> void {
-                context_.op_queue_.enqueue(*this);
-                context_.interrupt();
-            }
         private:
             virtual auto perform() noexcept -> void = 0;
 
@@ -133,10 +126,27 @@ namespace coio {
                     execution::set_stopped_t()
                 >;
 
+                template<typename Rcvr>
+                struct state_base : detail::epoll_state_base_for<Sexpr> {
+                    using base = detail::epoll_state_base_for<Sexpr>;
+
+                    template<typename... Args>
+                    state_base(Rcvr rcvr, Args&&... args) noexcept : base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
+
+                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
+                        this->result.forward_to(std::move(this->rcvr_));
+                    }
+
+                    Rcvr rcvr_;
+                };
+
+                template<typename Rcvr>
+                using state = operation_state<state_base<Rcvr>>;
+
                 template<execution::receiver_of<completion_signatures> Rcvr>
-                COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> detail::epoll_op<Sexpr, Rcvr> {
+                COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                     COIO_ASSERT(fd != -1 and context != nullptr and data != nullptr);
-                    return {
+                    return state<Rcvr>{
                         std::move(rcvr),
                         std::exchange(fd, -1),
                         *std::exchange(context, nullptr),
@@ -194,7 +204,7 @@ namespace coio {
 
         auto reclaim_epoll_data(epoll_data* data) noexcept -> void;
 
-        auto cancel_op(int event, epoll_op_base* op) -> void;
+        auto cancel_op(int event, epoll_node* op) -> void;
 
     private:
         int epoll_fd_;
@@ -204,11 +214,11 @@ namespace coio {
 
     namespace detail {
         template<typename Sexpr>
-        class epoll_op_base_for : private Sexpr, public epoll_context::epoll_op_base {
+        class epoll_state_base_for : private Sexpr, public epoll_context::epoll_node {
         public:
-            epoll_op_base_for(int fd, epoll_context& context, epoll_context::epoll_data* data, Sexpr sexpr) noexcept :
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::epoll_data* data, Sexpr sexpr) noexcept :
                 Sexpr(std::move(sexpr)),
-                epoll_op_base(context, fd, data) {}
+                epoll_node(context, fd, data) {}
 
         protected:
             auto do_cancel() -> void {
@@ -232,105 +242,91 @@ namespace coio {
             async_result<typename Sexpr::result_type, std::error_code> result;
         };
 
+        /// async_read_some
         template<>
-        auto epoll_op_base_for<async_read_some_t>::do_start() noexcept -> bool;
-
-        template<>
-        auto epoll_op_base_for<async_read_some_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_op_base_for<async_read_some_t>::do_cancel() -> void;
-
-
-        template<>
-        auto epoll_op_base_for<async_write_some_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_read_some_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op_base_for<async_write_some_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_read_some_t>::do_cancel() -> void;
+
+
+        /// async_write_some
+        template<>
+        auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_op_base_for<async_write_some_t>::do_cancel() -> void;
-
-
-        template<>
-        auto epoll_op_base_for<async_send_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_write_some_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op_base_for<async_send_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_write_some_t>::do_cancel() -> void;
+
+
+        /// async_send
+        template<>
+        auto epoll_state_base_for<async_send_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_op_base_for<async_send_t>::do_cancel() -> void;
-
-
-        template<>
-        auto epoll_op_base_for<async_receive_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_send_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op_base_for<async_receive_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_send_t>::do_cancel() -> void;
+
+
+        /// async_receive
+        template<>
+        auto epoll_state_base_for<async_receive_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_op_base_for<async_receive_t>::do_cancel() -> void;
-
-
-        template<>
-        auto epoll_op_base_for<async_receive_from_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_receive_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op_base_for<async_receive_from_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_receive_t>::do_cancel() -> void;
+
+
+        /// async_receive_from
+        template<>
+        auto epoll_state_base_for<async_receive_from_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_op_base_for<async_receive_from_t>::do_cancel() -> void;
-
-
-        template<>
-        auto epoll_op_base_for<async_send_to_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_receive_from_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op_base_for<async_send_to_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_receive_from_t>::do_cancel() -> void;
+
+
+        /// async_send_to
+        template<>
+        auto epoll_state_base_for<async_send_to_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_op_base_for<async_send_to_t>::do_cancel() -> void;
-
-
-        template<>
-        auto epoll_op_base_for<async_accept_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_send_to_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op_base_for<async_accept_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_send_to_t>::do_cancel() -> void;
+
+
+        /// async_accept
+        template<>
+        auto epoll_state_base_for<async_accept_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_op_base_for<async_accept_t>::do_cancel() -> void;
-
-
-        template<>
-        auto epoll_op_base_for<async_connect_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_accept_t>::do_perform() noexcept -> void;
 
         template<>
-        auto epoll_op_base_for<async_connect_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_accept_t>::do_cancel() -> void;
+
+
+        /// async_connect
+        template<>
+        auto epoll_state_base_for<async_connect_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_op_base_for<async_connect_t>::do_cancel() -> void;
+        auto epoll_state_base_for<async_connect_t>::do_perform() noexcept -> void;
 
-        template<typename Sexpr, typename Rcvr>
-        class epoll_op : public epoll_context::cancellable<Rcvr, epoll_op_base_for<Sexpr>> {
-        private:
-            using base = epoll_context::cancellable<Rcvr, epoll_op_base_for<Sexpr>>;
-        public:
-            using base::base;
-
-            auto start_impl() noexcept -> void override {
-                if (not this->do_start()) {
-                    this->finish();
-                }
-            }
-
-            auto finish_impl() noexcept -> void override {
-                this->result.forward_to(std::move(this->rcvr_));
-            }
-
-            auto cancel() -> void override {
-                this->do_cancel();
-            }
-        };
+        template<>
+        auto epoll_state_base_for<async_connect_t>::do_cancel() -> void;
     }
 }

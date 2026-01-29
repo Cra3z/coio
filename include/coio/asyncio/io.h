@@ -99,96 +99,102 @@ namespace coio {
         };
 
         struct async_read_fn {
+        public:
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 async_input_device auto& device,
                 std::span<std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST {
-                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, device, buffer);
+                auto sndr = device.async_read_some(buffer);
+                auto allocator = detail::query_or(get_allocator, execution::get_env(sndr), std::allocator<void>{});
+                return std::move(sndr) | let_value([=, &device](std::size_t bytes_transferred) {
+                    return (continue_task)(
+                        std::allocator_arg,
+                        allocator,
+                        device,
+                        buffer,
+                        buffer.size() - bytes_transferred
+                    );
+                });
             }
 
             [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
-                std::allocator_arg_t,
-                const auto&,
                 async_input_device auto& device,
-                std::span<std::byte> buffer
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
+                dynamic_buffer auto& dyn_buffer,
+                std::size_t total
+            ) COIO_STATIC_CALL_OP_CONST {
+                return async_read_fn{}(device, dyn_buffer.prepare(total)) | then([total, &dyn_buffer](std::size_t bytes_transferred) {
+                    COIO_ASSERT(bytes_transferred == total);
+                    dyn_buffer.commit(bytes_transferred);
+                    return total;
+                });
+            }
+
+        private:
+            template<typename Alloc>
+            static auto continue_task(
+                std::allocator_arg_t,
+                Alloc,
+                async_input_device auto& device,
+                std::span<std::byte> buffer,
+                std::size_t remain
+            ) -> task<std::size_t, Alloc> {
                 const std::size_t total = buffer.size();
-                std::size_t remain = total;
-                do {
+                while (remain > 0) {
                     remain -= co_await device.async_read_some(buffer.subspan(total - remain, remain));
                 }
-                while (remain > 0);
-                co_return total;
-            }
-
-            
-            COIO_STATIC_CALL_OP auto operator() (
-                async_input_device auto& device,
-                dynamic_buffer auto& dyn_buffer,
-                std::size_t total
-            ) COIO_STATIC_CALL_OP_CONST {
-                return async_read_fn{}(std::allocator_arg, std::allocator<void>{}, device, dyn_buffer, total);
-            }
-
-            COIO_STATIC_CALL_OP auto operator() (
-                std::allocator_arg_t,
-                const auto&,
-                async_input_device auto& device,
-                dynamic_buffer auto& dyn_buffer,
-                std::size_t total
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
-                std::size_t bytes_transferred = co_await async_read_fn{}(device, dyn_buffer.prepare(total));
-                COIO_ASSERT(bytes_transferred == total);
-                dyn_buffer.commit(bytes_transferred);
                 co_return total;
             }
         };
 
         struct async_write_fn {
+        public:
+            [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 async_output_device auto& device,
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST {
-                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, device, buffer);
+                auto sndr = device.async_write_some(buffer);
+                auto allocator = detail::query_or(get_allocator, execution::get_env(sndr), std::allocator<void>{});
+                return std::move(sndr) | let_value([=, &device](std::size_t bytes_transferred) {
+                    return (continue_task)(
+                        std::allocator_arg,
+                        allocator,
+                        device,
+                        buffer,
+                        buffer.size() - bytes_transferred
+                    );
+                });
             }
 
-            COIO_STATIC_CALL_OP auto operator() (
-                std::allocator_arg_t,
-                const auto&,
-                async_output_device auto& device,
-                std::span<const std::byte> buffer
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
-                const std::size_t total = buffer.size();
-                std::size_t remain = total;
-                do {
-                    remain -= co_await device.async_write_some(buffer.subspan(total - remain, remain));
-                }
-                while (remain > 0);
-                co_return total;
-            }
-
+            [[nodiscard]]
             COIO_STATIC_CALL_OP auto operator() (
                 async_output_device auto& device,
                 dynamic_buffer auto& dyn_buffer
-            ) {
-                return async_write_fn{}(std::allocator_arg, std::allocator<void>{}, device, dyn_buffer);
-            }
-
-            COIO_STATIC_CALL_OP auto operator() (
-                std::allocator_arg_t,
-                const auto& alloc,
-                async_output_device auto& device,
-                dynamic_buffer auto& dyn_buffer
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
-                return then(
-                    async_write_fn{}(std::allocator_arg, alloc, device, dyn_buffer.data()),
+            ) COIO_STATIC_CALL_OP_CONST {
+                return async_write_fn{}(device, dyn_buffer.data()) | then(
                     [&dyn_buffer](std::size_t bytes_transferred) {
                         dyn_buffer.consume(bytes_transferred);
                         return bytes_transferred;
                     }
                 );
+            }
+
+        private:
+            template<typename Alloc>
+            static auto continue_task(
+                std::allocator_arg_t,
+                Alloc,
+                async_input_device auto& device,
+                std::span<const std::byte> buffer,
+                std::size_t remain
+            ) -> task<std::size_t, Alloc> {
+                const std::size_t total = buffer.size();
+                while (remain > 0) {
+                    remain -= co_await device.async_write_some(buffer.subspan(total - remain, remain));
+                }
+                co_return total;
             }
         };
 

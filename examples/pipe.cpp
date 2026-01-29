@@ -19,7 +19,7 @@ auto main() -> int {
             while (true) {
                 auto n = co_await r.async_read_some(coio::as_writable_bytes(buffer));
                 std::string_view message{buffer, n};
-                if (message.ends_with('\xff')) break;
+                if (message.ends_with('\x1a')) break;
                 std::clog << message;
             }
         }
@@ -40,7 +40,7 @@ auto main() -> int {
           "cillum dolore eu fugiat nulla pariatur.",
           "Excepteur sint occaecat cupidatat non proident",
           "sunt in culpa qui officia deserunt mollit anim id est laborum.",
-          "\xff"
+          "\x1a"
         };
         for (std::string_view message : messages) {
             co_await coio::async_write(w, coio::as_bytes(message));
@@ -49,5 +49,5 @@ auto main() -> int {
 
     context.run();
 
-    coio::sync_wait(scope.join());
+    coio::this_thread::sync_wait(scope.join());
 }
