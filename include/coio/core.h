@@ -387,9 +387,6 @@ namespace coio {
                 auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
                     coro_ = this_coro;
                     scope_.list_.push(*this);
-                    if constexpr (stoppable_promise<Promise>) {
-                        stopped_callback_ = &detail::stop_coroutine<Promise>;
-                    }
                     return scope_.ref_count_.fetch_sub(1, std::memory_order_acq_rel) > 1;
                 }
 
@@ -398,7 +395,6 @@ namespace coio {
             private:
                 async_scope& scope_;
                 std::coroutine_handle<> coro_;
-                detail::unhandled_stopped_fn stopped_callback_ = &detail::default_unhandled_stopped_;
                 awaiter* next_ = nullptr;
             };
 

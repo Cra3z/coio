@@ -347,13 +347,11 @@ namespace coio {
 
             auto poll_one() -> bool {
                 auto self = static_cast<Ctx*>(this);
-                if (work_count_ == 0) self->request_stop();
                 return self->do_one(false);
             }
 
             auto poll() -> std::size_t {
                 auto self = static_cast<Ctx*>(this);
-                if (work_count_ == 0) self->request_stop();
                 std::size_t count = 0;
                 while (poll_one()) {
                     if (count < std::numeric_limits<std::size_t>::max()) ++count;
@@ -363,13 +361,11 @@ namespace coio {
 
             auto run_one() -> bool {
                 auto self = static_cast<Ctx*>(this);
-                if (work_count_ == 0) self->request_stop();
                 return self->do_one(true);
             }
 
             auto run() -> std::size_t {
                 auto self = static_cast<Ctx*>(this);
-                if (work_count_ == 0) self->request_stop();
                 std::size_t count = 0;
                 while (run_one()) {
                     if (count < std::numeric_limits<std::size_t>::max()) ++count;
