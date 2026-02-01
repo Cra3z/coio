@@ -54,7 +54,7 @@ auto main() -> int {
     io_context context;
     coio::async_scope scope;
     scope.spawn(start_server(context.get_scheduler()));
-    // scope.spawn(signal_watchdog(context));
+    scope.spawn(signal_watchdog(context));
     context.run();
     coio::this_thread::sync_wait(scope.join());
 }

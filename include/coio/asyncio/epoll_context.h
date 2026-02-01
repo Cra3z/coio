@@ -175,8 +175,8 @@ namespace coio {
 
             template<typename Sexpr>
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto schedule_io(io_object& obj, Sexpr sexpr) noexcept -> io_sender<Sexpr> {
-                return {obj.fd_, ctx_, obj.data_, std::move(sexpr)};
+            COIO_ALWAYS_INLINE auto schedule_io(io_object& obj, Sexpr sexpr) noexcept {
+                return stop_when(io_sender<Sexpr>{obj.fd_, ctx_, obj.data_, std::move(sexpr)}, ctx_->stop_source_.get_token());
             }
 
         public:

@@ -278,19 +278,16 @@ namespace coio {
 
                 template<typename Rep, typename Period>
                 [[nodiscard]]
-                COIO_ALWAYS_INLINE auto schedule_after(std::chrono::duration<Rep, Period> duration) const noexcept -> sleep_sender {
-                    return sleep_sender{
-                        *ctx_,
-                        now() + std::chrono::duration_cast<typename sleep_sender::duration_type>(duration)
-                    };
+                COIO_ALWAYS_INLINE auto schedule_after(std::chrono::duration<Rep, Period> duration) const noexcept {
+                    return this->schedule_at(now() + duration);
                 }
 
                 [[nodiscard]]
-                COIO_ALWAYS_INLINE auto schedule_at(std::chrono::steady_clock::time_point deadline) const noexcept -> sleep_sender {
-                    return sleep_sender{
+                COIO_ALWAYS_INLINE auto schedule_at(std::chrono::steady_clock::time_point deadline) const noexcept {
+                    return stop_when(sleep_sender{
                         *ctx_,
                         deadline
-                    };
+                    }, ctx_->stop_source_.get_token());
                 }
 
                 [[nodiscard]]
@@ -332,21 +329,9 @@ namespace coio {
                 return allocator_;
             }
 
-            [[nodiscard]]
-            COIO_ALWAYS_INLINE auto get_stop_token() const noexcept -> inplace_stop_token {
-                return stop_source_.get_token();
-            }
-
-            COIO_ALWAYS_INLINE auto request_stop() -> bool {
+            COIO_ALWAYS_INLINE auto request_stop() -> void {
                 auto self = static_cast<Ctx*>(this);
-                const auto result = stop_source_.request_stop();
-                if (result) self->interrupt();
-                return result;
-            }
-
-            [[nodiscard]]
-            COIO_ALWAYS_INLINE auto stop_requested() const noexcept -> bool {
-                return stop_source_.stop_requested();
+                if (stop_source_.request_stop()) self->interrupt();
             }
 
             COIO_ALWAYS_INLINE auto work_started() noexcept -> void {
@@ -450,7 +435,7 @@ namespace coio {
 
     private:
         auto do_one(bool infinite) -> bool {
-            while (not stop_requested()) {
+            while (work_count_ > 0) {
                 timer_queue_.take_ready_timers(op_queue_);
                 if (const auto op = op_queue_.try_dequeue()) {
                     op->finish();

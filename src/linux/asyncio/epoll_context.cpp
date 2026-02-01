@@ -132,11 +132,11 @@ namespace coio {
     }
 
     auto epoll_context::do_one(bool infinite) -> bool {
-        if (stop_requested()) return false;
+        if (work_count_ == 0) return false;
 
         ::epoll_event ready_events[epoll_max_wait_count];
         int timeout = infinite ? -1 : 0;
-        while (not stop_requested()) {
+        while (work_count_ > 0) {
             timer_queue_.take_ready_timers(op_queue_);
             if (const auto op = op_queue_.try_dequeue()) {
                 op->finish();
@@ -145,7 +145,7 @@ namespace coio {
 
             std::unique_lock lock{epoll_mtx_, std::try_to_lock};
             if (not lock.owns_lock()) continue;
-            if (stop_requested()) break;
+            if (work_count_ == 0) break;
 
             if (infinite) {
                 using milliseconds = std::chrono::duration<int, std::milli>;

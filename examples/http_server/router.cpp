@@ -48,7 +48,7 @@ namespace http {
         static_dir_ = std::move(dir);
     }
 
-    auto router::route(const request& req, response& res) -> void {
+    auto router::route(const request& req, response& res) const -> void {
         if (req.method != "GET") {
             res = response::stock_reply(response::method_not_allowed);
             return;
@@ -69,7 +69,7 @@ namespace http {
         res = response::stock_reply(response::not_found);
     }
 
-    auto router::serve_home(const request& req, response& res) -> void {
+    auto router::serve_home(const request& req, response& res) const -> void {
         std::filesystem::path index_file_path = static_dir_ / "index.html";
         res.status = response::ok;
         res.content = coio::as_bytes(files_.at(index_file_path));
@@ -77,7 +77,7 @@ namespace http {
         res.headers.emplace("Content-Length", std::to_string(res.content.size()));
     }
 
-    auto router::serve_static(const request& req, response& res) -> bool {
+    auto router::serve_static(const request& req, response& res) const -> bool {
         // Check if path starts with /static/
         if (!req.path.starts_with("/static/")) {
             return false;
@@ -109,7 +109,7 @@ namespace http {
         return true;
     }
 
-    auto router::get_content_type(const std::string& extension) -> std::string {
+    auto router::get_content_type(const std::string& extension) const -> std::string {
         auto it = mime_types_.find(extension);
         if (it != mime_types_.end()) {
             return it->second;

@@ -388,4 +388,104 @@ namespace coio {
     private:
         StopToken stop_token_;
     };
+
+
+    struct stop_when_t {
+        template<execution::sender Sndr, stoppable_token StopToken>
+        struct sender {
+            using sender_concept = execution::sender_t;
+
+            template<execution::receiver Rcvr>
+            struct state {
+                using operation_state_concept = execution::operation_state_t;
+                using stop_token_t = stop_combiner<StopToken, stop_token_of_t<execution::env_of_t<Rcvr>>>;
+
+                struct data_t {
+                    explicit data_t(Rcvr rcvr, StopToken prev_token) :
+                        rcvr{rcvr},
+                        stop_token(std::move(prev_token), get_stop_token(execution::get_env(this->rcvr))) {}
+
+                    Rcvr rcvr;
+                    stop_token_t stop_token;
+                };
+
+                struct env {
+                    COIO_ALWAYS_INLINE auto query(get_stop_token_t) const noexcept -> stop_token_t {
+                        return d->stop_token;
+                    }
+
+                    template<typename Prop, typename... Args>
+                        requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
+                            and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
+                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
+                        return prop(execution::get_env(d->rcvr), std::forward<Args>(args)...);
+                    }
+
+                    data_t* d;
+                };
+
+                struct receiver {
+                    using receiver_concept = execution::receiver_t;
+
+                    COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
+                        return env{d};
+                    }
+
+                    template<typename... Args>
+                    COIO_ALWAYS_INLINE auto set_value(Args&&... args) const noexcept -> void {
+                        execution::set_value(std::move(d->rcvr), std::forward<Args>(args)...);
+                    }
+
+                    template<typename E>
+                    COIO_ALWAYS_INLINE auto set_error(E&& e) const noexcept -> void {
+                        execution::set_error(std::move(d->rcvr), std::forward<E>(e));
+                    }
+
+                    COIO_ALWAYS_INLINE auto set_stopped() const noexcept -> void {
+                        execution::set_stopped(std::move(d->rcvr));
+                    }
+
+                    data_t* d;
+                };
+
+                using inner_state_t = execution::connect_result_t<Sndr, receiver>;
+
+                state(Sndr sndr, StopToken stop_token, Rcvr rcvr) :
+                    data{std::move(rcvr), std::move(stop_token)},
+                    inner_state(execution::connect(std::move(sndr), receiver{&data})) {}
+
+                COIO_ALWAYS_INLINE auto start() & noexcept -> void {
+                    execution::start(inner_state);
+                }
+
+                data_t data;
+                inner_state_t inner_state;
+            };
+
+            template<typename E>
+            COIO_ALWAYS_INLINE auto get_completion_signatures(const E& e) const noexcept {
+                return execution::get_completion_signatures(sndr, e);
+            }
+
+            template<execution::receiver Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && -> state<Rcvr> {
+                return state<Rcvr>{std::move(sndr), std::move(stop_token), std::move(rcvr)};
+            }
+
+            StopToken stop_token;
+            Sndr sndr;
+        };
+
+        template<execution::sender Sndr, stoppable_token StopToken>
+        COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator()(Sndr sndr, StopToken stop_token) COIO_STATIC_CALL_OP_CONST noexcept  {
+            if constexpr (unstoppable_token<StopToken>) {
+                return std::move(sndr);
+            }
+            else {
+                return sender<Sndr, StopToken>{std::move(stop_token), std::move(sndr)};
+            }
+        }
+    };
+
+    inline constexpr stop_when_t stop_when{};
 }
