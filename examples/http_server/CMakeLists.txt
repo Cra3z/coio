@@ -19,13 +19,8 @@ target_link_libraries(
     coio
 )
 
-# Define the source directory so the server can find static files
 target_compile_definitions(
     example-http_server
     PRIVATE
-    HTTP_SERVER_STATIC_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    HTTP_SERVER_STATIC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/static"
 )
-
-# Copy static files to build directory for convenience
-file(GLOB STATIC_FILES "${CMAKE_CURRENT_SOURCE_DIR}/static/*")
-file(COPY ${STATIC_FILES} DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/static")

@@ -424,6 +424,14 @@ namespace coio {
     public:
         async_scope() noexcept : retain_base(1) {}
 
+        async_scope(const async_scope&) = delete;
+
+        ~async_scope() {
+            request_stop();
+        }
+
+        auto operator= (const async_scope&) -> async_scope& = delete;
+
         template<execution::sender Sndr>
         COIO_ALWAYS_INLINE auto spawn(Sndr sndr) -> void {
             auto allocator = detail::query_or(get_allocator, execution::get_env(sndr), std::allocator<void>{});

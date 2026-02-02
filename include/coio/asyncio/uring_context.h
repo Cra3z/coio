@@ -166,6 +166,7 @@ namespace coio {
 
     private:
         std::mutex uring_mtx_;
+        std::mutex run_mtx_;
         ::io_uring uring_{};
     };
 

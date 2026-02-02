@@ -69,7 +69,7 @@ namespace coio {
                 return true;
             }
 
-            std::unique_lock lock{uring_mtx_, std::try_to_lock};
+            std::unique_lock lock{run_mtx_, std::try_to_lock};
             if (not lock.owns_lock()) continue;
             if (work_count_ == 0) break;
 
@@ -88,15 +88,15 @@ namespace coio {
                         .tv_sec = usec / 1000'000,
                         .tv_nsec = (usec % 1000'000) * 1'000
                     };
-                    ec = -::io_uring_submit_and_wait_timeout(&uring_, &cqe, 1, &timeout, nullptr);
+                    ec = -::io_uring_wait_cqe_timeout(&uring_, &cqe, &timeout);
                 }
                 else {
-                    ec = -::io_uring_submit_and_wait_timeout(&uring_, &cqe, 1, nullptr, nullptr);
+                    ec = -::io_uring_wait_cqe_timeout(&uring_, &cqe, nullptr);
                 }
             }
             else {
                 ::__kernel_timespec immediate{};
-                ec = -::io_uring_submit_and_wait_timeout(&uring_, &cqe, 1, &immediate, nullptr);
+                ec = -::io_uring_wait_cqe_timeout(&uring_, &cqe, &immediate);
             }
 
             if (ec == EINTR or ec == ETIME) {
@@ -352,8 +352,8 @@ namespace coio {
 
         template<>
         auto uring_state_base_for<async_connect_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
             auto [psa, len] = to_sockaddr(peer);
+            std::scoped_lock _{context_.uring_mtx_};
             auto sqe = context_.allocate_sqe();
             if (sqe == nullptr) {
                 result.set_error(std::make_error_code(std::errc::no_buffer_space));

@@ -15,7 +15,6 @@ namespace http {
         router& operator=(const router&) = delete;
 
         auto route(const request& req, response& res) const -> void;
-        auto set_static_dir(std::filesystem::path dir) -> void;
 
     private:
         auto serve_home(const request& req, response& res) const -> void;

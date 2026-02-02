@@ -143,7 +143,7 @@ namespace coio {
                 return true;
             }
 
-            std::unique_lock lock{epoll_mtx_, std::try_to_lock};
+            std::unique_lock lock{run_mtx_, std::try_to_lock};
             if (not lock.owns_lock()) continue;
             if (work_count_ == 0) break;
 

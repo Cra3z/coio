@@ -31,9 +31,9 @@ namespace http {
     }
 
     router::router(std::filesystem::path static_dir) : static_dir_(std::move(static_dir)), mime_types_(init_mime_types()) {
-        for (std::filesystem::directory_entry entry : std::filesystem::directory_iterator(static_dir_)) {
+        for (const auto& entry : std::filesystem::directory_iterator(static_dir_)) {
             if (!entry.is_regular_file()) continue;
-            const auto path = entry.path();
+            const auto& path = entry.path();
             std::ifstream file{path, std::ios::binary};
             if (not file) throw std::runtime_error{std::format("cannot open file: {}", path.string())};
             files_.try_emplace(
@@ -42,10 +42,6 @@ namespace http {
                 std::istreambuf_iterator<char>{}
             );
         }
-    }
-
-    auto router::set_static_dir(std::filesystem::path dir) -> void {
-        static_dir_ = std::move(dir);
     }
 
     auto router::route(const request& req, response& res) const -> void {

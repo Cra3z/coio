@@ -1,3 +1,4 @@
+// NOLINTBEGIN(*-narrowing-conversions)
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <coio/asyncio/file.h>
@@ -105,7 +106,7 @@ namespace coio::detail {
     }
 
     auto file_size(file_native_handle_type handle) -> std::size_t {
-        struct ::stat st;
+        struct ::stat st; // NOLINT(cppcoreguidelines-pro-type-member-init)
         throw_last_error(::fstat(handle, &st), "size");
         return st.st_size;
     }
@@ -125,3 +126,5 @@ namespace coio::detail {
         throw_last_error(::fdatasync(handle), "sync_data");
     }
 }
+
+// NOLINTEND(*-narrowing-conversions)

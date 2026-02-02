@@ -341,7 +341,7 @@ namespace coio {
             COIO_ALWAYS_INLINE auto work_finished() noexcept -> void {
                 if (--work_count_ == 0) {
                     auto self = static_cast<Ctx*>(this);
-                    self->request_stop();
+                    self->interrupt();
                 }
             }
 
