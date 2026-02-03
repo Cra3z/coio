@@ -1,5 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <circle cx="16" cy="16" r="14" fill="#3498db"/>
-  <text x="16" y="21" font-family="Georgia, serif" font-size="12" font-weight="bold" fill="white" text-anchor="middle">coio</text>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
+    <defs>
+        <style>
+            .code-text {
+                font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+                font-weight: 800;
+                font-size: 19px;
+                letter-spacing: -1px;
+                dominant-baseline: central;
+                text-anchor: middle;
+            }
+        </style>
+    </defs>
 
+    <rect x="6" y="6" width="52" height="52" rx="16" fill="url(#g)" filter="url(#soft)"/>
+    <rect x="10" y="10" width="44" height="44" rx="14" fill="rgba(11,16,32,1)"/>
+    <text x="32" y="32" class="code-text"><tspan fill="#c586c0">co</tspan><tspan fill="#4ec9b0">io</tspan>
+    </text>
+</svg>

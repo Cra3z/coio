@@ -100,8 +100,6 @@ namespace http {
         res.content = coio::as_bytes(files_.at(file_path));
         res.headers.emplace("Content-Type", get_content_type(file_path.extension().string()));
         res.headers.emplace("Content-Length", std::to_string(res.content.size()));
-        res.headers.emplace("Cache-Control", "public, max-age=3600");
-
         return true;
     }
 
