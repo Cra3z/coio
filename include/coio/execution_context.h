@@ -1,6 +1,7 @@
 // ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
+#include <iostream>
 #include <atomic>
 #include <chrono>
 #include <functional>

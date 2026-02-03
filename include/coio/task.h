@@ -7,7 +7,6 @@
 #include "detail/concepts.h"
 #include "detail/co_memory.h"
 #include "detail/execution.h"
-#include "detail/unhandled_stopped.h"
 #include "utils/stop_token.h"
 #include "utils/utility.h"
 
@@ -150,7 +149,8 @@ namespace coio {
 
             auto complete() noexcept -> std::coroutine_handle<> override {
                 if (this->result_.index() == 0) {
-                    return (stop_coroutine<RcvrPromise>)(continuation_);
+                    auto& promise = std::coroutine_handle<Promise>::from_address(continuation_.address()).promise();
+                    return promise.unhandled_stopped();
                 }
                 return continuation_;
             }
@@ -237,7 +237,8 @@ namespace coio {
 
             COIO_ALWAYS_INLINE auto get_env() const noexcept {
                 return execution::env{
-                    execution::prop{get_stop_token, this->state_->get_stop_token()}
+                    execution::prop{get_stop_token, this->state_->get_stop_token()},
+                    execution::prop{execution::get_scheduler, execution::inline_scheduler{}}
                 };
             }
         };

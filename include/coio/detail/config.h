@@ -5,6 +5,14 @@
 #include <linux/version.h>
 #endif
 
+#if defined(__has_feature) and __has_feature(thread_sanitizer)
+#include <sanitizer/tsan_interface.h>
+#define COIO_TSAN_ACQUIRE(addr) __tsan_acquire(addr)
+#define COIO_TSAN_RELEASE(addr) __tsan_release(addr)
+#else
+#define COIO_TSAN_ACQUIRE(addr) static_cast<void>(addr)
+#define COIO_TSAN_RELEASE(addr) static_cast<void>(addr)
+#endif
 
 #define COIO_CXX_STD98 199711L
 #define COIO_CXX_STD11 201103L

@@ -23,14 +23,17 @@ namespace coio::detail {
 
         template<typename... Args> requires (std::is_void_v<T> and sizeof...(Args) == 0) or (std::constructible_from<T, Args...>)
         auto set_value(Args&&... args) noexcept {
+            COIO_ASSERT(result_.index() == 0);
             result_.template emplace<1>(std::forward<Args>(args)...);
         }
 
         auto set_error(error_type e) noexcept -> void {
+            COIO_ASSERT(result_.index() == 0);
             result_.template emplace<2>(std::move(e));
         }
 
         auto set_stopped() noexcept -> void {
+            COIO_ASSERT(result_.index() == 0);
             result_.template emplace<0>();
         }
 

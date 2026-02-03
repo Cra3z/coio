@@ -216,18 +216,35 @@ namespace coio {
                 fd(fd) {}
 
         protected:
-            auto do_start() noexcept -> bool {
+            auto prepare(::io_uring_sqe*) noexcept -> void {
                 static_assert(always_false<Sexpr>, "this operation isn't supported");
-                unreachable();
+            }
+            
+            auto do_start() noexcept -> bool {
+                std::scoped_lock _{context_.uring_mtx_};
+                auto sqe = context_.allocate_sqe();
+                if (sqe == nullptr) {
+                    result.set_error(std::make_error_code(std::errc::no_buffer_space));
+                    return false;
+                }
+                this->prepare(sqe);
+                ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
+                if (const auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
+                    result.set_error(std::error_code{ec, std::system_category()});
+                    return false;
+                }
+                COIO_TSAN_RELEASE(static_cast<uring_node*>(this)); // suppress TSAN false positives, see https://github.com/axboe/liburing/issues/1514
+                return true;
             }
 
             auto complete(int cqe_res) -> void override {
                 if (cqe_res < 0) {
-                    if (-cqe_res == ECANCELED) {
+                    const std::error_code ec{-cqe_res, std::system_category()};
+                    if (ec == std::errc::operation_canceled) {
                         result.set_stopped();
                     }
                     else {
-                        result.set_error(std::error_code{-cqe_res, std::system_category()});
+                        result.set_error(ec);
                     }
                 }
                 else {
@@ -247,42 +264,42 @@ namespace coio {
 
         /// async_read_some
         template<>
-        auto uring_state_base_for<async_read_some_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_read_some_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_write_some
         template<>
-        auto uring_state_base_for<async_write_some_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_write_some_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_read_some_at
         template<>
-        auto uring_state_base_for<async_read_some_at_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_read_some_at_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_write_some_at
         template<>
-        auto uring_state_base_for<async_write_some_at_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_write_some_at_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_receive
         template<>
-        auto uring_state_base_for<async_receive_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_receive_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_send
         template<>
-        auto uring_state_base_for<async_send_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_send_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_receive_from
         template<>
-        auto uring_state_base_for<async_receive_from_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_receive_from_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_send_to
         template<>
-        auto uring_state_base_for<async_send_to_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_send_to_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_accept
         template<>
-        auto uring_state_base_for<async_accept_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_accept_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         /// async_connect
         template<>
-        auto uring_state_base_for<async_connect_t>::do_start() noexcept -> bool;
+        auto uring_state_base_for<async_connect_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
     }
 }

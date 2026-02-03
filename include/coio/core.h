@@ -1,12 +1,11 @@
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
-#include "task.h"
+#include "task.h" // IWYU pragma: keep
 #include "execution_context.h"
 #include "detail/execution.h"
 #include "detail/intrusive_stack.h"
 #include "detail/manual_lifetime.h"
-#include "detail/unhandled_stopped.h"
-#include "utils/retain_ptr.h"
+#include "utils/async_scope.h"
 
 namespace coio {
     using execution::scheduler;
@@ -17,15 +16,6 @@ namespace coio {
         { static_cast<Scheduler&&>(sch).schedule_after(static_cast<Scheduler&&>(sch).now().time_since_epoch()) } -> execution::sender;
         { static_cast<Scheduler&&>(sch).schedule_at(static_cast<Scheduler&&>(sch).now()) } -> execution::sender;
     };
-
-    struct get_io_service_t : forwarding_query_t {
-        template<typename Env> requires requires(Env env) { env.query(std::declval<get_io_service_t>()); }
-        COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP decltype(auto) operator()(const Env& env) COIO_STATIC_CALL_OP_CONST noexcept {
-            return env.query(get_io_service_t{});
-        }
-    };
-
-    inline constexpr get_io_service_t get_io_service{};
 
     template<typename Scheduler>
     concept io_scheduler = scheduler<Scheduler> and
@@ -50,77 +40,6 @@ namespace coio {
 
         template<typename... CompletionSigs>
         using merge_completion_signatures_t = typename completion_signature_helper<type_list<>, CompletionSigs...>::merged_signatures;
-
-        struct fire_and_forget {
-            class promise_type : public promise_alloc_control<void> {
-            private:
-                template<typename Awaiter>
-                struct awaiter_wrapper {
-                    COIO_ALWAYS_INLINE decltype(auto) await_ready() noexcept {
-                        return inner_.await_ready();
-                    }
-
-                    template<typename Promise>
-                    COIO_ALWAYS_INLINE decltype(auto) await_suspend(std::coroutine_handle<Promise> this_coro) noexcept {
-                        return inner_.await_suspend(this_coro);
-                    }
-
-                    COIO_ALWAYS_INLINE auto await_resume() noexcept -> void {
-                        if (stopped_) return;
-                        void(inner_.await_resume());
-                    }
-
-                    Awaiter inner_;
-                    bool& stopped_; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
-                };
-
-            public:
-                promise_type() = default;
-
-                template<execution::sender Sndr>
-                auto await_transform(Sndr&& sndr) noexcept {
-                    if constexpr (awaiter<std::invoke_result_t<execution::as_awaitable_t, Sndr, promise_type&>, promise_type>) {
-                        return awaiter_wrapper{
-                            execution::as_awaitable(std::forward<Sndr>(sndr), *this),
-                            stopped_ = false
-                        };
-                    }
-                    else {
-                        return awaiter_wrapper{
-                            detail::get_awaiter_impl<promise_type>(execution::as_awaitable(std::forward<Sndr>(sndr), *this)),
-                            stopped_ = false
-                        };
-                    }
-                }
-
-                static auto get_return_object() noexcept -> fire_and_forget {
-                    return {};
-                }
-
-                static auto initial_suspend() noexcept -> std::suspend_never {
-                    return {};
-                }
-
-                static auto final_suspend() noexcept -> std::suspend_never {
-                    return {};
-                }
-
-                static auto return_void() noexcept -> void {}
-
-                [[noreturn]]
-                static auto unhandled_exception() noexcept -> void {
-                    std::terminate();
-                }
-
-                auto unhandled_stopped() noexcept -> std::coroutine_handle<> {
-                    stopped_ = true;
-                    return std::coroutine_handle<promise_type>::from_promise(*this);
-                }
-
-            private:
-                bool stopped_ = false;
-            };
-        };
     }
 
 
@@ -360,107 +279,4 @@ namespace coio {
 
     inline constexpr when_any_t when_any{};
     inline constexpr when_any_with_variant_t when_any_with_variant{};
-
-
-    class async_scope : retain_base<async_scope> {
-        friend retain_base;
-        friend retain_ptr<async_scope>;
-    public:
-        class join_sender {
-            friend async_scope;
-        private:
-            class awaiter {
-                friend join_sender;
-                friend async_scope;
-            public:
-                awaiter(async_scope& scope) noexcept : scope_(scope) {}
-
-                awaiter(const awaiter&) = delete;
-
-                auto operator= (const awaiter&) -> awaiter& = delete;
-
-                auto await_ready() noexcept -> bool {
-                    return scope_.ref_count_.load(std::memory_order_acquire) == 0;
-                }
-
-                template<typename Promise>
-                auto await_suspend(std::coroutine_handle<Promise> this_coro) noexcept -> bool {
-                    coro_ = this_coro;
-                    scope_.list_.push(*this);
-                    return scope_.ref_count_.fetch_sub(1, std::memory_order_acq_rel) > 1;
-                }
-
-                static auto await_resume() noexcept -> void {}
-
-            private:
-                async_scope& scope_;
-                std::coroutine_handle<> coro_;
-                awaiter* next_ = nullptr;
-            };
-
-        private:
-            join_sender(async_scope& scope) noexcept : scope_(&scope) {}
-
-        public:
-            join_sender(const join_sender&) = delete;
-
-            join_sender(join_sender&& other) noexcept : scope_(std::exchange(other.scope_, {})) {};
-
-            auto operator= (const join_sender&) -> join_sender& = delete;
-
-            auto operator= (join_sender&& other) noexcept -> join_sender& {
-                scope_ = std::exchange(other.scope_, {});
-                return *this;
-            }
-
-            auto operator co_await() && noexcept -> awaiter {
-                return awaiter{*std::exchange(scope_, nullptr)};
-            }
-
-        private:
-            async_scope* scope_;
-        };
-
-    public:
-        async_scope() noexcept : retain_base(1) {}
-
-        async_scope(const async_scope&) = delete;
-
-        ~async_scope() {
-            request_stop();
-        }
-
-        auto operator= (const async_scope&) -> async_scope& = delete;
-
-        template<execution::sender Sndr>
-        COIO_ALWAYS_INLINE auto spawn(Sndr sndr) -> void {
-            auto allocator = detail::query_or(get_allocator, execution::get_env(sndr), std::allocator<void>{});
-            [](std::allocator_arg_t, auto, auto spawned, retain_ptr<async_scope>) -> detail::fire_and_forget {
-                void(co_await std::move(spawned));
-            }(std::allocator_arg, std::move(allocator), stop_when(std::move(sndr), stop_source_.get_token()), retain_ptr{this});
-        }
-
-        [[nodiscard]]
-        COIO_ALWAYS_INLINE auto join() noexcept -> join_sender {
-            return join_sender{*this};
-        }
-
-        COIO_ALWAYS_INLINE auto request_stop() -> void {
-            void(stop_source_.request_stop());
-        }
-
-    private:
-        auto do_lose() noexcept -> void {
-            auto node = list_.pop_all();
-            while (node) {
-                auto next = node->next_;
-                node->coro_.resume();
-                node = next;
-            }
-        }
-
-    private:
-        inplace_stop_source stop_source_;
-        detail::intrusive_stack<join_sender::awaiter> list_{&join_sender::awaiter::next_};
-    };
 }

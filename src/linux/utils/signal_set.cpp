@@ -61,11 +61,10 @@ namespace coio {
                     auto sigsets = sigset_table[signal_number];  // copy, not move
                     lck.unlock();
                     for (auto sigset : sigsets) {
-                        auto node = sigset->awaiters_.pop_all();
+                        auto node = sigset->listeners_.pop_all();
                         while (node) {
                             const auto next = node->next_;
-                            node->signal_number_ = signal_number;
-                            node->coro_.resume();
+                            node->finish_(node, signal_number);
                             node = next;
                         }
                     }
@@ -152,10 +151,10 @@ namespace coio {
     }
 
     auto signal_set::cancel() -> void {
-        auto node = awaiters_.pop_all();
+        auto node = listeners_.pop_all();
         while (node) {
             const auto next = node->next_;
-            node->unhandled_stopped_(node->coro_).resume();
+            node->finish_(node, -ECANCELED);
             node = next;
         }
     }

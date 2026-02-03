@@ -109,6 +109,7 @@ namespace coio {
             if (cqe) {
                 if (auto user_data = ::io_uring_cqe_get_data(cqe); user_data and user_data != this) {
                     auto op = static_cast<uring_node*>(user_data);
+                    COIO_TSAN_ACQUIRE(op); // suppress TSAN false positives, see https://github.com/axboe/liburing/issues/1514
                     op->complete(cqe->res);
                     local_op_queue.unsynchronized_enqueue(*op);
                 }
@@ -125,6 +126,7 @@ namespace coio {
                 for (auto peeked_cqe : std::span(peeked_cqes, n)) {
                     if (auto user_data = ::io_uring_cqe_get_data(peeked_cqe); user_data and user_data != this) {
                         auto op = static_cast<uring_node*>(user_data);
+                        COIO_TSAN_ACQUIRE(op); // suppress TSAN false positives, see https://github.com/axboe/liburing/issues/1514
                         op->complete(peeked_cqe->res);
                         local_op_queue.unsynchronized_enqueue(*op);
                     }
@@ -194,180 +196,59 @@ namespace coio {
 
 
         template<>
-        auto uring_state_base_for<async_read_some_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_read_some_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), -1);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
         template<>
-        auto uring_state_base_for<async_write_some_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_write_some_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_write(sqe, fd, buffer.data(), buffer.size(), -1);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
         template<>
-        auto uring_state_base_for<async_read_some_at_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_read_some_at_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), offset);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
         template<>
-        auto uring_state_base_for<async_write_some_at_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_write_some_at_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_write(sqe, fd, buffer.data(), buffer.size(), offset);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
         template<>
-        auto uring_state_base_for<async_receive_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_receive_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_recv(sqe, fd, buffer.data(), buffer.size(), 0);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
 
         template<>
-        auto uring_state_base_for<async_send_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_send_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_send(sqe, fd, buffer.data(), buffer.size(), MSG_NOSIGNAL);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
         template<>
-        auto uring_state_base_for<async_receive_from_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_receive_from_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_recvmsg(sqe, fd, &msg, 0);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
 
         template<>
-        auto uring_state_base_for<async_send_to_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_send_to_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_sendmsg(sqe, fd, &msg, MSG_NOSIGNAL);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
 
         template<>
-        auto uring_state_base_for<async_accept_t>::do_start() noexcept -> bool {
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
+        auto uring_state_base_for<async_accept_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_accept(sqe, fd, nullptr, nullptr, 0);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
 
 
         template<>
-        auto uring_state_base_for<async_connect_t>::do_start() noexcept -> bool {
+        auto uring_state_base_for<async_connect_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             auto [psa, len] = to_sockaddr(peer);
-            std::scoped_lock _{context_.uring_mtx_};
-            auto sqe = context_.allocate_sqe();
-            if (sqe == nullptr) {
-                result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                return false;
-            }
             ::io_uring_prep_connect(sqe, fd, psa, len);
-            ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-            if (auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                result.set_error(std::error_code{ec, std::system_category()});
-                return false;
-            }
-            return true;
         }
     }
-
 }
 #endif

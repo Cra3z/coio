@@ -1,8 +1,9 @@
 #pragma once
 #include <csignal> // IWYU pragma: keep
 #include <set>
+#include <utility>
+#include "../detail/execution.h"
 #include "../detail/intrusive_stack.h"
-#include "../task.h"
 
 namespace coio {
     namespace detail {
@@ -12,46 +13,64 @@ namespace coio {
     class signal_set {
         friend detail::signal_state;
     private:
-        class awaiter {
+        class node {
             friend signal_set;
             friend detail::signal_state;
         public:
-            explicit awaiter(signal_set& owner) noexcept : owner_{owner} {};
+            using operation_state_concept = execution::operation_state_t;
+            using finish_fn_t = void(*)(node*, int) noexcept;
 
-            awaiter(const awaiter&) = delete;
+        public:
+            explicit node(signal_set& owner, finish_fn_t finish) noexcept : owner_(owner), finish_(finish) {};
 
-            auto operator= (const awaiter&) -> awaiter& = delete;
+            node(const node&) = delete;
 
-            static auto await_ready() noexcept -> bool {
-                return false;
-            }
+            auto operator= (const node&) -> node& = delete;
 
-            template<typename Promise>
-            auto await_suspend(std::coroutine_handle<Promise> this_coro) -> void {
-                coro_ = this_coro;
-                if constexpr (stoppable_promise<Promise>) {
-                    unhandled_stopped_ = &detail::stop_coroutine<Promise>;
-                }
-                owner_.awaiters_.push(*this);
-            }
-
-            auto await_resume() const noexcept -> int {
-                return signal_number_;
+            auto start() & noexcept -> void {
+                owner_.listeners_.push(*this);
             }
 
         private:
             signal_set& owner_;
-            int signal_number_ = 0;
-            std::coroutine_handle<> coro_{};
-            detail::unhandled_stopped_fn unhandled_stopped_ = &detail::default_unhandled_stopped_;
-            awaiter* next_ = nullptr;
+            const finish_fn_t finish_;
+            node* next_ = nullptr;
+        };
+
+        template<typename Rcvr>
+        struct op_state : node {
+            op_state(signal_set& owner, Rcvr rcvr) noexcept : node(owner, &finish), rcvr(std::move(rcvr)) {}
+
+            static auto finish(node* self, int result) noexcept -> void {
+                auto& rcvr = static_cast<op_state*>(self)->rcvr;
+                if (result < 0) [[unlikely]] {
+                    std::error_code ec{-result, std::system_category()};
+                    if (ec == std::errc::operation_canceled) {
+                        execution::set_stopped(std::move(rcvr));
+                        return;
+                    }
+                    execution::set_error(std::move(rcvr), ec);
+                    return;
+                }
+                execution::set_value(std::move(rcvr), result);
+            }
+
+            Rcvr rcvr;
         };
 
     public:
-        struct awaitable {
-            COIO_ALWAYS_INLINE auto operator co_await() && noexcept {
+        struct wait_sender {
+            using sender_concept = execution::sender_t;
+            using completion_signatures = execution::completion_signatures<
+                execution::set_value_t(int),
+                execution::set_error_t(std::error_code),
+                execution::set_stopped_t()
+            >;
+
+            template<execution::receiver_of<completion_signatures> Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                 COIO_ASSERT(owner != nullptr);
-                return awaiter{*std::exchange(owner, {})};
+                return op_state<Rcvr>{*std::exchange(owner, {}), std::move(rcvr)};
             }
 
             signal_set* owner = nullptr;
@@ -71,7 +90,7 @@ namespace coio {
         auto operator= (const signal_set&) -> signal_set& = delete;
 
         [[nodiscard]]
-        auto async_wait() noexcept -> awaitable {
+        auto async_wait() noexcept -> wait_sender {
             return {this};
         }
 
@@ -85,6 +104,6 @@ namespace coio {
 
     private:
         std::set<int> signal_numbers_;
-        detail::intrusive_stack<awaiter> awaiters_{&awaiter::next_};
+        detail::intrusive_stack<node> listeners_{&node::next_};
     };
 }
