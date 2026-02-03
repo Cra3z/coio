@@ -22,12 +22,7 @@ namespace coio::detail {
 
         auto operator= (const op_queue&) -> op_queue& = delete;
 
-        auto enqueue(Op& op) -> void {
-            std::scoped_lock _{op_queue_mtx_};
-            this->unsynchronized_enqueue(op);
-        }
-
-        auto unsynchronized_enqueue(Op& op) -> void {
+        COIO_ALWAYS_INLINE auto unsynchronized_enqueue(Op& op) -> void {
             if (auto old_tail = std::exchange(op_queue_tail_, &op)) {
                 std::invoke(NextAccessor, old_tail) = &op;
             }
@@ -36,24 +31,38 @@ namespace coio::detail {
 
         template<typename Ops> requires
             std::ranges::input_range<Ops> and
-            std::ranges::borrowed_range<Ops> and
             std::convertible_to<std::ranges::range_reference_t<Ops>, Op&>
-        auto bulk_enqueue(Ops&& ops) -> void {
-            std::scoped_lock _{op_queue_mtx_};
+        COIO_ALWAYS_INLINE auto unsynchronized_bulk_enqueue(Ops&& ops) -> std::size_t {
+            std::size_t count = 0;
             for (Op& op : ops) {
                 this->unsynchronized_enqueue(op);
+                ++count;
             }
+            return count;
+        }
+
+        COIO_ALWAYS_INLINE auto enqueue(Op& op) -> void {
+            std::scoped_lock _{op_queue_mtx_};
+            this->unsynchronized_enqueue(op);
+        }
+
+        template<typename Ops> requires
+            std::ranges::input_range<Ops> and
+            std::convertible_to<std::ranges::range_reference_t<Ops>, Op&>
+        COIO_ALWAYS_INLINE auto bulk_enqueue(Ops&& ops) -> std::size_t {
+            std::scoped_lock _{op_queue_mtx_};
+            return unsynchronized_bulk_enqueue(std::forward<Ops>(ops));
         }
 
         [[nodiscard]]
-        auto try_dequeue() -> Op* {
+        COIO_ALWAYS_INLINE auto try_dequeue() -> Op* {
             std::scoped_lock _{op_queue_mtx_};
             if (op_queue_head_ == nullptr) return nullptr;
             if (op_queue_head_ == op_queue_tail_) op_queue_tail_ = nullptr;
             return std::exchange(op_queue_head_, std::invoke(NextAccessor, op_queue_head_));
         }
 
-        auto splice(op_queue&& other) -> void {
+        COIO_ALWAYS_INLINE auto splice(op_queue&& other) -> void {
             COIO_ASSERT(&other != this);
             std::scoped_lock _{op_queue_mtx_, other.op_queue_mtx_};
             while (other.op_queue_head_) {
@@ -95,14 +104,23 @@ namespace coio::detail {
 
         auto operator= (const timer_queue&) -> timer_queue& = delete;
 
-        auto add(reference op) -> void {
+        COIO_ALWAYS_INLINE auto add(reference op) -> bool {
+            const auto deadline = std::invoke(Proj, op);
             std::scoped_lock _{mtx_};
             underlying_.emplace_back(op);
             std::ranges::push_heap(underlying_, std::ranges::greater{}, Proj);
+            return deadline <= std::invoke(Proj, underlying_.front());
+        }
+
+        COIO_ALWAYS_INLINE auto remove(reference op) -> bool {
+            std::scoped_lock _{mtx_};
+            const bool erased = std::erase_if(underlying_, [&op](reference i) noexcept { return &i == &op; });
+            std::ranges::make_heap(underlying_, std::ranges::greater{}, Proj);
+            return erased;
         }
 
         template<typename BaseOp, auto NextAccessor> requires std::derived_from<Op, BaseOp>
-        auto take_ready_timers(op_queue<BaseOp, NextAccessor>& out) -> void {
+        COIO_ALWAYS_INLINE auto take_ready_timers(op_queue<BaseOp, NextAccessor>& out) -> void {
             std::scoped_lock _{mtx_};
             if (underlying_.empty()) return;
             auto last = underlying_.end();
@@ -116,7 +134,7 @@ namespace coio::detail {
         }
 
         [[nodiscard]]
-        auto earliest() noexcept -> std::optional<std::chrono::steady_clock::time_point> {
+        COIO_ALWAYS_INLINE auto earliest() noexcept -> std::optional<std::chrono::steady_clock::time_point> {
             std::scoped_lock _{mtx_};
             if (underlying_.empty()) return {};
             return std::invoke(Proj, underlying_.front());

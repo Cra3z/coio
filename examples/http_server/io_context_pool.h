@@ -17,6 +17,7 @@ namespace http {
             for (auto& ctx : io_contexts_) {
                 ctx->request_stop();
             }
+            work_guards_.clear();
         }
 
         auto get_scheduler() noexcept -> io_context::scheduler;

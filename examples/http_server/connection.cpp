@@ -99,18 +99,17 @@ namespace http {
     auto connection(
         tcp_socket socket,
         coio::endpoint remote_endpoint,
-        router& router,
-        coio::inplace_stop_token stop_token
+        router& router
     ) -> coio::task<> try {
-        while (not stop_token.stop_requested()) {
+        while (true) {
             coio::streambuf buf;
-            co_await coio::async_read_until(socket, buf, "\r\n\r\n", stop_token);
+            co_await coio::async_read_until(socket, buf, "\r\n\r\n");
             std::istream stream(&buf);
             auto maybe_req = parse_line_and_headers(stream);
             if (!maybe_req) {
                 response res = response::stock_reply(response::bad_request);
                 res.headers.emplace("Connection", "close");
-                co_await res.write_to(socket, stop_token);
+                co_await res.write_to(socket);
                 socket.shutdown(tcp_socket::shutdown_send);
                 co_return;
             }
@@ -120,7 +119,7 @@ namespace http {
             if (auto maybe_content_length = parse_content_length(req); maybe_content_length > 0) {
                 const std::size_t content_length = *maybe_content_length;
                 if (buf.size() < content_length) {
-                    co_await coio::async_read(socket, buf, content_length - buf.size(), stop_token);
+                    co_await coio::async_read(socket, buf, content_length - buf.size());
                 }
                 req.body.resize(content_length);
                 stream.read(req.body.data(), static_cast<std::streamsize>(content_length));
@@ -131,7 +130,7 @@ namespace http {
 
             const bool keep_alive = should_keep_alive(req);
             rep.headers.emplace("Connection", keep_alive ? "keep-alive" : "close");
-            co_await rep.write_to(socket, stop_token);
+            co_await rep.write_to(socket);
             if (not keep_alive) {
                 socket.shutdown(tcp_socket::shutdown_send);
                 co_return;

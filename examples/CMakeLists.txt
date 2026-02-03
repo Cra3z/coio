@@ -18,7 +18,3 @@ foreach(EXAMPLE_FILE ${EXAMPLE_FILES})
 endforeach()
 
 add_subdirectory(http_server)
-
-if (COIO_ENABLE_SENDERS)
-    add_subdirectory(with_p2300)
-endif()

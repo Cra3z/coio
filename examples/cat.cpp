@@ -16,7 +16,7 @@ auto main(int argc, char** argv) -> int {
         return EXIT_FAILURE;
     }
     io_context context;
-    coio::sync_wait(coio::when_all(
+    coio::this_thread::sync_wait(coio::when_all(
         [&]() -> coio::task<> {
             try {
                 stream_file file{context.get_scheduler(), argv[1], stream_file::read_only};

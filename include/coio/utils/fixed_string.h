@@ -5,7 +5,7 @@
 #include <iterator>
 #include <string_view>
 #include <typeindex>
-#include "../config.h"
+#include "../detail/config.h"
 #include "format.h"
 
 namespace coio {
@@ -263,7 +263,7 @@ struct std::hash<coio::basic_fixed_string<CharType, N>> : private std::hash<std:
 private:
     using base = std::hash<std::basic_string_view<CharType>>;
 public:
-    COIO_STATIC_CALL_OP auto operator() (const coio::basic_fixed_string<CharType, N>& str) COIO_STATIC_CALL_OP_CONST noexcept -> std::size_t {
+    auto operator() (const coio::basic_fixed_string<CharType, N>& str) const noexcept -> std::size_t {
         return base::operator()(str.view());
     }
 };

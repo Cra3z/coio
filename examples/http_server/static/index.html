@@ -1,34 +1,44 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="coio http_server example page.">
     <title>coio HTTP Server</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <h1><img src="/static/favicon.svg" alt="coio" class="logo">coio HTTP Server</h1>
+    <main class="container">
+        <header class="page-header">
+            <h1 class="title"><img src="/static/favicon.svg" alt="coio" class="logo">coio HTTP Server</h1>
+            <p class="subtitle">This is a simple HTTP server built with <strong>coio</strong>, a C++20 async I/O library.</p>
+        </header>
 
-    <p>This is a simple HTTP server built with <strong>coio</strong>, a C++20 coroutine-based I/O library.</p>
+        <h2>Features</h2>
+        <ul>
+            <li>C++20 coroutines with <code>co_await</code></li>
+            <li>Async TCP/UDP networking</li>
+            <li>epoll/io_uring backend io context</li>
+            <li>Task-based concurrency</li>
+            <li>C++26 std::execution adaptation</li>
+        </ul>
 
-    <h2>Features</h2>
-    <ul>
-        <li>C++20 coroutines with <code>co_await</code></li>
-        <li>Async TCP/UDP networking</li>
-        <li>epoll/io_uring backend io context</li>
-        <li>Task-based concurrency</li>
-        <li>C++26 std::execution adaptation</li>
-    </ul>
+        <section>
+            <h2>Resources</h2>
+            <ul>
+                <li><a href="https://github.com/Cra3z/coio" rel="noreferrer">GitHub Repository</a></li>
+                <li><a href="https://github.com/Cra3z/coio/blob/main/docs/reference.md" rel="noreferrer">API Reference</a></li>
+                <li><a href="https://wg21.link/P2300" rel="noreferrer">P2300: std::execution (senders/receivers)</a></li>
+                <li><a href="https://github.com/NVIDIA/stdexec" rel="noreferrer">NVIDIA/stdexec</a></li>
+                <li><a href="https://github.com/bemanproject/execution" rel="noreferrer">bemanproject/execution</a></li>
+            </ul>
+        </section>
 
-    <h2>Resources</h2>
-    <ul>
-        <li><a href="https://github.com/Cra3z/coio">GitHub Repository</a></li>
-    </ul>
-
-    <footer>
-        Powered by coio &bull; C++20 Coroutine I/O Library
-    </footer>
+        <footer class="footer">
+            Powered by coio
+        </footer>
+    </main>
 </body>
 </html>
 

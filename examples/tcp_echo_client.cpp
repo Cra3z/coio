@@ -35,5 +35,5 @@ auto main() -> int {
         }
     }(context.get_scheduler()));
     context.run();
-    coio::sync_wait(scope.join());
+    coio::this_thread::sync_wait(scope.join());
 }

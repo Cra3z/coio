@@ -26,7 +26,7 @@ auto main() -> int {
         scope.spawn(work(job, work_done, start_clean_up));
     }
 
-    coio::sync_wait(work_done.wait());
+    coio::this_thread::sync_wait(work_done.wait());
     ::println("done:");
     for (const auto& job : jobs) {
         ::println(" {}", job.product);
@@ -35,7 +35,7 @@ auto main() -> int {
     ::print("Workers are cleaning up... ");
     start_clean_up.count_down();
 
-    coio::sync_wait(scope.join());
+    coio::this_thread::sync_wait(scope.join());
     ::println("done:");
     for (const auto& job : jobs) {
         ::println(" {}", job.product);

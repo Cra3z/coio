@@ -29,7 +29,7 @@ namespace http {
         std::multimap<std::string, std::string, detail::ci_less> headers;
         std::span<const std::byte> content;
 
-        auto write_to(tcp_socket& socket, coio::inplace_stop_token stop_token) -> coio::task<>;
+        auto write_to(tcp_socket& socket) -> coio::task<>;
 
         static auto stock_reply(status_type status) -> response;
     };

@@ -39,7 +39,7 @@ namespace http {
         }
     }
 
-    auto response::write_to(tcp_socket& socket, coio::inplace_stop_token stop_token) -> coio::task<> {
+    auto response::write_to(tcp_socket& socket) -> coio::task<> {
         std::string line_and_headers;
         line_and_headers.reserve(512);
 
@@ -50,7 +50,7 @@ namespace http {
         }
 
         line_and_headers += "\r\n";
-        co_await coio::async_write(socket, coio::as_bytes(line_and_headers), stop_token);
+        co_await coio::async_write(socket, coio::as_bytes(line_and_headers));
 
         co_await coio::async_write(socket, content);
     }

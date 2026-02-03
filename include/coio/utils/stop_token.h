@@ -1,3 +1,4 @@
+// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <concepts>
 #include <mutex>
@@ -6,7 +7,9 @@
 #include <type_traits>
 #include <utility>
 #include "scope_exit.h"
+#include "type_traits.h"
 #include "../detail/elide.h"
+#include "../detail/execution.h"
 
 namespace coio {
     namespace detail {
@@ -14,29 +17,29 @@ namespace coio {
         struct check_type_alias_exists;
 
         template<typename StopToken>
-        struct stop_callback_traits;
+        struct stoppable_token_traits;
 
         template<typename StopToken> requires requires {
             typename check_type_alias_exists<StopToken::template callback_type>;
         }
-        struct stop_callback_traits<StopToken> {
+        struct stoppable_token_traits<StopToken> {
             template<typename Fn>
             using callback_type = typename StopToken::template callback_type<Fn>;
         };
 
         template<>
-        struct stop_callback_traits<std::stop_token> {
+        struct stoppable_token_traits<std::stop_token> {
             template<typename Fn>
             using callback_type = std::stop_callback<Fn>;
         };
     }
 
     template<typename StopToken, typename Callback>
-    using stop_callback_for_t = typename detail::stop_callback_traits<StopToken>::template callback_type<Callback>;
+    using stop_callback_for_t = typename detail::stoppable_token_traits<StopToken>::template callback_type<Callback>;
 
     template<typename StopToken>
     concept stoppable_token = requires(const StopToken& token) {
-        typename detail::check_type_alias_exists<detail::stop_callback_traits<StopToken>::template callback_type>;
+        typename detail::check_type_alias_exists<detail::stoppable_token_traits<StopToken>::template callback_type>;
         { token.stop_requested() } noexcept -> std::same_as<bool>;
         { token.stop_possible() } noexcept -> std::same_as<bool>;
         { StopToken(token) } noexcept;
@@ -54,6 +57,9 @@ namespace coio {
     concept unstoppable_token = stoppable_token<Token> and requires(const Token tok) {
         requires std::bool_constant<not Token::stop_possible()>::value;
     };
+
+    template<typename Env>
+    using stop_token_of_t = std::decay_t<std::invoke_result_t<get_stop_token_t, Env>>;
 
     class never_stop_token {
     private:
@@ -254,7 +260,7 @@ namespace coio {
 
 
     namespace detail {
-        template<std::invocable Fn>
+        template<typename Fn>
         struct call_once {
             auto operator() () -> void {
                 if (flag.exchange(false, std::memory_order_acq_rel)) {
@@ -268,7 +274,7 @@ namespace coio {
     }
 
     template<stoppable_token... StopTokens> requires (sizeof...(StopTokens) >= 2)
-    class union_stop_token {
+    class stop_combiner {
     private:
         using tlist = type_list<StopTokens...>;
 
@@ -281,15 +287,17 @@ namespace coio {
 
         public:
             template<typename Initializer>
-            callback_type(union_stop_token token, Initializer&& init) :
+            callback_type(stop_combiner token, Initializer&& init) :
                 cb_(std::forward<Initializer>(init)),
                 inners_{[&]<std::size_t... I>(std::index_sequence<I...>) {
-                    return tpl{(detail::elide{
-                        [&]<typename TokenI>(TokenI tok_i) {
-                            return stop_callback_for_t<TokenI, cbref>(tok_i, cb_);
-                        },
-                        std::get<I>(token.tokens_)
-                    }, ...)};
+                    return tpl{
+                        detail::elide{
+                            [&]<typename TokenI>(TokenI tok_i) {
+                                return stop_callback_for_t<TokenI, cbref>(tok_i, cb_);
+                            },
+                            std::get<I>(token.tokens_)
+                        }...
+                    };
                 }(std::index_sequence_for<StopTokens...>{})} {}
 
             callback_type(const callback_type&) = delete;
@@ -304,7 +312,7 @@ namespace coio {
         };
 
     public:
-        union_stop_token(StopTokens... stop_tokens) noexcept : tokens_(std::move(stop_tokens)...) {}
+        stop_combiner(StopTokens... stop_tokens) noexcept : tokens_(std::move(stop_tokens)...) {}
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto stop_possible() const noexcept -> bool {
@@ -316,20 +324,168 @@ namespace coio {
             return (any_stop_requested_)(std::index_sequence_for<StopTokens...>{});
         }
 
-        friend auto operator== (const union_stop_token& lhs, const union_stop_token& rhs) -> bool = default;
+        friend auto operator== (const stop_combiner& lhs, const stop_combiner& rhs) -> bool = default;
 
     private:
         template<std::size_t... I>
-        COIO_ALWAYS_INLINE auto any_stop_possible_(std::index_sequence<I...>) noexcept {
+        COIO_ALWAYS_INLINE auto any_stop_possible_(std::index_sequence<I...>) const noexcept {
             return ( ... or std::get<I>(tokens_).stop_possible() );
         }
 
         template<std::size_t... I>
-        COIO_ALWAYS_INLINE auto any_stop_requested_(std::index_sequence<I...>) noexcept {
+        COIO_ALWAYS_INLINE auto any_stop_requested_(std::index_sequence<I...>) const noexcept {
             return ( ... or std::get<I>(tokens_).stop_requested() );
         }
 
     public:
         std::tuple<StopTokens...> tokens_;
     };
+
+
+    template<stoppable_source StopSource, stoppable_token StopToken>
+    class stop_propagator {
+    public:
+        template<typename... Args> requires std::constructible_from<StopSource, Args...>
+        explicit stop_propagator(StopToken stop_token, Args&&... args) :
+            stop_source_(std::forward<Args>(args)...),
+            stop_callback_(
+                std::move(stop_token),
+                std::bind_front(&stop_propagator::stop_, std::ref(*this))
+            ) {}
+
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto get_token() const noexcept(noexcept(std::declval<StopSource&>().get_token())) {
+            return stop_source_.get_token();
+        }
+
+    private:
+        COIO_ALWAYS_INLINE auto stop_() -> void {
+            stop_source_.request_stop();
+        }
+
+    private:
+        using stop_cb_t = decltype(std::bind_front(
+            &stop_propagator::stop_,
+            std::ref(std::declval<stop_propagator&>())
+        ));
+
+        StopSource stop_source_;
+        COIO_NO_UNIQUE_ADDRESS stop_callback_for_t<StopToken, stop_cb_t> stop_callback_;
+    };
+
+    template<stoppable_source StopSource, stoppable_token StopToken>
+        requires std::same_as<std::decay_t<decltype(std::declval<StopSource>().get_token())>, StopToken>
+    class stop_propagator<StopSource, StopToken> {
+    public:
+        explicit stop_propagator(StopToken stop_token) noexcept : stop_token_(stop_token) {}
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto get_token() const noexcept -> StopToken {
+            return stop_token_;
+        }
+
+    private:
+        StopToken stop_token_;
+    };
+
+
+    struct stop_when_t {
+        template<execution::sender Sndr, stoppable_token StopToken>
+        struct sender {
+            using sender_concept = execution::sender_t;
+
+            template<execution::receiver Rcvr>
+            struct state {
+                using operation_state_concept = execution::operation_state_t;
+                using stop_token_t = stop_combiner<StopToken, stop_token_of_t<execution::env_of_t<Rcvr>>>;
+
+                struct data_t {
+                    explicit data_t(Rcvr rcvr, StopToken prev_token) :
+                        rcvr{rcvr},
+                        stop_token(std::move(prev_token), get_stop_token(execution::get_env(this->rcvr))) {}
+
+                    Rcvr rcvr;
+                    stop_token_t stop_token;
+                };
+
+                struct env {
+                    COIO_ALWAYS_INLINE auto query(get_stop_token_t) const noexcept -> stop_token_t {
+                        return d->stop_token;
+                    }
+
+                    template<typename Prop, typename... Args>
+                        requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
+                            and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
+                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
+                        return prop(execution::get_env(d->rcvr), std::forward<Args>(args)...);
+                    }
+
+                    data_t* d;
+                };
+
+                struct receiver {
+                    using receiver_concept = execution::receiver_t;
+
+                    COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
+                        return env{d};
+                    }
+
+                    template<typename... Args>
+                    COIO_ALWAYS_INLINE auto set_value(Args&&... args) const noexcept -> void {
+                        execution::set_value(std::move(d->rcvr), std::forward<Args>(args)...);
+                    }
+
+                    template<typename E>
+                    COIO_ALWAYS_INLINE auto set_error(E&& e) const noexcept -> void {
+                        execution::set_error(std::move(d->rcvr), std::forward<E>(e));
+                    }
+
+                    COIO_ALWAYS_INLINE auto set_stopped() const noexcept -> void {
+                        execution::set_stopped(std::move(d->rcvr));
+                    }
+
+                    data_t* d;
+                };
+
+                using inner_state_t = execution::connect_result_t<Sndr, receiver>;
+
+                state(Sndr sndr, StopToken stop_token, Rcvr rcvr) :
+                    data{std::move(rcvr), std::move(stop_token)},
+                    inner_state(execution::connect(std::move(sndr), receiver{&data})) {}
+
+                COIO_ALWAYS_INLINE auto start() & noexcept -> void {
+                    execution::start(inner_state);
+                }
+
+                data_t data;
+                inner_state_t inner_state;
+            };
+
+            template<typename E>
+            COIO_ALWAYS_INLINE auto get_completion_signatures(const E& e) const noexcept {
+                return execution::get_completion_signatures(sndr, e);
+            }
+
+            template<execution::receiver Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && -> state<Rcvr> {
+                return state<Rcvr>{std::move(sndr), std::move(stop_token), std::move(rcvr)};
+            }
+
+            StopToken stop_token;
+            Sndr sndr;
+        };
+
+        template<execution::sender Sndr, stoppable_token StopToken>
+        COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator()(Sndr sndr, StopToken stop_token) COIO_STATIC_CALL_OP_CONST noexcept  {
+            if constexpr (unstoppable_token<StopToken>) {
+                return std::move(sndr);
+            }
+            else {
+                return sender<Sndr, StopToken>{std::move(stop_token), std::move(sndr)};
+            }
+        }
+    };
+
+    inline constexpr stop_when_t stop_when{};
 }

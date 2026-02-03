@@ -7,8 +7,10 @@
 
 // Set this to the source directory containing static files
 #ifndef HTTP_SERVER_STATIC_DIR
-#define HTTP_SERVER_STATIC_DIR "."
+#define HTTP_SERVER_STATIC_DIR "static"
 #endif
+
+constexpr std::uint16_t port = 8080;
 
 auto signal_watchdog(http::io_context_pool& pool) -> coio::task<> {
     coio::signal_set signals{SIGINT, SIGTERM};
@@ -17,43 +19,7 @@ auto signal_watchdog(http::io_context_pool& pool) -> coio::task<> {
     pool.stop();
 }
 
-auto start_server(http::tcp_acceptor& acceptor, http::io_context_pool& pool, const std::filesystem::path& static_dir) -> coio::task<> {
-    http::router router(static_dir);
-    ::debug("Static files directory: {}", static_dir.string());
-    coio::async_scope scope;
-    scope.spawn(signal_watchdog(pool));
-    try {
-        while (true) {
-            auto sched = pool.get_scheduler();
-            auto stop_token = sched.context().get_stop_token();
-            http::tcp_socket socket = co_await acceptor.async_accept(sched, stop_token);
-            scope.spawn(http::connection(
-                std::move(socket),
-                socket.remote_endpoint(),
-                router,
-                stop_token
-            ));
-        }
-    }
-    catch (const std::exception& e) {
-        ::debug("Acceptor error: {}", e.what());
-    }
-    co_await scope.join();
-}
-
-auto main() -> int try {
-    static constexpr std::uint16_t port = 8080;
-
-    // Try to find static directory
-    std::filesystem::path static_dir = HTTP_SERVER_STATIC_DIR;
-    static_dir /= "static";
-
-    // If not found, try current directory
-    if (!std::filesystem::exists(static_dir)) {
-        static_dir = std::filesystem::current_path() / "static";
-    }
-
-    http::io_context_pool pool{4};
+auto start_server(http::io_context_pool& pool, coio::async_scope& scope, http::router& router) -> coio::task<> {
     http::tcp_acceptor acceptor(pool.get_scheduler());
     acceptor.open(coio::tcp::v6());
     acceptor.set_option(http::tcp_acceptor::reuse_address(true));
@@ -61,9 +27,32 @@ auto main() -> int try {
     acceptor.bind({coio::ipv6_address::any(), port});
     acceptor.listen();
     ::debug("server started at http://localhost:{}", port);
-    coio::sync_wait(start_server(acceptor, pool, static_dir));
+    try {
+        while (true) {
+            auto sched = pool.get_scheduler();
+            http::tcp_socket socket = co_await acceptor.async_accept(sched);
+            auto endpoint = socket.remote_endpoint();
+            scope.spawn(http::connection(
+                std::move(socket),
+                endpoint,
+                router
+            ));
+        }
+    }
+    catch (const std::exception& e) {
+        ::debug("acceptor error: {}", e.what());
+    }
 }
-catch (const std::invalid_argument& e) {
+
+auto main() -> int try {
+    http::router router{HTTP_SERVER_STATIC_DIR};
+    http::io_context_pool pool{4};
+    coio::async_scope scope;
+    scope.spawn(signal_watchdog(pool));
+    scope.spawn(start_server(pool, scope, router));
+    coio::this_thread::sync_wait(scope.join());
+}
+catch (const std::exception& e) {
     ::debug("[FATAL] {}", e.what());
     return EXIT_FAILURE;
 }

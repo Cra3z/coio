@@ -31,9 +31,9 @@ namespace http {
     }
 
     router::router(std::filesystem::path static_dir) : static_dir_(std::move(static_dir)), mime_types_(init_mime_types()) {
-        for (std::filesystem::directory_entry entry : std::filesystem::directory_iterator(static_dir_)) {
+        for (const auto& entry : std::filesystem::directory_iterator(static_dir_)) {
             if (!entry.is_regular_file()) continue;
-            const auto path = entry.path();
+            const auto& path = entry.path();
             std::ifstream file{path, std::ios::binary};
             if (not file) throw std::runtime_error{std::format("cannot open file: {}", path.string())};
             files_.try_emplace(
@@ -44,11 +44,7 @@ namespace http {
         }
     }
 
-    auto router::set_static_dir(std::filesystem::path dir) -> void {
-        static_dir_ = std::move(dir);
-    }
-
-    auto router::route(const request& req, response& res) -> void {
+    auto router::route(const request& req, response& res) const -> void {
         if (req.method != "GET") {
             res = response::stock_reply(response::method_not_allowed);
             return;
@@ -69,7 +65,7 @@ namespace http {
         res = response::stock_reply(response::not_found);
     }
 
-    auto router::serve_home(const request& req, response& res) -> void {
+    auto router::serve_home(const request& req, response& res) const -> void {
         std::filesystem::path index_file_path = static_dir_ / "index.html";
         res.status = response::ok;
         res.content = coio::as_bytes(files_.at(index_file_path));
@@ -77,7 +73,7 @@ namespace http {
         res.headers.emplace("Content-Length", std::to_string(res.content.size()));
     }
 
-    auto router::serve_static(const request& req, response& res) -> bool {
+    auto router::serve_static(const request& req, response& res) const -> bool {
         // Check if path starts with /static/
         if (!req.path.starts_with("/static/")) {
             return false;
@@ -104,12 +100,10 @@ namespace http {
         res.content = coio::as_bytes(files_.at(file_path));
         res.headers.emplace("Content-Type", get_content_type(file_path.extension().string()));
         res.headers.emplace("Content-Length", std::to_string(res.content.size()));
-        res.headers.emplace("Cache-Control", "public, max-age=3600");
-
         return true;
     }
 
-    auto router::get_content_type(const std::string& extension) -> std::string {
+    auto router::get_content_type(const std::string& extension) const -> std::string {
         auto it = mime_types_.find(extension);
         if (it != mime_types_.end()) {
             return it->second;

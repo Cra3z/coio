@@ -14,13 +14,12 @@ namespace http {
 
         router& operator=(const router&) = delete;
 
-        auto route(const request& req, response& res) -> void;
-        auto set_static_dir(std::filesystem::path dir) -> void;
+        auto route(const request& req, response& res) const -> void;
 
     private:
-        auto serve_home(const request& req, response& res) -> void;
-        auto serve_static(const request& req, response& res) -> bool;
-        auto get_content_type(const std::string& extension) -> std::string;
+        auto serve_home(const request& req, response& res) const -> void;
+        auto serve_static(const request& req, response& res) const -> bool;
+        auto get_content_type(const std::string& extension) const -> std::string;
 
         std::filesystem::path static_dir_;
         std::unordered_map<std::string, std::string> mime_types_;

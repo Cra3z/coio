@@ -1,8 +1,7 @@
 #pragma once
 #include "basic.h"
 #include "../generator.h"
-#include "../schedulers.h"
-#include "../task.h"
+#include "../core.h"
 
 namespace coio {
     namespace detail {

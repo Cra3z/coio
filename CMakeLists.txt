@@ -9,7 +9,6 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/permissive->")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
 
 option(COIO_BUILD_EXAMPLES "whether to build examples" OFF)
-option(COIO_ENABLE_SENDERS "whether to enable std::execution support" OFF)
 set(COIO_SENDERS_BACKEND "NVIDIA" CACHE STRING "the backend to use for std::execution support.
     available options are: NVIDIA, BEMAN, CXX26.
     NVIDIA - use NVIDIA/stdexec implementation,
@@ -29,14 +28,11 @@ add_library(
     ${PROJECT_NAME}
 )
 
-if (COIO_ENABLE_SENDERS)
-    target_compile_definitions(
-        ${PROJECT_NAME}
-        PUBLIC
-        -DCOIO_ENABLE_SENDERS
-        -DCOIO_EXECUTION_USE_${COIO_SENDERS_BACKEND}
-    )
-endif()
+target_compile_definitions(
+    ${PROJECT_NAME}
+    PUBLIC
+    -DCOIO_EXECUTION_USE_${COIO_SENDERS_BACKEND}
+)
 
 target_sources(
     ${PROJECT_NAME}
