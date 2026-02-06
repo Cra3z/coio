@@ -7,11 +7,9 @@
 
 namespace coio {
     namespace {
-        constexpr std::size_t default_uring_entries = 1024;
+        constexpr std::size_t default_uring_entries = 4096;
 
-        auto throw_uring_error(int ec) -> void {
-            if (ec < 0) throw std::system_error{-ec, std::system_category()};
-        }
+        constexpr std::size_t submit_batch_size = 32;
 
         auto init_uring(::io_uring& uring, std::size_t entries) -> void {
             if (entries > std::numeric_limits<unsigned>::max()) {
@@ -30,7 +28,8 @@ namespace coio {
             throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
         }
         ::io_uring_prep_cancel(sqe, this, 0);
-        throw_uring_error(::io_uring_submit(&context_.uring_));
+        ::io_uring_sqe_set_data(sqe, nullptr);
+        context_.submit_sqes();
     }
 
     auto uring_context::scheduler::io_object::release() -> int {
@@ -46,7 +45,8 @@ namespace coio {
             throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
         }
         ::io_uring_prep_cancel_fd(sqe, fd_, IORING_ASYNC_CANCEL_ALL);
-        throw_uring_error(::io_uring_submit(&ctx_->uring_));
+        ::io_uring_sqe_set_data(sqe, nullptr);
+        ctx_->submit_sqes();
     }
 
     uring_context::uring_context(std::size_t entries, std::pmr::memory_resource& memory_resource) : loop_base(memory_resource) {
@@ -63,15 +63,22 @@ namespace coio {
         if (work_count_ == 0) return false;
 
         while (work_count_ > 0) {
-            timer_queue_.take_ready_timers(op_queue_);
             if (const auto op = op_queue_.try_dequeue()) {
                 op->finish();
                 return true;
             }
 
-            std::unique_lock lock{run_mtx_, std::try_to_lock};
-            if (not lock.owns_lock()) continue;
+            std::unique_lock lock{bolt_, std::try_to_lock};
+            if (not lock) {
+                std::this_thread::yield();
+                continue;
+            }
+
             if (work_count_ == 0) break;
+
+            if (std::unique_lock _{uring_mtx_, std::try_to_lock}) {
+                submit_sqes();
+            }
 
             op_queue local_op_queue;
             ::io_uring_cqe* cqe = nullptr;
@@ -109,12 +116,14 @@ namespace coio {
             if (cqe) {
                 if (auto user_data = ::io_uring_cqe_get_data(cqe); user_data and user_data != this) {
                     auto op = static_cast<uring_node*>(user_data);
-                    COIO_TSAN_ACQUIRE(op); // suppress TSAN false positives, see https://github.com/axboe/liburing/issues/1514
+                    COIO_TSAN_ACQUIRE(op);
                     op->complete(cqe->res);
                     local_op_queue.unsynchronized_enqueue(*op);
                 }
             }
             cqe_guard.reset();
+
+            timer_queue_.take_ready_timers(local_op_queue);
 
             while (true) {
                 ::io_uring_cqe* peeked_cqes[8]{};
@@ -126,7 +135,7 @@ namespace coio {
                 for (auto peeked_cqe : std::span(peeked_cqes, n)) {
                     if (auto user_data = ::io_uring_cqe_get_data(peeked_cqe); user_data and user_data != this) {
                         auto op = static_cast<uring_node*>(user_data);
-                        COIO_TSAN_ACQUIRE(op); // suppress TSAN false positives, see https://github.com/axboe/liburing/issues/1514
+                        COIO_TSAN_ACQUIRE(op);
                         op->complete(peeked_cqe->res);
                         local_op_queue.unsynchronized_enqueue(*op);
                     }
@@ -136,7 +145,11 @@ namespace coio {
             lock.unlock();
             op_queue_.splice(std::move(local_op_queue));
 
-            if (not infinite) break;
+            if (not infinite) {
+                const auto op = op_queue_.try_dequeue();
+                if (op) op->finish();
+                return op != nullptr;
+            }
         }
         return false;
     }
@@ -144,10 +157,30 @@ namespace coio {
     auto uring_context::allocate_sqe() noexcept -> io_uring_sqe* {
         ::io_uring_sqe* sqe = ::io_uring_get_sqe(&uring_);
         if (sqe == nullptr) {
-            if (::io_uring_submit(&uring_) < 0) return nullptr;
+            submit_sqes();
             sqe = ::io_uring_get_sqe(&uring_);
         }
+        if (sqe) ++pending_sqes_;
         return sqe;
+    }
+
+    auto uring_context::submit_sqes() -> void { // pre: uring_mtx_ is locked
+        if (pending_sqes_ == 0) return;
+        const int n = ::io_uring_submit(&uring_);
+        if (n < 0) [[unlikely]] std::terminate();
+        COIO_ASSERT(pending_sqes_ >= std::size_t(n)); // NOLINT(*-use-integer-sign-comparison)
+        pending_sqes_ -= n;
+    }
+
+    auto uring_context::post_submit_sqes() -> void { // pre: uring_mtx_ is locked
+        if (bolt_.try_lock()) {
+            scope_exit _{std::bind_front(&atomutex::unlock, &bolt_)};
+            if (pending_sqes_ < submit_batch_size) return;
+            submit_sqes();
+        }
+        else {
+            submit_sqes();
+        }
     }
 
     auto uring_context::interrupt() -> void {
@@ -158,7 +191,7 @@ namespace coio {
         }
         ::io_uring_prep_nop(sqe);
         ::io_uring_sqe_set_data(sqe, this);
-        throw_uring_error(::io_uring_submit(&uring_));
+        submit_sqes();
     }
 
     namespace detail {

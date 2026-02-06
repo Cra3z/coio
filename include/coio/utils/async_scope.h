@@ -2,6 +2,7 @@
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <mutex>
+#include "atomutex.h"
 #include "stop_token.h"
 #include "utility.h"
 
@@ -245,13 +246,14 @@ namespace coio {
 
     private:
         COIO_ALWAYS_INLINE auto add_listener(state_node* node) -> void {
-            std::scoped_lock _{mutex_};
+            std::unique_lock lck{mutex_};
             switch (state_) {
             using enum state;
             case unused:
             case unused_and_closed:
             case joined:
                 state_ = joined;
+                lck.unlock();
                 node->finish(node);
                 return;
             case open:
@@ -308,7 +310,7 @@ namespace coio {
         }
 
     private:
-        std::mutex mutex_;
+        atomutex mutex_;
         std::size_t count_{};
         state state_{state::unused};
         state_node* head_{};

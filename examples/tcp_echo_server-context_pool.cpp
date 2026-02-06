@@ -36,6 +36,15 @@ public:
 
     io_context_pool& operator= (const io_context_pool&) = delete;
 
+    ~io_context_pool() {
+        stop();
+        for (auto& thread : threads_) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    }
+
     auto stop() -> void {
         for (auto& ctx : io_contexts_) {
             ctx->request_stop();
@@ -50,7 +59,7 @@ public:
 private:
     std::size_t next_ = 0;
     std::vector<std::unique_ptr<io_context>> io_contexts_;
-    std::vector<std::jthread> threads_;
+    std::vector<std::thread> threads_;
     std::vector<coio::work_guard<io_context>> work_guards_;
 };
 
@@ -69,13 +78,12 @@ auto handle_connection(tcp_socket socket) -> coio::task<> {
 }
 
 auto start_server(io_context_pool& pool) -> coio::task<> {
-    tcp_acceptor acceptor{pool.get_scheduler(), coio::endpoint{coio::ipv4_address::any(), 8086}};
-    ::debug("server \"{}\" start...", acceptor.local_endpoint());
     coio::async_scope scope;
     try {
-        while (true) {
-            tcp_socket socket = co_await acceptor.async_accept(pool.get_scheduler());
-            scope.spawn(handle_connection(std::move(socket)));
+        tcp_acceptor acceptor{pool.get_scheduler(), coio::endpoint{coio::ipv4_address::any(), 8086}};
+        ::debug("server \"{}\" start...", acceptor.local_endpoint());
+        while (auto socket = co_await (acceptor.async_accept(pool.get_scheduler()) | coio::execution::stopped_as_optional())) {
+            scope.spawn(handle_connection(std::move(socket.value())));
         }
     }
     catch (const std::system_error& e) {
@@ -84,17 +92,17 @@ auto start_server(io_context_pool& pool) -> coio::task<> {
     co_await scope.join();
 }
 
-auto signal_watchdog() -> coio::task<> {
+auto signal_watchdog(io_context_pool& pool) -> coio::task<> {
     coio::signal_set signals{SIGINT, SIGTERM};
     const int signum = co_await signals.async_wait();
     ::debug("server stop with signal: ({}){}", signum, ::strsignal(signum));
-    co_await coio::just_stopped();
+    pool.stop();
 }
 
 auto main() -> int {
     io_context_pool pool{4};
     coio::this_thread::sync_wait(coio::when_any(
-        signal_watchdog(),
+        signal_watchdog(pool),
         start_server(pool)
     ));
 }

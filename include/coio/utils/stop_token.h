@@ -6,6 +6,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include "atomutex.h"
 #include "scope_exit.h"
 #include "type_traits.h"
 #include "../detail/elide.h"
@@ -212,9 +213,9 @@ namespace coio {
 
     private:
         std::atomic<bool> stopped_{false};
+        atomutex mtx_;
         std::atomic<callback_base*> running_{nullptr};
         std::thread::id id_{};
-        std::mutex mtx_;
         callback_base* cbs_{nullptr};
     };
 

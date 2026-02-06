@@ -5,7 +5,15 @@
 #include <linux/version.h>
 #endif
 
-#if defined(__has_feature) and __has_feature(thread_sanitizer)
+#ifdef __SANITIZE_THREAD__
+#define COIO_BUILD_WITH_TSAN 1
+#elif defined(__has_feature) and __has_feature(thread_sanitizer)
+#define COIO_BUILD_WITH_TSAN 1
+#else
+#define COIO_BUILD_WITH_TSAN 0
+#endif
+
+#if COIO_BUILD_WITH_TSAN
 #include <sanitizer/tsan_interface.h>
 #define COIO_TSAN_ACQUIRE(addr) __tsan_acquire(addr)
 #define COIO_TSAN_RELEASE(addr) __tsan_release(addr)

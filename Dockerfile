@@ -1,7 +1,7 @@
 FROM archlinux:latest
 
 LABEL maintainer="coio"
-LABEL description="Development environment for coio C++20 coroutine library"
+LABEL description="Development environment for coio C++20 async io library"
 
 WORKDIR /workspace/coio
 

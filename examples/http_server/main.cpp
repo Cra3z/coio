@@ -19,7 +19,7 @@ auto signal_watchdog(http::io_context_pool& pool) -> coio::task<> {
     pool.stop();
 }
 
-auto start_server(http::io_context_pool& pool, coio::async_scope& scope, http::router& router) -> coio::task<> {
+auto start_server(http::io_context_pool& pool, coio::async_scope& scope, http::router& router) -> coio::task<> try {
     http::tcp_acceptor acceptor(pool.get_scheduler());
     acceptor.open(coio::tcp::v6());
     acceptor.set_option(http::tcp_acceptor::reuse_address(true));
@@ -27,21 +27,18 @@ auto start_server(http::io_context_pool& pool, coio::async_scope& scope, http::r
     acceptor.bind({coio::ipv6_address::any(), port});
     acceptor.listen();
     ::debug("server started at http://localhost:{}", port);
-    try {
-        while (true) {
-            auto sched = pool.get_scheduler();
-            http::tcp_socket socket = co_await acceptor.async_accept(sched);
-            auto endpoint = socket.remote_endpoint();
-            scope.spawn(http::connection(
-                std::move(socket),
-                endpoint,
-                router
-            ));
-        }
+    while (true) {
+        http::tcp_socket socket = co_await acceptor.async_accept(pool.get_scheduler());
+        auto endpoint = socket.remote_endpoint();
+        scope.spawn(http::connection(
+            std::move(socket),
+            endpoint,
+            router
+        ));
     }
-    catch (const std::exception& e) {
-        ::debug("acceptor error: {}", e.what());
-    }
+}
+catch (const std::exception& e) {
+    ::debug("acceptor error: {}", e.what());
 }
 
 auto main() -> int try {

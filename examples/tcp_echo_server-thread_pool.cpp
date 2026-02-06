@@ -68,13 +68,12 @@ auto handle_connection(tcp_socket socket) -> coio::task<> {
 }
 
 auto start_server(io_context::scheduler sched) -> coio::task<> {
-    tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8086}};
-    ::debug("server \"{}\" start...", acceptor.local_endpoint());
     coio::async_scope scope;
     try {
-        while (true) {
-            tcp_socket socket = co_await acceptor.async_accept();
-            scope.spawn(handle_connection(std::move(socket)));
+        tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8086}};
+        ::debug("server \"{}\" start...", acceptor.local_endpoint());
+        while (auto socket = co_await (acceptor.async_accept() | coio::execution::stopped_as_optional())) {
+            scope.spawn(handle_connection(std::move(socket.value())));
         }
     }
     catch (const std::system_error& e) {
@@ -83,17 +82,18 @@ auto start_server(io_context::scheduler sched) -> coio::task<> {
     co_await scope.join();
 }
 
-auto signal_watchdog() -> coio::task<> {
+auto signal_watchdog(thread_pool& pool) -> coio::task<> {
     coio::signal_set signals{SIGINT, SIGTERM};
     const int signum = co_await signals.async_wait();
     ::debug("server stop with signal: ({}){}", signum, ::strsignal(signum));
-    co_await coio::just_stopped();
+    pool.stop();
 }
 
 auto main() -> int {
+    using namespace std::chrono_literals;
     thread_pool pool{4};
     coio::this_thread::sync_wait(coio::when_any(
-        signal_watchdog(),
+        signal_watchdog(pool),
         start_server(pool.get_scheduler())
     ));
 }

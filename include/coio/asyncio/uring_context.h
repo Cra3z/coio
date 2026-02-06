@@ -164,9 +164,14 @@ namespace coio {
 
         auto allocate_sqe() noexcept -> ::io_uring_sqe*;
 
+        auto submit_sqes() -> void;
+
+        auto post_submit_sqes() -> void;
+
     private:
-        std::mutex uring_mtx_;
-        std::mutex run_mtx_;
+        atomutex uring_mtx_;
+        atomutex bolt_;
+        std::size_t pending_sqes_ = 0;
         ::io_uring uring_{};
     };
 
@@ -229,11 +234,9 @@ namespace coio {
                 }
                 this->prepare(sqe);
                 ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
-                if (const auto ec = -::io_uring_submit(&context_.uring_); ec > 0) {
-                    result.set_error(std::error_code{ec, std::system_category()});
-                    return false;
-                }
-                COIO_TSAN_RELEASE(static_cast<uring_node*>(this)); // suppress TSAN false positives, see https://github.com/axboe/liburing/issues/1514
+                // TODO: To suppress TSAN false positives, we need to add more TSAN annotations! see https://github.com/axboe/liburing/issues/1514
+                COIO_TSAN_RELEASE(static_cast<uring_node*>(this));
+                context_.post_submit_sqes();
                 return true;
             }
 

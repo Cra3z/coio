@@ -211,7 +211,7 @@ namespace coio {
     private:
         int epoll_fd_;
         detail::reactor_interrupter interrupter_;
-        std::mutex run_mtx_;
+        std::mutex bolt_;
     };
 
     namespace detail {

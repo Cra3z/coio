@@ -80,7 +80,9 @@ namespace coio {
         ctx_(ctx),
         fd_(fd),
         data_(ctx.new_epoll_data()) {
-        if (fd != -1 and (S_ISREG(fd) or S_ISDIR(fd))) [[unlikely]] {
+        if (fd == -1) return;
+        struct ::stat st{};
+        if (::fstat(fd, &st) == 0 and (S_ISREG(st.st_mode) or S_ISDIR(st.st_mode))) [[unlikely]] {
             throw std::system_error{
                 std::make_error_code(std::errc::operation_not_permitted),
                 "the target file `fd` doesn't support epoll"
@@ -96,11 +98,12 @@ namespace coio {
     auto epoll_context::scheduler::io_object::release() -> int {
         if (fd_ == -1) return -1;
         COIO_ASSERT(data_ != nullptr);
+        epoll_context& context = ctx_;
         cancel();
         {
-            std::scoped_lock _{data_->fd_lock};
+            std::scoped_lock _{context.bolt_, data_->fd_lock};
             if (data_->events != 0) {
-                detail::throw_last_error(::epoll_ctl(ctx_.get().epoll_fd_, EPOLL_CTL_DEL, fd_, nullptr));
+                detail::throw_last_error(::epoll_ctl(context.epoll_fd_, EPOLL_CTL_DEL, fd_, nullptr));
             }
         }
         ctx_.get().reclaim_epoll_data(std::exchange(data_, nullptr));
@@ -148,18 +151,21 @@ namespace coio {
         if (work_count_ == 0) return false;
 
         ::epoll_event ready_events[epoll_max_wait_count];
-        int timeout = infinite ? -1 : 0;
         while (work_count_ > 0) {
-            timer_queue_.take_ready_timers(op_queue_);
             if (const auto op = op_queue_.try_dequeue()) {
                 op->finish();
                 return true;
             }
 
-            std::unique_lock lock{run_mtx_, std::try_to_lock};
-            if (not lock.owns_lock()) continue;
+            std::unique_lock lock{bolt_, std::try_to_lock};
+            if (not lock) {
+                std::this_thread::yield();
+                continue;
+            }
+
             if (work_count_ == 0) break;
 
+            int timeout = infinite ? -1 : 0;
             if (infinite) {
                 using milliseconds = std::chrono::duration<int, std::milli>;
                 if (const auto earliest = timer_queue_.earliest()) {
@@ -174,6 +180,7 @@ namespace coio {
             detail::throw_last_error(ready_count, "epoll_wait");
 
             op_queue local_op_queue;
+            timer_queue_.take_ready_timers(local_op_queue);
             for (int i = 0; i < ready_count; ++i) {
                 const auto& [event, data] = ready_events[i];
                 COIO_ASSERT(data.ptr != nullptr);
@@ -203,7 +210,11 @@ namespace coio {
             lock.unlock();
             op_queue_.splice(std::move(local_op_queue));
 
-            if (not infinite) break;
+            if (not infinite) {
+                const auto op = op_queue_.try_dequeue();
+                if (op) op->finish();
+                return op != nullptr;
+            }
         }
         return false;
     }
@@ -219,14 +230,16 @@ namespace coio {
 
     auto epoll_context::cancel_op(int event, epoll_node* op) -> void {
         COIO_ASSERT(op != nullptr and op->data != nullptr);
-        {
-            std::scoped_lock _{op->data->fd_lock};
-            const auto registered_op = event == EPOLLIN ?
-                std::exchange(op->data->in_op, nullptr) :
-                std::exchange(op->data->out_op, nullptr);
-            COIO_ASSERT(registered_op == nullptr or registered_op == op); // if there is a registered operation, it shall be `op`
+        std::unique_lock fd_lock{op->data->fd_lock};
+        const auto registered_op = event == EPOLLIN ?
+            std::exchange(op->data->in_op, nullptr) :
+            std::exchange(op->data->out_op, nullptr);
+
+        if (registered_op != nullptr) {
+            COIO_ASSERT(op == registered_op);  // if there is a registered operation, it shall be `op`
+            fd_lock.unlock();
+            op->immediately_post();
         }
-        op->immediately_post();
     }
 
     namespace detail {

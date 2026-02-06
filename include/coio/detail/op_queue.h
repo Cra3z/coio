@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include "config.h"
+#include "../utils/atomutex.h"
 
 namespace coio::detail {
     template<typename Op, auto NextAccessor> requires std::is_nothrow_invocable_r_v<Op*, decltype(NextAccessor), Op*>
@@ -65,19 +66,16 @@ namespace coio::detail {
         COIO_ALWAYS_INLINE auto splice(op_queue&& other) -> void {
             COIO_ASSERT(&other != this);
             std::scoped_lock _{op_queue_mtx_, other.op_queue_mtx_};
-            while (other.op_queue_head_) {
-                if (other.op_queue_head_ == other.op_queue_tail_) other.op_queue_tail_ = nullptr;
-                const auto op = std::exchange(other.op_queue_head_, std::invoke(NextAccessor, other.op_queue_head_));
-                COIO_ASSERT(op != nullptr);
-                if (auto old_tail = std::exchange(op_queue_tail_, op)) {
-                    std::invoke(NextAccessor, old_tail) = op;
-                }
-                if (op_queue_head_ == nullptr) op_queue_head_ = op;
+            if (other.op_queue_head_ == nullptr) return;
+            if (auto old_tail = std::exchange(op_queue_tail_, std::exchange(other.op_queue_head_, nullptr))) {
+                std::invoke(NextAccessor, old_tail) = op_queue_tail_;
             }
+            if (op_queue_head_ == nullptr) op_queue_head_ = op_queue_tail_;
+            op_queue_tail_ = std::exchange(other.op_queue_tail_, nullptr);
         }
 
     private:
-        std::mutex op_queue_mtx_;
+        atomutex op_queue_mtx_;
         Op* op_queue_head_{};
         Op* op_queue_tail_{};
     };
