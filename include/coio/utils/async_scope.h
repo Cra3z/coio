@@ -9,16 +9,44 @@
 namespace coio {
     class async_scope {
     public:
+        class association {
+        public:
+            association() = default;
+
+            explicit association(async_scope& scope) noexcept : scope(&scope) {}
+
+            association(const association&) = delete;
+
+            association(association&& other) noexcept : scope(std::exchange(other.scope, nullptr)) {}
+
+            auto operator= (association other) noexcept -> association& {
+                std::swap(scope, other.scope);
+                return *this;
+            }
+
+            ~association() {
+                if (scope) scope->disassociate();
+            }
+
+            explicit operator bool() const noexcept {
+                return scope != nullptr;
+            }
+
+            auto try_associate() const noexcept -> association {
+                if (scope) return scope->try_associate();
+                return {};
+            }
+
+        private:
+            async_scope* scope = nullptr;
+        };
+
         class token {
         public:
             explicit token(async_scope& scope) : scope(&scope) {}
 
-            COIO_ALWAYS_INLINE auto try_associate() const noexcept -> bool {
+            COIO_ALWAYS_INLINE auto try_associate() const noexcept -> association {
                 return scope->try_associate();
-            }
-
-            COIO_ALWAYS_INLINE auto disassociate() const noexcept -> void {
-                scope->disassociate();
             }
 
             template<execution::sender Sender>
@@ -51,70 +79,6 @@ namespace coio {
         struct state_node : state_base {
             using state_base::state_base;
             state_node* next = nullptr;
-        };
-
-        struct spawn_receiver {
-            using receiver_concept = execution::receiver_t;
-
-            // ReSharper disable once CppMemberFunctionMayBeConst
-            COIO_ALWAYS_INLINE auto set_value() && noexcept -> void {
-                state->finish(state);
-            }
-
-            // ReSharper disable once CppMemberFunctionMayBeConst
-            COIO_ALWAYS_INLINE auto set_stopped() && noexcept -> void {
-                state->finish(state);
-            }
-
-            [[noreturn]]
-            static auto set_error(std::exception_ptr) noexcept -> void {
-                std::terminate();
-            }
-
-            [[noreturn]]
-            static auto set_error(std::error_code) noexcept -> void {
-                std::terminate();
-            }
-
-            state_base* state{};
-        };
-
-        template <typename Alloc, execution::sender Sndr>
-        struct spawn_state : state_base {
-            using inner_t     = execution::connect_result_t<Sndr, spawn_receiver>;
-            using alloc_t  = typename ::std::allocator_traits<Alloc>::template rebind_alloc<spawn_state>;
-            using alloc_traits_t = ::std::allocator_traits<alloc_t>;
-
-            spawn_state(Alloc allocator, Sndr sndr, token scope_token) :
-                state_base(&finish),
-                allocator(allocator),
-                inner(execution::connect(std::move(sndr), spawn_receiver{this})),
-                scope_token(scope_token)
-            {
-                if (scope_token.try_associate()) [[likely]] {
-                    execution::start(inner);
-                }
-                else {
-                    destroy();
-                }
-            }
-
-            COIO_ALWAYS_INLINE static auto finish(state_base* self) noexcept -> void {
-                auto this_ = static_cast<spawn_state*>(self);
-                token tk = this_->scope_token;
-                this_->destroy();
-                tk.disassociate();
-            }
-
-            COIO_ALWAYS_INLINE auto destroy() noexcept -> void {
-                alloc_t alloc = allocator;
-                alloc_traits_t::destroy(alloc, this);
-                alloc_traits_t::deallocate(alloc, this, 1);
-            }
-
-            alloc_t allocator;
-            inner_t inner;
-            token scope_token;
         };
 
         struct join_sender {
@@ -231,17 +195,7 @@ namespace coio {
         }
 
         COIO_ALWAYS_INLINE auto spawn(execution::sender auto sndr) noexcept -> void {
-            auto scope_token = get_token();
-            auto new_sender = scope_token.wrap(std::move(sndr));
-            auto alloc = detail::query_or(get_allocator, execution::get_env(new_sender), std::allocator<void>{});
-            using alloc_t = decltype(alloc);
-            using sender_t = decltype(new_sender);
-            using spawn_state_t = spawn_state<alloc_t, sender_t>;
-            using state_alloc_t  = typename std::allocator_traits<alloc_t>::template rebind_alloc<spawn_state_t>;
-            using state_alloc_traits = std::allocator_traits<state_alloc_t>;
-            state_alloc_t state_alloc = alloc;
-            spawn_state_t* st = state_alloc_traits::allocate(state_alloc, 1);
-            state_alloc_traits::construct(state_alloc, st, alloc, std::move(new_sender), scope_token);
+            execution::spawn(std::move(sndr) | execution::let_error(terminate_on_error), get_token());
         }
 
     private:
@@ -272,7 +226,7 @@ namespace coio {
             node->next = std::exchange(head_, node);
         }
 
-        COIO_ALWAYS_INLINE auto try_associate() noexcept -> bool {
+        COIO_ALWAYS_INLINE auto try_associate() noexcept -> association {
             std::scoped_lock _{mutex_};
             switch (state_) {
             case state::unused:
@@ -281,9 +235,9 @@ namespace coio {
             case state::open:
             case state::open_and_joining:
                 ++count_;
-                return true;
+                return association{*this};
             default:
-                return false;
+                return {};
             }
         }
 
@@ -310,6 +264,9 @@ namespace coio {
         }
 
     private:
+        static constexpr auto terminate_on_error = [](const auto&...) noexcept -> std::invoke_result_t<execution::just_t> {
+            std::terminate();
+        };
         atomutex mutex_;
         std::size_t count_{};
         state state_{state::unused};

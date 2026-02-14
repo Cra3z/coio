@@ -189,6 +189,17 @@ namespace coio {
 
         using detail::execution_impl::inline_scheduler;
         using detail::execution_impl::run_loop;
+
+        using detail::execution_impl::scope_association;
+        using detail::execution_impl::scope_token;
+        using detail::execution_impl::associate_t;
+        using detail::execution_impl::spawn_t;
+        using detail::execution_impl::spawn_future_t;
+        using detail::execution_impl::counting_scope;
+        using detail::execution_impl::simple_counting_scope;
+        using detail::execution_impl::associate;
+        using detail::execution_impl::spawn;
+        using detail::execution_impl::spawn_future;
     }
 
     namespace detail {
