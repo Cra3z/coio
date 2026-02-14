@@ -14,7 +14,7 @@ namespace coio {
     concept basic_async_lockable = requires (Mutex&& mtx) {
         { mtx.lock() } -> execution::sender;
         { mtx.unlock() } -> std::same_as<void>;
-        requires std::same_as<detail::await_result_t<decltype(mtx.lock())>, void>;
+        requires std::same_as<execution::value_types_of_t<decltype(mtx.lock())>, std::variant<std::tuple<>>>;
     };
 
     template<typename Mutex>
@@ -121,39 +121,61 @@ namespace coio {
             friend async_mutex;
             friend lock_guard_sender;
         private:
-            class awaiter {
+            struct state_base {
+                using operation_state_concept = execution::operation_state_t;
+                using complete_fn_t = void(*)(state_base*) noexcept;
+
+                state_base(async_mutex& mutex, complete_fn_t complete) noexcept : mtx_(mutex), complete_(complete) {}
+
+                state_base(const state_base&) = delete;
+
+                auto operator= (const state_base&) -> state_base& = delete;
+
+                async_mutex& mtx_;
+                const complete_fn_t complete_;
+                state_base* next_ = nullptr;
+            };
+
+            template<typename Rcvr>
+            class state : public state_base {
                 friend async_mutex;
             public:
-                awaiter(async_mutex& mtx) noexcept : mtx_(mtx) {}
+                state(async_mutex& mtx, Rcvr rcvr) noexcept : state_base(mtx, &complete), rcvr_(std::move(rcvr)) {}
 
-                awaiter(const awaiter&) = delete;
+                state(const state&) = delete;
 
-                auto operator= (const awaiter&) -> awaiter& = delete;
+                auto operator= (const state&) -> state& = delete;
 
-                static auto await_ready() noexcept -> bool {
-                    return false;
-                }
-
-                auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> bool {
-                    coro_ = this_coro;
+                COIO_ALWAYS_INLINE auto start() & noexcept -> void {
                     while (true) {
                         std::uintptr_t old_state = not_locked;
                         // we guess that the current state is `not_locked`. if we are right, set state `lock_but_no_waiter` and then resume.
-                        if (mtx_.state_.compare_exchange_strong(old_state, locked_but_no_waiter)) return false;
+                        if (mtx_.state_.compare_exchange_strong(old_state, locked_but_no_waiter)) {
+                            execution::set_value(std::move(rcvr_));
+                            return;
+                        }
                         // we are wrong, it's not `not_locked`, instead of the address of some one lock_operation or null.
-                        next_ = std::bit_cast<awaiter*>(old_state);
+                        next_ = std::bit_cast<state*>(old_state);
                         // check whether `old_state` is out of date, if not out of date, let state be `this` and then go back to caller.
-                        if (mtx_.state_.compare_exchange_weak(old_state, std::bit_cast<std::uintptr_t>(this))) return true;
+                        if (mtx_.state_.compare_exchange_weak(old_state, std::bit_cast<std::uintptr_t>(this))) {
+                            return;
+                        }
                     }
                 }
 
-                static auto await_resume() noexcept -> void {}
+            private:
+                static auto complete(state_base* self) noexcept -> void {
+                    auto this_ = static_cast<state*>(self);
+                    execution::set_value(std::move(this_->rcvr_));
+                }
 
-            protected:
-                async_mutex& mtx_;
-                std::coroutine_handle<> coro_{};
-                awaiter* next_{};
+            private:
+                Rcvr rcvr_;
             };
+
+        public:
+            using sender_concept = execution::sender_t;
+            using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
 
         private:
             lock_sender(async_mutex& mtx) noexcept : mtx_(&mtx) {}
@@ -170,9 +192,10 @@ namespace coio {
                 return *this;
             }
 
-            auto operator co_await() && noexcept -> awaiter {
-                COIO_ASSUME(mtx_ != nullptr);
-                return awaiter{*std::exchange(mtx_, {})};
+            template<execution::receiver_of<completion_signatures> Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> state<Rcvr> {
+                COIO_ASSERT(mtx_ != nullptr);
+                return {*std::exchange(mtx_, nullptr), std::move(rcvr)};
             }
 
         private:
@@ -187,46 +210,46 @@ namespace coio {
         auto operator= (const async_mutex&) -> async_mutex& = delete;
 
         [[nodiscard]]
-        auto lock() noexcept -> lock_sender {
+        COIO_ALWAYS_INLINE auto lock() noexcept -> lock_sender {
             return lock_sender{*this};
         }
 
         [[nodiscard]]
-        auto lock_guard() noexcept {
+        COIO_ALWAYS_INLINE auto lock_guard() noexcept {
             return then(lock(), [this]() noexcept {
                 return async_unique_lock{*this, std::adopt_lock};
             });
-        };
+        }
 
         [[nodiscard]]
-        auto try_lock() noexcept -> bool {
+        COIO_ALWAYS_INLINE auto try_lock() noexcept -> bool {
             auto expected = not_locked;
             return state_.compare_exchange_strong(expected, locked_but_no_waiter);
         }
 
         auto unlock() -> void {
-            lock_sender::awaiter* old_head = head_.load();
+            lock_sender::state_base* old_head = head_.load();
             if (old_head == nullptr) {
                 auto old_state = locked_but_no_waiter;
                 if (state_.compare_exchange_strong(old_state, not_locked)) return;
 
                 old_state = state_.exchange(locked_but_no_waiter);
                 // to resume the first waiter at first, we reverse the waiting stack and prepend to waiting list.
-                auto current = std::bit_cast<lock_sender::awaiter*>(old_state);
+                auto current = std::bit_cast<lock_sender::state_base*>(old_state);
                 while (current) {
                     old_head = std::exchange(current, std::exchange(current->next_, old_head));
                 }
             }
             head_.store(old_head->next_);
-            old_head->coro_.resume();
+            old_head->complete_(old_head);
         }
 
     private:
-        // no lock_sender::awaiter object whose address is 0x01, so we regard 0x01 as a state representing the mutex not locked.
+        // no lock_sender::state object whose address is 0x01, so we regard 0x01 as a state representing the mutex not locked.
         static constexpr std::uintptr_t not_locked = 1;
         static constexpr std::uintptr_t locked_but_no_waiter = 0;
         std::atomic<std::uintptr_t> state_ = not_locked; // represent no locked or the top of waiting stack
-        std::atomic<lock_sender::awaiter*> head_{nullptr}; // waiting list head
+        std::atomic<lock_sender::state_base*> head_{nullptr}; // waiting list head
     };
 
 
@@ -234,8 +257,6 @@ namespace coio {
     class async_semaphore {
     public:
         using count_type = std::atomic_signed_lock_free::value_type;
-        using acquire_sender = task<>;
-        using release_sender = task<>;
     private:
         class acquire_awaiter {
             friend async_semaphore;
@@ -284,7 +305,7 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto acquire() noexcept -> acquire_sender {
+        auto acquire() noexcept -> task<> {
             co_await mtx_.lock();
             co_await acquire_awaiter{*this};
         }
@@ -303,7 +324,7 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto release() noexcept -> release_sender {
+        auto release() noexcept -> task<> {
             auto lock_guard = co_await mtx_.lock_guard();
             if (waiting_list_head_) {
                 auto continuation = waiting_list_head_->coro_;
@@ -346,29 +367,48 @@ namespace coio {
         class wait_sender {
             friend class async_latch;
         private:
-            struct awaiter {
-                awaiter(async_latch& latch, count_type n) noexcept : latch_{latch}, n_{n} {}
+            struct state_base {
+                using operation_state_concept = execution::operation_state_t;
+                using complete_fn_t = void(*)(state_base*) noexcept;
 
-                awaiter(const wait_sender&) = delete;
+                state_base(async_latch& latch, std::size_t n, complete_fn_t complete) noexcept : latch_(latch), n_(n), complete_(complete) {}
 
-                auto operator= (const awaiter&) -> awaiter& = delete;
+                state_base(const state_base&) = delete;
 
-                auto await_ready() noexcept -> bool {
-                    return latch_.count_down(n_) == 0;
-                }
-
-                auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> void {
-                    coro_ = this_coro;
-                    latch_.waiting_list_.push(*this);
-                }
-
-                static auto await_resume() noexcept -> void {}
+                auto operator= (const state_base&) -> state_base& = delete;
 
                 async_latch& latch_; // NOLINT(*-avoid-const-or-ref-data-members)
                 count_type n_;
-                std::coroutine_handle<> coro_;
-                awaiter* next_ = nullptr;
+                complete_fn_t complete_;
+                state_base* next_ = nullptr;
             };
+
+            template<typename Rcvr>
+            class state : public state_base {
+            public:
+                state(async_latch& latch, count_type n, Rcvr rcvr) noexcept : state_base(latch, n, &complete), rcvr_(std::move(rcvr)) {}
+
+                COIO_ALWAYS_INLINE auto start() & noexcept -> void {
+                    if (latch_.count_down(n_) == 0) {
+                        execution::set_value(std::move(rcvr_));
+                        return;
+                    }
+                    latch_.waiting_list_.push(*this);
+                }
+
+            private:
+                static auto complete(state_base* self) noexcept -> void {
+                    auto this_ = static_cast<state*>(self);
+                    execution::set_value(std::move(this_->rcvr_));
+                }
+
+            private:
+                Rcvr rcvr_;
+            };
+
+        public:
+            using sender_concept = execution::sender_t;
+            using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
 
         public:
             wait_sender(async_latch& latch, count_type n) noexcept : latch_(&latch), n_(n) {}
@@ -387,9 +427,10 @@ namespace coio {
                 return *this;
             }
 
-            auto operator co_await() && noexcept -> awaiter {
+            template<execution::receiver_of<completion_signatures> Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> state<Rcvr> {
                 COIO_ASSERT(latch_ != nullptr);
-                return {*std::exchange(latch_, {}), std::exchange(n_, 0)};
+                return {*std::exchange(latch_, {}), std::exchange(n_, 0), std::move(rcvr)};
             }
 
         private:
@@ -426,7 +467,7 @@ namespace coio {
                 auto node = waiting_list_.pop_all();
                 while (node) {
                     auto next = node->next_;
-                    node->coro_.resume();
+                    node->complete_(node);
                     node = next;
                 }
             }
@@ -445,6 +486,6 @@ namespace coio {
 
     private:
         std::atomic_unsigned_lock_free counter_;
-        detail::intrusive_stack<wait_sender::awaiter> waiting_list_{&wait_sender::awaiter::next_};
+        detail::intrusive_stack<wait_sender::state_base> waiting_list_{&wait_sender::state_base::next_};
     };
 }
