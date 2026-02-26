@@ -399,7 +399,7 @@ namespace coio {
 
         struct async_read_t {
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_input_stream_device auto& device,
                 std::span<std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST {
@@ -417,7 +417,7 @@ namespace coio {
             }
 
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_input_stream_device auto& device,
                 dynamic_buffer auto& dyn_buffer,
                 std::size_t total
@@ -435,7 +435,7 @@ namespace coio {
 
         struct async_write_t {
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_output_stream_device auto& device,
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST {
@@ -453,7 +453,7 @@ namespace coio {
             }
 
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_output_stream_device auto& device,
                 dynamic_buffer auto& dyn_buffer
             ) COIO_STATIC_CALL_OP_CONST {
@@ -470,7 +470,7 @@ namespace coio {
 
         struct async_read_at_t {
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_input_random_access_device auto& device,
                 std::size_t offset,
                 std::span<std::byte> buffer
@@ -491,7 +491,7 @@ namespace coio {
             }
 
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_input_random_access_device auto& device,
                 std::size_t offset,
                 dynamic_buffer auto& dyn_buffer,
@@ -510,7 +510,7 @@ namespace coio {
 
         struct async_write_at_t {
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_output_stream_device auto& device,
                 std::size_t offset,
                 std::span<const std::byte> buffer
@@ -531,7 +531,7 @@ namespace coio {
             }
 
             [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_output_random_access_device auto& device,
                 std::size_t offset,
                 dynamic_buffer auto& dyn_buffer
@@ -546,115 +546,187 @@ namespace coio {
             }
         };
 
-        struct async_read_until_t {
-            // Read until char delimiter
-            [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
-                async_input_stream_device auto& device,
-                dynamic_buffer auto& buffer,
-                char delim
-            ) COIO_STATIC_CALL_OP_CONST {
-                return async_read_until_t{}(
-                    std::allocator_arg,
-                    std::allocator<void>{},
-                    device,
-                    buffer,
-                    delim
-                );
-            }
+        template<typename Rcvr>
+        struct read_until_state_base {
+            using operation_state_concept = execution::operation_state_t;
+            using on_read_fn_t = void(*)(read_until_state_base*, std::size_t) noexcept;
 
-            [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
-                std::allocator_arg_t,
-                const auto&,
-                async_input_stream_device auto& device,
-                dynamic_buffer auto& buffer,
-                char delim
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
-                std::size_t search_pos = 0;
-                for (;;) {
-                    auto data = buffer.data();
-                    auto begin = reinterpret_cast<const char*>(data.data());
-                    auto end = begin + data.size();
+            struct receiver {
+                using receiver_concept = execution::receiver_t;
 
-                    for (auto it = begin + search_pos; it != end; ++it) {
-                        if (*it == delim) {
-                            co_return static_cast<std::size_t>(it - begin + 1);
-                        }
+                struct env {
+                    template<typename Prop, typename... Args>
+                        requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
+                            and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
+                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
+                        return prop(inner, std::forward<Args>(args)...);
                     }
 
-                    search_pos = data.size();
+                    execution::env_of_t<Rcvr> inner;
+                };
 
-                    std::size_t bytes_to_read = std::max<std::size_t>(512, buffer.capacity() - buffer.size());
-                    if (bytes_to_read == 0) bytes_to_read = 512;
-
-                    auto prep = buffer.prepare(bytes_to_read);
-                    std::size_t n = co_await device.async_read_some(prep);
-                    if (n == 0) co_return 0;
-                    buffer.commit(n);
+                COIO_ALWAYS_INLINE auto get_env() const noexcept {
+                    return env{execution::get_env(state_->rcvr)};
                 }
+
+                COIO_ALWAYS_INLINE auto set_value(std::size_t bytes_transferred) && noexcept -> void {
+                    if (bytes_transferred == 0) {
+                        execution::set_value(std::move(state_->rcvr), std::error_code{}, std::size_t{0});
+                        return;
+                    }
+                    state_->on_read(state_, bytes_transferred);
+                }
+
+                COIO_ALWAYS_INLINE auto set_error(std::error_code ec) && noexcept -> void {
+                    execution::set_value(std::move(state_->rcvr), ec, std::size_t{0});
+                }
+
+                COIO_ALWAYS_INLINE auto set_stopped() && noexcept -> void {
+                    std::move(*this).set_error(std::make_error_code(std::errc::operation_canceled));
+                }
+
+                read_until_state_base* state_;
+            };
+
+            const on_read_fn_t on_read;
+            Rcvr rcvr;
+        };
+
+        template<typename Rcvr, typename Device, typename Buffer, typename Delim>
+        struct read_until_state : read_until_state_base<Rcvr> {
+            using base = read_until_state_base<Rcvr>;
+            using receiver = typename base::receiver;
+            using read_sender_t = decltype(std::declval<Device&>().async_read_some(std::declval<std::span<std::byte>>()));
+
+            read_until_state(Rcvr rcvr, Device* device, Buffer* buffer, Delim delim) noexcept
+                : base(&on_read_impl, std::move(rcvr)), device(device), buffer(buffer), delim(std::move(delim)) {}
+
+            read_until_state(const read_until_state&) = delete;
+
+            auto operator= (const read_until_state&) -> read_until_state& = delete;
+
+            COIO_ALWAYS_INLINE auto start() & noexcept -> void {
+                if constexpr (std::same_as<Delim, std::string_view>) {
+                    if (delim.empty()) {
+                        execution::set_value(std::move(this->rcvr), std::error_code{}, std::size_t{0});
+                        return;
+                    }
+                }
+                search_and_read();
             }
 
-            
-            [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
-                async_input_stream_device auto& device,
-                dynamic_buffer auto& buffer,
-                std::string_view delim
-            ) COIO_STATIC_CALL_OP_CONST {
-                return async_read_until_t{}(
-                    std::allocator_arg,
-                    std::allocator<void>{},
-                    device,
-                    buffer,
-                    delim
-                );
+            COIO_ALWAYS_INLINE auto search_and_read() noexcept -> void {
+                auto pos = search();
+                if (pos > 0) {
+                    execution::set_value(std::move(this->rcvr), std::error_code{}, pos);
+                    return;
+                }
+                do_read();
             }
 
-            [[nodiscard]]
-            COIO_STATIC_CALL_OP auto operator() (
-                std::allocator_arg_t,
-                const auto& alloc,
-                async_input_stream_device auto& device,
-                dynamic_buffer auto& buffer,
-                std::string_view delim
-            ) COIO_STATIC_CALL_OP_CONST -> task<std::size_t> {
-                if (delim.empty()) co_return 0;
-                if (delim.size() == 1) {
-                    co_return co_await async_read_until_t{}(
-                        std::allocator_arg,
-                        alloc,
-                        device,
-                        buffer,
-                        delim[0]
-                    );
-                }
-                std::size_t search_pos = 0;
-                for (;;) {
-                    auto data = buffer.data();
-                    auto begin = reinterpret_cast<const char*>(data.data());
-                    auto size = data.size();
+            auto search() noexcept -> std::size_t {
+                auto data = buffer->data();
+                auto begin = reinterpret_cast<const char*>(data.data());
+                auto size = data.size();
 
+                if constexpr (std::same_as<Delim, char>) {
+                    auto end = begin + size;
+                    for (auto it = begin + search_pos; it != end; ++it) {
+                        if (*it == delim) {
+                            return static_cast<std::size_t>(it - begin + 1);
+                        }
+                    }
+                    search_pos = size;
+                    return 0;
+                } else {
                     std::size_t start = search_pos > delim.size() - 1 ? search_pos - delim.size() + 1 : 0;
-
                     if (size >= delim.size()) {
                         for (std::size_t i = start; i <= size - delim.size(); ++i) {
                             if (std::memcmp(begin + i, delim.data(), delim.size()) == 0) {
-                                co_return i + delim.size();
+                                return i + delim.size();
                             }
                         }
                     }
-
                     search_pos = size;
-
-                    std::size_t bytes_to_read = std::max<std::size_t>(512, buffer.capacity() - buffer.size());
-                    if (bytes_to_read == 0) bytes_to_read = 512;
-
-                    auto prep = buffer.prepare(bytes_to_read);
-                    std::size_t n = co_await device.async_read_some(prep);
-                    if (n == 0) co_return 0;
-                    buffer.commit(n);
+                    return 0;
                 }
+            }
+
+            COIO_ALWAYS_INLINE auto do_read() noexcept -> void {
+                std::size_t bytes_to_read = std::max<std::size_t>(512, buffer->capacity() - buffer->size());
+                if (bytes_to_read == 0) bytes_to_read = 512;
+                auto prep = buffer->prepare(bytes_to_read);
+                read_state.emplace(elide{execution::connect, device->async_read_some(prep), receiver{this}});
+                execution::start(*read_state);
+            }
+
+            COIO_ALWAYS_INLINE static auto on_read_impl(base* self, std::size_t bytes_transferred) noexcept -> void {
+                auto this_ = static_cast<read_until_state*>(self);
+                this_->buffer->commit(bytes_transferred);
+                this_->search_and_read();
+            }
+
+            Device* device;
+            Buffer* buffer;
+            COIO_NO_UNIQUE_ADDRESS Delim delim;
+            std::size_t search_pos = 0;
+            std::optional<execution::connect_result_t<read_sender_t, receiver>> read_state;
+        };
+
+        template<typename Device, typename Buffer, typename Delim>
+        struct read_until_sender {
+            using sender_concept = execution::sender_t;
+
+            using completion_signatures = execution::completion_signatures<
+                execution::set_value_t(std::error_code, std::size_t)
+            >;
+
+            template<execution::receiver_of<completion_signatures> Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
+                return read_until_state<Rcvr, Device, Buffer, Delim>{
+                    std::move(rcvr), device, buffer, std::move(delim)
+                };
+            }
+
+            COIO_ALWAYS_INLINE static auto get_env() noexcept {
+                return execution::env{execution::prop{
+                    execution::get_await_completion_adaptor,
+                    execution::let_value([](std::error_code ec, std::size_t bytes_transferred) noexcept {
+                        async_result<std::size_t, std::error_code> result;
+                        if (ec) {
+                            if (ec == std::errc::operation_canceled) result.set_stopped();
+                            else result.set_error(ec);
+                        }
+                        else result.set_value(bytes_transferred);
+                        return result;
+                    }
+                )}};
+            }
+
+            Device* device;
+            Buffer* buffer;
+            COIO_NO_UNIQUE_ADDRESS Delim delim;
+        };
+
+        struct async_read_until_t {
+            // Read until char delimiter
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
+                async_input_stream_device auto& device,
+                dynamic_buffer auto& buffer,
+                char delim
+            ) COIO_STATIC_CALL_OP_CONST {
+                return read_until_sender{std::addressof(device), std::addressof(buffer), delim};
+            }
+
+            // Read until string delimiter
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
+                async_input_stream_device auto& device,
+                dynamic_buffer auto& buffer,
+                std::string_view delim
+            ) COIO_STATIC_CALL_OP_CONST {
+                return read_until_sender{std::addressof(device), std::addressof(buffer), delim};
             }
         };
 
