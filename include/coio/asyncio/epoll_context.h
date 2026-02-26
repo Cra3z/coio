@@ -124,7 +124,6 @@ namespace coio {
                 using completion_signatures = execution::completion_signatures<
                     detail::set_value_t<typename Sexpr::result_type>,
                     execution::set_error_t(std::error_code),
-                    execution::set_error_t(std::exception_ptr),
                     execution::set_stopped_t()
                 >;
 
@@ -147,7 +146,7 @@ namespace coio {
 
                 template<execution::receiver_of<completion_signatures> Rcvr>
                 COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
-                    COIO_ASSERT(fd != -1 and context != nullptr and data != nullptr);
+                    COIO_ASSERT(context != nullptr and data != nullptr);
                     return state<Rcvr>{
                         std::move(rcvr),
                         std::exchange(fd, -1),

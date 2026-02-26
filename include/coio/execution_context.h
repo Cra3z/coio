@@ -13,36 +13,11 @@
 #include <utility>
 #include <vector>
 #include "detail/execution.h"
-#include "detail/manual_lifetime.h"
 #include "detail/op_queue.h"
 #include "utils/stop_token.h"
 
 namespace coio {
     namespace detail {
-        class conditional_mutex {
-        public:
-            explicit conditional_mutex(bool enabled) noexcept {
-                if (enabled) mtx_.emplace();
-            }
-
-            auto lock() -> void {
-                if (mtx_) mtx_->lock();
-            }
-
-            auto unlock() -> void {
-                if (mtx_) mtx_->unlock();
-            }
-
-            [[nodiscard]]
-            auto try_lock() noexcept -> bool {
-                if (mtx_) return mtx_->try_lock();
-                return true;
-            }
-
-        private:
-            std::optional<std::mutex> mtx_;
-        };
-
         template<typename Ctx>
         class loop_base {
             friend Ctx;

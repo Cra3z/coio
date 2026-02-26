@@ -14,10 +14,12 @@ using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
 
 auto handle_connection(tcp_socket socket) -> coio::task<> {
     auto remote_endpoint = socket.remote_endpoint();
+    ::debug("new connection from [{}]", remote_endpoint);
     try {
         char buffer[1024];
         while (true) {
             const auto length = co_await socket.async_read_some(coio::as_writable_bytes(buffer));
+            ::debug("{}", std::string_view{buffer, length});
             co_await coio::async_write(socket, coio::as_bytes(buffer, length));
         }
     }
@@ -26,19 +28,15 @@ auto handle_connection(tcp_socket socket) -> coio::task<> {
     }
 }
 
-auto start_server(io_context::scheduler sched) -> coio::task<> {
-    coio::async_scope scope;
-    try {
-        tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8086}};
-        ::debug("server \"{}\" start...", acceptor.local_endpoint());
-        while (auto socket = co_await (acceptor.async_accept() | coio::execution::stopped_as_optional())) {
-            scope.spawn(handle_connection(std::move(socket.value())));
-        }
+auto start_server(io_context::scheduler sched, coio::async_scope& scope) -> coio::task<> try {
+    tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8086}};
+    ::debug("server \"{}\" start...", acceptor.local_endpoint());
+    while (true) {
+        scope.spawn(handle_connection(co_await acceptor.async_accept()));
     }
-    catch (const std::system_error& e) {
-        ::println("acceptor error: {}", e.what());
-    }
-    co_await scope.join();
+}
+catch (const std::system_error& e) {
+    ::println("acceptor error: {}", e.what());
 }
 
 auto signal_watchdog(io_context& context) -> coio::task<> {
@@ -51,7 +49,7 @@ auto signal_watchdog(io_context& context) -> coio::task<> {
 auto main() -> int {
     io_context context;
     coio::async_scope scope;
-    scope.spawn(start_server(context.get_scheduler()));
+    scope.spawn(start_server(context.get_scheduler(), scope));
     scope.spawn(signal_watchdog(context));
     context.run();
     coio::this_thread::sync_wait(scope.join());

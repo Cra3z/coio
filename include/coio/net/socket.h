@@ -420,13 +420,6 @@ namespace coio {
         }
 
     protected:
-        COIO_ALWAYS_INLINE auto check_handle_valid(const char* what) const -> void {
-            if (not is_open()) [[unlikely]] {
-                throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor), what};
-            }
-        }
-
-    protected:
         implementation_type impl_;
     };
 
@@ -513,7 +506,6 @@ namespace coio {
          * \brief start an asynchronous accept.
          * \param peer the socket into which the new connection will be accepted.
          * \return a sender of `void`.
-         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
@@ -522,7 +514,6 @@ namespace coio {
         template<io_scheduler OtherScheduler>
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_accept(protocol_socket_<OtherScheduler>& peer) {
-            this->check_handle_valid("async_accept");
             return then(
                 this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}),
                 [&peer](native_handle_type handle) noexcept {
@@ -535,7 +526,6 @@ namespace coio {
          * \brief start an asynchronous accept.
          * \param other_scheduler the io_context object to be used for the newly accepted socket.
          * \return a sender of `protocol_type::socket<OtherScheduler>`.
-         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `async_accept`, `accept` are performed until this operation completes.\n
          * 2) the behavior is undefined if call two initiating functions (names that start with async_)
@@ -544,7 +534,6 @@ namespace coio {
         template<io_scheduler OtherScheduler>
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_accept(OtherScheduler other_scheduler) {
-            this->check_handle_valid("async_accept");
             return then(
                 this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}),
                 [other_scheduler](native_handle_type handle) noexcept {
@@ -629,7 +618,6 @@ namespace coio {
          * \brief receive some message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
          * \return a sender of `std::size_t`.
-         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `read`, `read_some`, `receive`,
          * `async_read`, `async_read_some` or `async_receive` are performed until this operation completes.\n
@@ -639,7 +627,6 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
-            this->check_handle_valid("async_read_some");
             return let_value(
                 this->get_io_scheduler().schedule_io(
                     this->impl_,
@@ -662,7 +649,6 @@ namespace coio {
          * \brief send some message data asynchronously.
          * \param buffer the buffers containing the message part to send.
          * \return a sender of `std::size_t`.
-         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `write`, `write_some`, `send`,
          * `async_write`, `async_write_some`, or `async_send` are performed until this operation completes.\n
@@ -672,7 +658,6 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) {
-            this->check_handle_valid("async_write_some");
             return this->get_io_scheduler().schedule_io(this->impl_, detail::async_send_t{buffer});
         }
 
@@ -758,7 +743,6 @@ namespace coio {
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
          * \return a sender of `std::size_t`.
-         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
          * `async_receive_from` are performed until this operation completes.\n
@@ -768,7 +752,6 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) {
-            this->check_handle_valid("async_receive");
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
                 detail::async_receive_t{buffer}
@@ -779,7 +762,6 @@ namespace coio {
          * \brief send message data asynchronously.
          * \param buffer the buffers containing the message part to send.
          * \return a sender of `std::size_t`.
-         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
          * `async_send_to` are performed until this operation completes.\n
@@ -788,7 +770,6 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer) {
-            this->check_handle_valid("async_send");
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
                 detail::async_send_t{buffer}
@@ -800,7 +781,6 @@ namespace coio {
          * \param buffer the buffers containing the message part to receive.
          * \param peer an endpoint object that receives the endpoint of the remote sender of the datagram.
          * \return a sender of `std::size_t`.
-         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
          * `async_receive_from` are performed until this operation completes.\n
@@ -809,7 +789,6 @@ namespace coio {
          */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_receive_from(std::span<std::byte> buffer, const endpoint& peer) {
-            this->check_handle_valid("async_receive_from");
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
                 detail::async_receive_from_t{buffer, peer}
@@ -821,7 +800,6 @@ namespace coio {
          * \param buffer the buffers containing the message part to send.
          * \param peer the remote endpoint to which the data will be sent.
          * \return a sender of `std::size_t`.
-         * \throw std::system_error on failure.
          * \note
          * 1) the program must ensure that no other calls to `send`, `send_to`, `async_send`, or
          * `async_send_to` are performed until this operation completes.\n
@@ -830,7 +808,6 @@ namespace coio {
          */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_send_to(std::span<const std::byte> buffer, const endpoint& peer) {
-            this->check_handle_valid("async_send_to");
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
                 detail::async_send_to_t{buffer, peer}

@@ -77,19 +77,15 @@ auto handle_connection(tcp_socket socket) -> coio::task<> {
     }
 }
 
-auto start_server(io_context_pool& pool) -> coio::task<> {
-    coio::async_scope scope;
-    try {
-        tcp_acceptor acceptor{pool.get_scheduler(), coio::endpoint{coio::ipv4_address::any(), 8086}};
-        ::debug("server \"{}\" start...", acceptor.local_endpoint());
-        while (auto socket = co_await (acceptor.async_accept(pool.get_scheduler()) | coio::execution::stopped_as_optional())) {
-            scope.spawn(handle_connection(std::move(socket.value())));
-        }
+auto start_server(io_context_pool& pool, coio::async_scope& scope) -> coio::task<> try {
+    tcp_acceptor acceptor{pool.get_scheduler(), coio::endpoint{coio::ipv4_address::any(), 8086}};
+    ::debug("server \"{}\" start...", acceptor.local_endpoint());
+    while (true) {
+        scope.spawn(handle_connection(co_await acceptor.async_accept(pool.get_scheduler())));
     }
-    catch (const std::system_error& e) {
-        ::debug("acceptor error: {}", e.what());
-    }
-    co_await scope.join();
+}
+catch (const std::system_error& e) {
+    ::debug("acceptor error: {}", e.what());
 }
 
 auto signal_watchdog(io_context_pool& pool) -> coio::task<> {
@@ -101,8 +97,8 @@ auto signal_watchdog(io_context_pool& pool) -> coio::task<> {
 
 auto main() -> int {
     io_context_pool pool{4};
-    coio::this_thread::sync_wait(coio::when_any(
-        signal_watchdog(pool),
-        start_server(pool)
-    ));
+    coio::async_scope scope;
+    scope.spawn(signal_watchdog(pool));
+    scope.spawn(start_server(pool, scope));
+    coio::this_thread::sync_wait(scope.join());
 }

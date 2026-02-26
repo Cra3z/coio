@@ -71,6 +71,7 @@ namespace coio {
         using detail::execution_impl::get_completion_scheduler_t;
         using detail::execution_impl::get_env_t;
         using detail::execution_impl::get_completion_signatures_t;
+        using detail::execution_impl::get_await_completion_adaptor_t;
 
         using detail::execution_impl::get_domain;
         using detail::execution_impl::get_scheduler;
@@ -79,6 +80,7 @@ namespace coio {
         using detail::execution_impl::get_completion_scheduler;
         using detail::execution_impl::get_env;
         using detail::execution_impl::get_completion_signatures;
+        using detail::execution_impl::get_await_completion_adaptor;
 
         using detail::execution_impl::sender_t;
         using detail::execution_impl::sender;

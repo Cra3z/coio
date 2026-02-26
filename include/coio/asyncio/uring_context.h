@@ -85,7 +85,6 @@ namespace coio {
                 using completion_signatures = execution::completion_signatures<
                     detail::set_value_t<typename Sexpr::result_type>,
                     execution::set_error_t(std::error_code),
-                    execution::set_error_t(std::exception_ptr),
                     execution::set_stopped_t()
                 >;
 

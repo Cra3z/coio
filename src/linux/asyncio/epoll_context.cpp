@@ -246,6 +246,11 @@ namespace coio {
         /// async_read_some
         template<>
         auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> bool {
+            if (buffer.empty()) {
+                result.set_value(0);
+                immediately_post();
+                return true;
+            }
             if (not register_event(EPOLLIN, 0)) {
                 result.set_error(std::error_code(errno, std::system_category()));
                 return false;
@@ -274,6 +279,11 @@ namespace coio {
         /// async_write_some
         template<>
         auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> bool {
+            if (buffer.empty()) {
+                result.set_value(0);
+                immediately_post();
+                return true;
+            }
             if (not register_event(EPOLLOUT, 0)) {
                 result.set_error(std::error_code(errno, std::system_category()));
                 return false;
