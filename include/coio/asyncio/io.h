@@ -1,7 +1,6 @@
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <algorithm>
-#include <cstring>
 #include <span>
 #include <stop_token>  // IWYU pragma: keep
 #include <string_view>
@@ -267,19 +266,8 @@ namespace coio {
             struct receiver {
                 using receiver_concept = execution::receiver_t;
 
-                struct env {
-                    template<typename Prop, typename... Args>
-                        requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
-                            and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
-                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
-                        return prop(inner, std::forward<Args>(args)...);
-                    }
-
-                    execution::env_of_t<Rcvr> inner;
-                };
-
                 COIO_ALWAYS_INLINE auto get_env() const noexcept {
-                    return env{execution::get_env(state_->rcvr)};
+                    return detail::fwd_env(execution::get_env(state_->rcvr));
                 }
 
                 COIO_ALWAYS_INLINE auto set_value(std::size_t bytes_transferred, bool again) && noexcept -> void {
@@ -363,7 +351,7 @@ namespace coio {
                 return execution::env{execution::prop{
                     execution::get_await_completion_adaptor,
                     execution::let_value([](std::error_code ec, std::size_t bytes_transferred) noexcept {
-                        async_result<std::size_t, std::error_code> result;
+                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                         if (ec) {
                             if (ec == std::errc::operation_canceled) result.set_stopped();
                             else result.set_error(ec);
@@ -516,7 +504,7 @@ namespace coio {
         struct async_write_at_t {
             [[nodiscard]]
             COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
-                async_output_stream_device auto& device,
+                async_output_random_access_device auto& device,
                 std::size_t offset,
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST {
@@ -559,19 +547,8 @@ namespace coio {
             struct receiver {
                 using receiver_concept = execution::receiver_t;
 
-                struct env {
-                    template<typename Prop, typename... Args>
-                        requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
-                            and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
-                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
-                        return prop(inner, std::forward<Args>(args)...);
-                    }
-
-                    execution::env_of_t<Rcvr> inner;
-                };
-
                 COIO_ALWAYS_INLINE auto get_env() const noexcept {
-                    return env{execution::get_env(state_->rcvr)};
+                    return detail::fwd_env(execution::get_env(state_->rcvr));
                 }
 
                 COIO_ALWAYS_INLINE auto set_value(std::size_t bytes_transferred) && noexcept -> void {
@@ -643,7 +620,8 @@ namespace coio {
                     }
                     search_pos = size;
                     return 0;
-                } else {
+                }
+                else {
                     std::size_t start = search_pos > delim.size() - 1 ? search_pos - delim.size() + 1 : 0;
                     if (size >= delim.size()) {
                         for (std::size_t i = start; i <= size - delim.size(); ++i) {
@@ -702,7 +680,7 @@ namespace coio {
                 return execution::env{execution::prop{
                     execution::get_await_completion_adaptor,
                     execution::let_value([](std::error_code ec, std::size_t bytes_transferred) noexcept {
-                        async_result<std::size_t, std::error_code> result;
+                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                         if (ec) {
                             if (ec == std::errc::operation_canceled) result.set_stopped();
                             else result.set_error(ec);

@@ -195,7 +195,7 @@ namespace coio {
     }
 
     namespace detail {
-        native_uring_sexpr<async_send_to_t>::type::type(async_send_to_t s) noexcept {
+        uring_sexpr_wrapper<async_send_to_t>::type::type(async_send_to_t s) noexcept {
             peer = endpoint_to_sockaddr_in(s.peer);
             auto [psa, len] = to_sockaddr(peer);
             buffer = {
@@ -210,22 +210,20 @@ namespace coio {
             };
         }
 
-        native_uring_sexpr<async_receive_from_t>::type::type(async_receive_from_t s) noexcept {
-            peer = endpoint_to_sockaddr_in(s.peer);
-            auto [psa, len] = to_sockaddr(peer);
+        uring_sexpr_wrapper<async_receive_from_t>::type::type(async_receive_from_t s) noexcept {
             buffer = {
                 .iov_base = s.buffer.data(),
                 .iov_len = s.buffer.size()
             };
             msg = {
-                .msg_name = psa,
-                .msg_namelen = len,
+                .msg_name = &peer,
+                .msg_namelen = sizeof(peer),
                 .msg_iov = &buffer,
                 .msg_iovlen = 1
             };
         }
 
-        native_uring_sexpr<async_connect_t>::type::type(async_connect_t s) noexcept : peer(endpoint_to_sockaddr_in(s.peer)) {}
+        uring_sexpr_wrapper<async_connect_t>::type::type(async_connect_t s) noexcept : peer(endpoint_to_sockaddr_in(s.peer)) {}
 
 
         template<>
@@ -262,6 +260,22 @@ namespace coio {
         template<>
         auto uring_state_base_for<async_receive_from_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_recvmsg(sqe, fd, &msg, 0);
+        }
+
+        template<>
+        auto uring_state_base_for<async_receive_from_t>::complete(int cqe_res) -> void {
+            if (cqe_res < 0) {
+                const std::error_code ec{-cqe_res, std::system_category()};
+                if (ec == std::errc::operation_canceled) {
+                    result.set_stopped();
+                }
+                else {
+                    result.set_error(ec);
+                }
+            }
+            else {
+                result.set_value(sockaddr_storage_to_endpoint(peer), cqe_res);
+            }
         }
 
 

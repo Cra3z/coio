@@ -4,7 +4,7 @@ This document describes the public API of **coio**. It is intended to be a stabl
 
 - **Language level**: C++20 (the library). `std::execution` is provided by an implementation library (P2300).
 - **Scope**: coio types and contracts. Standard `std::execution` algorithms are not re-documented here.
-- **Platform**: Core types are portable; async I/O + networking backends are currently Linux-only.
+- **Platform**: Core types are portable; async I/O + networking backends are currently available on Linux and Windows.
 
 ## Contents
 
@@ -18,13 +18,14 @@ This document describes the public API of **coio**. It is intended to be a stabl
   - [4.2 time_loop](#42-time_loop)
   - [4.3 epoll_context (Linux)](#43-epoll_context-linux)
   - [4.4 uring_context (Linux)](#44-uring_context-linux)
-  - [4.5 work_guard](#45-work_guard)
+  - [4.5 iocp_context (Windows)](#45-iocp_context-windows)
+  - [4.5 work_guard](#46-work_guard)
 - [5. Waiting & coio-specific algorithms](#5-waiting--coio-specific-algorithms)
 - [6. Utilities](#6-utilities)
   - [6.1 async_scope](#61-async_scope)
   - [6.2 timer](#62-timer)
 - [7. Async I/O utilities](#7-async-io-utilities)
-- [8. Networking (Linux)](#8-networking-linux)
+- [8. Networking](#8-networking)
 - [9. Synchronization primitives](#9-synchronization-primitives)
 - [10. Error handling](#10-error-handling)
 - [11. Thread safety (summary)](#11-thread-safety-summary)
@@ -48,22 +49,23 @@ This document describes the public API of **coio**. It is intended to be a stabl
 
 ## 2. Header map
 
-| Area | Header |
-|------|--------|
-| Core concepts + algorithms | `#include <coio/core.h>` |
-| task | `#include <coio/task.h>` |
-| generator | `#include <coio/generator.h>` |
-| time_loop + work_guard | `#include <coio/execution_context.h>` |
-| epoll backend | `#include <coio/asyncio/epoll_context.h>` |
-| io_uring backend | `#include <coio/asyncio/uring_context.h>` |
-| timers | `#include <coio/utils/timer.h>` |
-| async_scope | `#include <coio/utils/async_scope.h>` |
-| sync primitives | `#include <coio/sync_primitives.h>` |
-| I/O helpers | `#include <coio/asyncio/io.h>` |
-| networking basics | `#include <coio/net/basic.h>` |
-| TCP/UDP descriptors | `#include <coio/net/tcp.h>`, `#include <coio/net/udp.h>` |
-| sockets | `#include <coio/net/socket.h>` |
-| resolver | `#include <coio/net/resolver.h>` |
+| Area                       | Header                                                   |
+|----------------------------|----------------------------------------------------------|
+| Core concepts + algorithms | `#include <coio/core.h>`                                 |
+| task                       | `#include <coio/task.h>`                                 |
+| generator                  | `#include <coio/generator.h>`                            |
+| time_loop + work_guard     | `#include <coio/execution_context.h>`                    |
+| epoll backend              | `#include <coio/asyncio/epoll_context.h>`                |
+| io_uring backend           | `#include <coio/asyncio/uring_context.h>`                |
+| iocp backend               | `#include <coio/asyncio/iocp_context.h>`                 |
+| timers                     | `#include <coio/utils/timer.h>`                          |
+| async_scope                | `#include <coio/utils/async_scope.h>`                    |
+| sync primitives            | `#include <coio/sync_primitives.h>`                      |
+| I/O helpers                | `#include <coio/asyncio/io.h>`                           |
+| networking basics          | `#include <coio/net/basic.h>`                            |
+| TCP/UDP descriptors        | `#include <coio/net/tcp.h>`, `#include <coio/net/udp.h>` |
+| sockets                    | `#include <coio/net/socket.h>`                           |
+| resolver                   | `#include <coio/net/resolver.h>`                         |
 
 ---
 
@@ -129,7 +131,7 @@ auto fibonacci(std::size_t n) -> coio::generator<int> {
 
 ### 4.1 Thread-safety model
 
-All execution contexts (`time_loop`, `epoll_context`, `uring_context`) share these guarantees:
+All execution contexts (`time_loop`, `epoll_context`, `uring_context` and `iocp_context`) share these guarantees:
 
 - `run()` / `run_one()` can be called concurrently from multiple threads.
 - `poll()` / `poll_one()` can be called concurrently from multiple threads.
@@ -169,21 +171,21 @@ Execution context with a timer queue and a manually-driven event loop.
 
 Header: `#include <coio/asyncio/epoll_context.h>`
 
-Execution context backed by **epoll**. Includes all `time_loop` APIs plus Linux I/O scheduling.
-
-- Recommended for general-purpose Linux network servers.
-- Provides an I/O scheduler with an `io_object` that owns a file descriptor and can cancel pending operations.
+Execution context backed by **epoll**. Includes all `time_loop` APIs plus epoll-based async I/O.
 
 ### 4.4 uring_context (Linux)
 
 Header: `#include <coio/asyncio/uring_context.h>`
 
-Execution context backed by **io_uring**. Includes all `time_loop` APIs plus io_uring-based I/O.
+Execution context backed by **io_uring**. Includes all `time_loop` APIs plus io_uring-based async I/O.
 
-- Recommended for high-performance I/O on Linux 5.1+.
-- `uring_context(depth)` controls submission queue depth.
+### 4.5 iocp_context (Windows)
 
-### 4.5 work_guard
+Header: `#include <coio/asyncio/iocp_context.h>`
+
+Execution context backed by **IOCP**. Includes all `time_loop` APIs plus IOCP-based async I/O.
+
+### 4.6 work_guard
 
 Header: `#include <coio/execution_context.h>`
 
@@ -248,11 +250,11 @@ This header provides concepts and helper functions for `read`, `write`, and deli
 
 ---
 
-## 8. Networking (Linux)
+## 8. Networking
 
 Headers: `#include <coio/net/...>`
 
-> Networking backends are currently implemented only on Linux.
+> Networking backends are currently implemented only on Linux and Windows.
 
 ### Address and endpoint types
 

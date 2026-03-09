@@ -4,6 +4,7 @@
 #if not COIO_HAS_EPOLL
 #error "uh, where is <sys/epoll.h>?"
 #endif
+#include <sys/socket.h>
 #include "../execution_context.h"
 #include "../detail/async_result.h"
 #include "../detail/io_descriptions.h"
@@ -122,7 +123,7 @@ namespace coio {
             struct io_sender {
                 using sender_concept = execution::sender_t;
                 using completion_signatures = execution::completion_signatures<
-                    detail::set_value_t<typename Sexpr::result_type>,
+                    typename Sexpr::value_signature,
                     execution::set_error_t(std::error_code),
                     execution::set_stopped_t()
                 >;
@@ -134,7 +135,7 @@ namespace coio {
                     template<typename... Args>
                     state_base(Rcvr rcvr, Args&&... args) noexcept : base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
 
-                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
+                    COIO_ALWAYS_INLINE auto do_finish(bool) noexcept -> void {
                         this->result.forward_to(std::move(this->rcvr_));
                     }
 
@@ -220,10 +221,27 @@ namespace coio {
 
     namespace detail {
         template<typename Sexpr>
-        class epoll_state_base_for : private Sexpr, public epoll_context::epoll_node {
+        struct epoll_sexpr_wrapper {
+            using type = Sexpr;
+        };
+
+        template<>
+        struct epoll_sexpr_wrapper<async_receive_from_t> {
+            struct type {
+                type(async_receive_from_t s) : peer{}, buffer(s.buffer) {}
+                ::sockaddr_storage peer;
+                std::span<std::byte> buffer;
+            };
+        };
+
+        template<typename Sexpr>
+        class epoll_state_base_for : private epoll_sexpr_wrapper<Sexpr>::type, public epoll_context::epoll_node {
+        private:
+            using base1 = typename epoll_sexpr_wrapper<Sexpr>::type;
+
         public:
             epoll_state_base_for(int fd, epoll_context& context, epoll_context::epoll_data* data, Sexpr sexpr) noexcept :
-                Sexpr(std::move(sexpr)),
+                base1(std::move(sexpr)),
                 epoll_node(context, fd, data) {}
 
         protected:
@@ -245,7 +263,7 @@ namespace coio {
             }
 
         protected:
-            async_result<typename Sexpr::result_type, std::error_code> result;
+            async_result<typename Sexpr::value_signature, execution::set_error_t(std::error_code)> result;
         };
 
         /// async_read_some

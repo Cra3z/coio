@@ -19,18 +19,18 @@
 
 - **Sender/Receiver model** — Composable asynchronous algorithms via `std::execution`
 - **Coroutine types** — `task<T, Alloc>` and `generator<Ref, Val>` for async computations and lazy sequences
-- **Execution contexts** — `time_loop`, `epoll_context`, `uring_context` with thread-safe `run()`
+- **Execution contexts** — `time_loop`, `epoll_context`, `uring_context` and `iocp_context` with thread-safe `run()`
 - **Networking** — TCP/UDP sockets with sync and async operations (Linux)
 - **Synchronization** — `async_mutex`, `async_semaphore`, `async_latch`
 - **Utilities** — Timers, concurrent queues, signal handling
 
 > [!NOTE]
-> Some network and async-io facilities are currently only implemented using epoll and io_uring on linux.
+> Some network and async-io facilities are currently only implemented using epoll and io_uring on Linux, and IOCP on Windows.
 
 ## Build and Install
 
 ### Requirements
-- C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 2019+)
+- C++20 compatible compiler
 - CMake 3.26+
 
 ### Build Options
@@ -38,7 +38,7 @@
 - `COIO_SENDERS_BACKEND` (NVIDIA/BEMAN/CXX26, default NVIDIA) - Which std::execution implementation to use:
   - `NVIDIA` - NVIDIA/stdexec implementation
   - `BEMAN` - bemanproject/execution implementation  
-  - `CXX26` - Standard library implementation (C++26+)
+  - `CXX26` - Standard library implementation
 
 ### Dependencies
 - [liburing](https://github.com/axboe/liburing) (only if using `uring_context`)

@@ -9,17 +9,6 @@
 namespace coio {
     using execution::scheduler;
 
-    template<typename Scheduler>
-    concept timed_scheduler = scheduler<Scheduler> and requires (Scheduler&& sch) {
-        { static_cast<Scheduler&&>(sch).now() } -> specialization_of<std::chrono::time_point>;
-        { static_cast<Scheduler&&>(sch).schedule_after(static_cast<Scheduler&&>(sch).now().time_since_epoch()) } -> execution::sender;
-        { static_cast<Scheduler&&>(sch).schedule_at(static_cast<Scheduler&&>(sch).now()) } -> execution::sender;
-    };
-
-    template<typename Scheduler>
-    concept io_scheduler = scheduler<Scheduler> and
-        std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_t>;
-
     namespace detail {
         template<typename, typename...>
         struct completion_signature_helper;

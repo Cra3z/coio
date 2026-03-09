@@ -1,24 +1,19 @@
 #include <bit>
-#include <cstring>
 #include <variant>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <coio/detail/error.h>
 #include <coio/net/basic.h>
+#include <coio/detail/error.h>
+#include "../common.h"
 
 namespace coio {
     auto error::gai_category_t::message(int ec) const -> std::string {
-        return ::gai_strerror(ec);
+        return ::gai_strerrorA(ec);
     }
 
-    ipv4_address::ipv4_address(std::uint32_t host_u32) noexcept : net_u32_(::htonl(host_u32)) {}
+    ipv4_address::ipv4_address(std::uint32_t host_u32) noexcept
+        : net_u32_(::htonl(host_u32)) {}
 
     ipv4_address::ipv4_address(const std::string& str) {
-        if (::inet_pton(AF_INET, str.c_str(), &net_u32_) == -1) {
+        if (::inet_pton(AF_INET, str.c_str(), &net_u32_) != 1) {
             throw std::invalid_argument{"invalid ipv4 network address in dotted-decimal format."};
         }
     }
@@ -37,7 +32,7 @@ namespace coio {
     }
 
     ipv6_address::ipv6_address(const std::string& str) {
-        if (::inet_pton(AF_INET6, str.c_str(), val_) == -1) {
+        if (::inet_pton(AF_INET6, str.c_str(), val_) != 1) {
             throw std::invalid_argument{"invalid format for ipv6 network address."};
         }
     }
@@ -46,7 +41,6 @@ namespace coio {
         char buf[INET6_ADDRSTRLEN];
         return ::inet_ntop(AF_INET6, val_, buf, INET6_ADDRSTRLEN);
     }
-
 
     namespace detail {
         auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6> {
@@ -64,7 +58,7 @@ namespace coio {
             };
         }
 
-        auto sockaddr_to_endpoint(::sockaddr* sa) noexcept -> endpoint  {
+        auto sockaddr_to_endpoint(::sockaddr* sa) noexcept -> endpoint {
             switch (sa->sa_family) {
             case AF_INET: {
                 auto ipv4 = reinterpret_cast<::sockaddr_in*>(sa);
@@ -94,10 +88,12 @@ namespace coio {
             }
         }
 
-        auto to_sockaddr(std::variant<::sockaddr_in, ::sockaddr_in6>& sa) -> std::pair<::sockaddr*, ::socklen_t> {
-            return std::visit([](auto& sai) noexcept -> std::pair<::sockaddr*, ::socklen_t> {
-                return {reinterpret_cast<::sockaddr*>(&sai), sizeof(sai)};
-            }, sa);
+        auto to_sockaddr(std::variant<::sockaddr_in, ::sockaddr_in6>& sa) noexcept -> std::pair<::sockaddr*, int> {
+            return std::visit(
+                [](auto& s) noexcept -> std::pair<::sockaddr*, int> {
+                    return {reinterpret_cast<::sockaddr*>(&s), static_cast<int>(sizeof(s))};
+                }, sa
+            );
         }
     }
 }

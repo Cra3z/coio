@@ -1,6 +1,7 @@
 #pragma once
-#include <thread>
-#include "../core.h"
+#include <chrono>
+#include "stop_token.h"
+#include "../detail/execution.h"
 
 namespace coio {
     template<timed_scheduler Scheduler>

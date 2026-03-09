@@ -164,4 +164,8 @@ namespace coio {
         auto numbers = signal_numbers_;
         for (auto signal_number : numbers) remove(signal_number);
     }
+
+    auto strsignal(int signum) noexcept -> std::string_view {
+        return ::strsignal(signum);
+    }
 }

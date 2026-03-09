@@ -1,5 +1,6 @@
 #pragma once
 #include "config.h"
+#include "concepts.h"
 #ifdef COIO_EXECUTION_USE_NVIDIA
 #if __has_include(<stdexec/execution.hpp>) // https://github.com/NVIDIA/stdexec
 #include <stdexec/execution.hpp>
@@ -254,5 +255,39 @@ namespace coio {
                 return std::move(default_value);
             }
         }
+
+        template<typename Env>
+        struct fwd_env_t {
+            template<typename Prop, typename... Args>
+                requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
+                    and std::invocable<Prop, Env, Args...>
+            COIO_ALWAYS_INLINE decltype(auto) query(const Prop& prop, Args&&... args) const noexcept {
+                return prop(inner, std::forward<Args>(args)...);
+            }
+
+            Env inner;
+        };
+
+        template<typename Env>
+        COIO_ALWAYS_INLINE auto fwd_env(fwd_env_t<Env> env) noexcept -> fwd_env_t<Env> {
+            return env;
+        }
+
+        template<typename Env>
+        COIO_ALWAYS_INLINE auto fwd_env(Env env) noexcept -> fwd_env_t<Env> {
+            return fwd_env_t<Env>{env};
+        }
     }
+
+    template<typename Scheduler>
+    concept timed_scheduler = execution::scheduler<Scheduler> and requires (Scheduler&& sch) {
+        { static_cast<Scheduler&&>(sch).now() } -> specialization_of<std::chrono::time_point>;
+        { static_cast<Scheduler&&>(sch).schedule_after(static_cast<Scheduler&&>(sch).now().time_since_epoch()) } -> execution::sender;
+        { static_cast<Scheduler&&>(sch).schedule_at(static_cast<Scheduler&&>(sch).now()) } -> execution::sender;
+    };
+
+    template<typename Scheduler>
+    concept io_scheduler = execution::scheduler<Scheduler> and
+        std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_t>;
+
 }

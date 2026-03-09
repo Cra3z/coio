@@ -51,6 +51,27 @@ if (LINUX)
         PRIVATE
         ${COIO_LINUX_SOURCES}
     )
+elseif (WIN32)
+    file(GLOB_RECURSE COIO_WIN_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/win/*.cpp")
+    target_sources(
+        ${PROJECT_NAME}
+        PRIVATE
+        ${COIO_WIN_SOURCES}
+    )
+
+    target_link_libraries(
+        ${PROJECT_NAME}
+        PUBLIC
+        ws2_32
+        mswsock
+    )
+
+    target_compile_definitions(
+        ${PROJECT_NAME}
+        PRIVATE
+        -DWIN32_LEAN_AND_MEAN
+        -DNOMINMAX
+    )
 endif()
 
 target_include_directories(

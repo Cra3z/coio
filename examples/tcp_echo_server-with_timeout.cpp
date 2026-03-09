@@ -16,13 +16,21 @@ using io_context = coio::iocp_context;
 using tcp_socket = coio::tcp::socket<io_context::scheduler>;
 using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
 
+auto with_timeout(coio::execution::sender auto sndr, io_context::scheduler sched, std::chrono::milliseconds ms) {
+    return coio::when_any(
+        std::move(sndr),
+        sched.schedule_after(ms) | coio::let_value([]{ return coio::just_stopped(); })
+    );
+}
+
 auto handle_connection(tcp_socket socket) -> coio::task<> {
+    using namespace std::chrono_literals;
     auto remote_endpoint = socket.remote_endpoint();
     ::debug("new connection from [{}]", remote_endpoint);
     try {
         char buffer[1024];
         while (true) {
-            const auto length = co_await socket.async_read_some(coio::as_writable_bytes(buffer));
+            const auto length = co_await with_timeout(socket.async_read_some(coio::as_writable_bytes(buffer)), socket.get_io_scheduler(), 3s);
             ::debug("{}", std::string_view{buffer, length});
             co_await coio::async_write(socket, coio::as_bytes(buffer, length));
         }

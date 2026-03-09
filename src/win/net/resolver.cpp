@@ -1,6 +1,5 @@
 #include <coio/net/resolver.h>
 #include <coio/utils/scope_exit.h>
-#include <netdb.h>
 #include "../common.h"
 
 namespace coio {

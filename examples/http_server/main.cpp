@@ -15,7 +15,7 @@ constexpr std::uint16_t port = 8080;
 auto signal_watchdog(http::io_context_pool& pool) -> coio::task<> {
     coio::signal_set signals{SIGINT, SIGTERM};
     const int signum = co_await signals.async_wait();
-    ::println("server stop with signal: ({}){}", signum, ::strsignal(signum));
+    ::println("server stop with signal: ({}){}", signum, coio::strsignal(signum));
     pool.stop();
 }
 
