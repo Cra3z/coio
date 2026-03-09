@@ -463,9 +463,9 @@ namespace coio {
                 inner_state_t inner_state;
             };
 
-            template<typename E>
-            COIO_ALWAYS_INLINE auto get_completion_signatures(const E& e) const noexcept {
-                return execution::get_completion_signatures(sndr, e);
+            template<std::same_as<sender>, typename... Env>
+            static consteval auto get_completion_signatures() noexcept {
+                return execution::completion_signatures_of_t<Sndr, Env...>{};
             }
 
             template<execution::receiver Rcvr>

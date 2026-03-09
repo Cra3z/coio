@@ -116,6 +116,11 @@ namespace coio {
                     };
                 }
 
+                template<std::same_as<io_sender>, typename...>
+                static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                    return {};
+                }
+
                 COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                     return env{*context};
                 }

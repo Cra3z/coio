@@ -142,6 +142,11 @@ namespace coio {
                     return env{*ctx_};
                 }
 
+                template<std::same_as<schedule_sender>, typename...>
+                static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                    return {};
+                }
+
                 template<execution::receiver_of<completion_signatures> Rcvr>
                 COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                     COIO_ASSERT(ctx_ != nullptr);
@@ -217,6 +222,11 @@ namespace coio {
 
                 COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                     return env{*ctx_};
+                }
+
+                template<std::same_as<sleep_sender>, typename...>
+                static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                    return {};
                 }
 
                 template<execution::receiver_of<completion_signatures> Rcvr>

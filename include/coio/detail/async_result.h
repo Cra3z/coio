@@ -37,6 +37,11 @@ namespace coio::detail {
             result_.template emplace<0>();
         }
 
+        template<std::same_as<async_result>, typename...>
+        static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+            return {};
+        }
+
         template<execution::receiver_of<completion_signatures> Rcvr>
         auto forward_to(Rcvr&& rcvr) noexcept -> void {
             switch (result_.index()) {

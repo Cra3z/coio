@@ -238,9 +238,8 @@ namespace coio {
             return {std::forward<Receiver>(receiver), std::move(senders)};
         }
 
-        template<typename Self, typename... Env>
+        template<std::same_as<sender>, typename... Env>
         static consteval auto get_completion_signatures() noexcept {
-            static_assert(std::same_as<Self, sender>);
             return detail::merge_completion_signatures_t<execution::completion_signatures_of_t<Sender, Env...>...>{};
         }
 
@@ -297,9 +296,8 @@ namespace coio {
             );
         }
 
-        template<typename Self, typename... Env>
+        template<std::same_as<variant_sender>, typename... Env>
         static consteval auto get_completion_signatures() noexcept {
-            static_assert(std::same_as<Self, variant_sender>);
             return detail::merge_completion_signatures_t<execution::completion_signatures_of_t<Sndrs, Env...>...>{};
         }
 

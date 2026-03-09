@@ -294,6 +294,11 @@ namespace coio {
             return coro_ != nullptr;
         }
 
+        template<std::same_as<task>, typename...>
+        static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+            return {};
+        }
+
         template<stoppable_promise ReceiverPromise>
         COIO_ALWAYS_INLINE auto as_awaitable(ReceiverPromise& receiver) && {
             return detail::task_awaiter<T, promise_type, ReceiverPromise>{

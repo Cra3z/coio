@@ -354,6 +354,11 @@ namespace coio {
                 return state{std::move(rcvr), std::move(factory)};
             }
 
+            template<std::same_as<transfer_bytes_sender>, typename...>
+            static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                return {};
+            }
+
             COIO_ALWAYS_INLINE static auto get_env() noexcept {
                 return execution::env{execution::prop{
                     execution::get_await_completion_adaptor,
@@ -686,6 +691,11 @@ namespace coio {
                 return read_until_state<Rcvr, Device, Buffer, Delim>{
                     std::move(rcvr), device, buffer, std::move(delim)
                 };
+            }
+
+            template<std::same_as<read_until_sender>, typename...>
+            static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                return {};
             }
 
             COIO_ALWAYS_INLINE static auto get_env() noexcept {

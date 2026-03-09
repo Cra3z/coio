@@ -192,6 +192,11 @@ namespace coio {
                 return *this;
             }
 
+            template<std::same_as<lock_sender>, typename...>
+            static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                return {};
+            }
+
             template<execution::receiver_of<completion_signatures> Rcvr>
             COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> state<Rcvr> {
                 COIO_ASSERT(mtx_ != nullptr);
@@ -425,6 +430,11 @@ namespace coio {
                 latch_ = std::exchange(other.latch_, {});
                 n_ = std::exchange(other.n_, 0);
                 return *this;
+            }
+
+            template<std::same_as<wait_sender>, typename...>
+            static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                return {};
             }
 
             template<execution::receiver_of<completion_signatures> Rcvr>

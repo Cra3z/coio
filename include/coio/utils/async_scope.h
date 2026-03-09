@@ -122,6 +122,11 @@ namespace coio {
                 return *this;
             }
 
+            template<std::same_as<join_sender>, typename...>
+            static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                return {};
+            }
+
             template<execution::receiver Rcvr>
             COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                 COIO_ASSERT(scope_ != nullptr);
