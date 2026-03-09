@@ -5,19 +5,19 @@
 
 namespace coio {
     namespace detail {
-        int ai_canonname_v() noexcept;
+        auto ai_canonname_v() noexcept -> int;
 
-        int ai_passive_v() noexcept;
+        auto ai_passive_v() noexcept -> int;
 
-        int ai_numerichost_v() noexcept;
+        auto ai_numerichost_v() noexcept -> int;
 
-        int ai_numericserv_v() noexcept;
+        auto ai_numericserv_v() noexcept -> int;
 
-        int ai_v4mapped_v() noexcept;
+        auto ai_v4mapped_v() noexcept -> int;
 
-        int ai_all_v() noexcept;
+        auto ai_all_v() noexcept -> int;
 
-        int ai_addrconfig_v() noexcept;
+        auto ai_addrconfig_v() noexcept -> int;
 
         struct resolve_query_t {
             inline static const int canonical_name = ai_canonname_v();

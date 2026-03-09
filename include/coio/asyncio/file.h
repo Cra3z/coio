@@ -16,7 +16,7 @@ namespace coio {
 #elif COIO_OS_WINDOWS
         using file_native_handle_type = void*;
 
-        inline constexpr file_native_handle_type invalid_file_handle = nullptr;
+        inline const file_native_handle_type invalid_file_handle = reinterpret_cast<void*>(std::uintptr_t(-1)); // NOLINT(*-misplaced-const)
 #endif
         /**
          * \brief File open mode flags.

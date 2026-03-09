@@ -1,5 +1,6 @@
 #pragma once
 #include "config.h"
+#include "concepts.h"
 #ifdef COIO_EXECUTION_USE_NVIDIA
 #if __has_include(<stdexec/execution.hpp>) // https://github.com/NVIDIA/stdexec
 #include <stdexec/execution.hpp>
@@ -255,4 +256,16 @@ namespace coio {
             }
         }
     }
+
+    template<typename Scheduler>
+    concept timed_scheduler = execution::scheduler<Scheduler> and requires (Scheduler&& sch) {
+        { static_cast<Scheduler&&>(sch).now() } -> specialization_of<std::chrono::time_point>;
+        { static_cast<Scheduler&&>(sch).schedule_after(static_cast<Scheduler&&>(sch).now().time_since_epoch()) } -> execution::sender;
+        { static_cast<Scheduler&&>(sch).schedule_at(static_cast<Scheduler&&>(sch).now()) } -> execution::sender;
+    };
+
+    template<typename Scheduler>
+    concept io_scheduler = execution::scheduler<Scheduler> and
+        std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_t>;
+
 }

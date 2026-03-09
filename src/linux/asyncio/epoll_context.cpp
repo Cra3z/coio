@@ -246,12 +246,16 @@ namespace coio {
         /// async_read_some
         template<>
         auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> bool {
+            if (fd == -1) [[unlikely]] {
+                result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                return false;
+            }
             if (buffer.empty()) {
                 result.set_value(0);
                 immediately_post();
                 return true;
             }
-            if (not register_event(EPOLLIN, 0)) {
+            if (not register_event(EPOLLIN, 0)) [[unlikely]] {
                 result.set_error(std::error_code(errno, std::system_category()));
                 return false;
             }
@@ -279,12 +283,16 @@ namespace coio {
         /// async_write_some
         template<>
         auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> bool {
-            if (buffer.empty()) {
+            if (fd == -1) [[unlikely]] {
+                result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                return false;
+            }
+            if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
                 immediately_post();
                 return true;
             }
-            if (not register_event(EPOLLOUT, 0)) {
+            if (not register_event(EPOLLOUT, 0)) [[unlikely]] {
                 result.set_error(std::error_code(errno, std::system_category()));
                 return false;
             }
@@ -312,16 +320,21 @@ namespace coio {
         /// async_receive
         template<>
         auto epoll_state_base_for<async_receive_t>::do_start() noexcept -> bool {
+            if (fd == -1) [[unlikely]] {
+                result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                return false;
+            }
             const ::ssize_t n = ::recv(fd, buffer.data(), buffer.size(), MSG_DONTWAIT);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLIN, EPOLLET)) {
+                    if (not register_event(EPOLLIN, EPOLLET)) [[unlikely]] {
                         result.set_error(std::error_code(errno, std::system_category()));
                         return false;
                     }
                     return true;
                 }
                 result.set_error(std::error_code(errno, std::system_category()));
+                return false;
             }
             else {
                 result.set_value(n);
@@ -351,16 +364,21 @@ namespace coio {
         /// async_send
         template<>
         auto epoll_state_base_for<async_send_t>::do_start() noexcept -> bool {
+            if (fd == -1) [[unlikely]] {
+                result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                return false;
+            }
             const ::ssize_t n = ::send(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLOUT, EPOLLET)) {
+                    if (not register_event(EPOLLOUT, EPOLLET)) [[unlikely]] {
                         result.set_error(std::error_code(errno, std::system_category()));
                         return false;
                     }
                     return true;
                 }
                 result.set_error(std::error_code(errno, std::system_category()));
+                return false;
             }
             else {
                 result.set_value(n);
@@ -390,18 +408,23 @@ namespace coio {
         /// async_receive_from
         template<>
         auto epoll_state_base_for<async_receive_from_t>::do_start() noexcept -> bool {
+            if (fd == -1) [[unlikely]] {
+                result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                return false;
+            }
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
             const ::ssize_t n = ::recvfrom(fd, buffer.data(), buffer.size(), MSG_DONTWAIT, psa, &len);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLIN, EPOLLET)) {
+                    if (not register_event(EPOLLIN, EPOLLET)) [[unlikely]] {
                         result.set_error(std::error_code(errno, std::system_category()));
                         return false;
                     }
                     return true;
                 }
                 result.set_error(std::error_code(errno, std::system_category()));
+                return false;
             }
             else {
                 result.set_value(n);
@@ -433,18 +456,23 @@ namespace coio {
         /// async_send_to
         template<>
         auto epoll_state_base_for<async_send_to_t>::do_start() noexcept -> bool {
+            if (fd == -1) [[unlikely]] {
+                result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                return false;
+            }
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
             ::ssize_t n = ::sendto(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLOUT, EPOLLET)) {
+                    if (not register_event(EPOLLOUT, EPOLLET)) [[unlikely]] {
                         result.set_error(std::error_code(errno, std::system_category()));
                         return false;
                     }
                     return true;
                 }
                 result.set_error(std::error_code(errno, std::system_category()));
+                return false;
             }
             else {
                 result.set_value(n);
@@ -476,7 +504,11 @@ namespace coio {
         /// async_accept
         template<>
         auto epoll_state_base_for<async_accept_t>::do_start() noexcept -> bool {
-            if (not register_event(EPOLLIN, 0)) {
+            if (fd == -1) [[unlikely]] {
+                result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                return false;
+            }
+            if (not register_event(EPOLLIN, 0)) [[unlikely]] {
                 result.set_error(std::error_code(errno, std::system_category()));
                 return false;
             }
@@ -504,7 +536,11 @@ namespace coio {
         /// async_connect
         template<>
         auto epoll_state_base_for<async_connect_t>::do_start() noexcept -> bool {
-            if (not register_event(EPOLLOUT, 0)) {
+            if (fd == -1) [[unlikely]] {
+                result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                return false;
+            }
+            if (not register_event(EPOLLOUT, 0)) [[unlikely]] {
                 result.set_error(std::error_code(errno, std::system_category()));
                 return false;
             }

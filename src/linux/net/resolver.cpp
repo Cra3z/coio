@@ -5,31 +5,31 @@
 
 namespace coio {
     namespace detail {
-        int ai_canonname_v() noexcept {
+        auto ai_canonname_v() noexcept -> int {
             return AI_CANONNAME;
         }
 
-        int ai_passive_v() noexcept {
+        auto ai_passive_v() noexcept -> int {
             return AI_PASSIVE;
         }
 
-        int ai_numerichost_v() noexcept {
+        auto ai_numerichost_v() noexcept -> int {
             return AI_NUMERICHOST;
         }
 
-        int ai_numericserv_v() noexcept {
+        auto ai_numericserv_v() noexcept -> int {
             return AI_NUMERICSERV;
         }
 
-        int ai_v4mapped_v() noexcept {
+        auto ai_v4mapped_v() noexcept -> int {
             return AI_V4MAPPED;
         }
 
-        int ai_all_v() noexcept {
+        auto ai_all_v() noexcept -> int {
             return AI_ALL;
         }
 
-        int ai_addrconfig_v() noexcept {
+        auto ai_addrconfig_v() noexcept -> int {
             return AI_ADDRCONFIG;
         }
 

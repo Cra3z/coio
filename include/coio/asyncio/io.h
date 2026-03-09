@@ -516,7 +516,7 @@ namespace coio {
         struct async_write_at_t {
             [[nodiscard]]
             COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
-                async_output_stream_device auto& device,
+                async_output_random_access_device auto& device,
                 std::size_t offset,
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST {
@@ -643,7 +643,8 @@ namespace coio {
                     }
                     search_pos = size;
                     return 0;
-                } else {
+                }
+                else {
                     std::size_t start = search_pos > delim.size() - 1 ? search_pos - delim.size() + 1 : 0;
                     if (size >= delim.size()) {
                         for (std::size_t i = start; i <= size - delim.size(); ++i) {

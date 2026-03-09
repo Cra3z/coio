@@ -107,7 +107,7 @@ namespace coio {
 
                 template<execution::receiver_of<completion_signatures> Rcvr>
                 COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
-                    COIO_ASSERT(fd != -1 and context != nullptr);
+                    COIO_ASSERT(context != nullptr);
                     return state<Rcvr>{
                         std::move(rcvr),
                         std::exchange(fd, -1),
