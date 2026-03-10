@@ -85,7 +85,6 @@ namespace coio {
 
             if (work_count_ == 0) break;
 
-            // Compute wait duration for timers.
             ::DWORD timeout = infinite ? INFINITE : 0;
             if (infinite) {
                 using milliseconds = std::chrono::duration<::DWORD, std::milli>;
@@ -93,14 +92,14 @@ namespace coio {
                     const auto now = std::chrono::steady_clock::now();
                     const auto ms = std::chrono::duration_cast<milliseconds>(*earliest - now).count();
                     timeout = static_cast<::DWORD>(std::max<long long>(ms, 0LL));
-                    if (timeout > 0) timeout += 1; // round up to avoid spurious timeouts
+                    if (timeout > 0) timeout += 1;
                 }
             }
 
-            OVERLAPPED* overlapped = nullptr;
-            ULONG_PTR key = 0;
+            ::OVERLAPPED* overlapped = nullptr;
+            ::ULONG_PTR key = 0;
             ::DWORD bytes = 0;
-            const BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, timeout);
+            const ::BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, timeout);
             const ::DWORD err = success ? 0 : ::GetLastError();
 
             op_queue local_ops;
@@ -156,7 +155,7 @@ namespace coio {
 
         /// async_read_some
         template<>
-        auto iocp_state_base_for<async_read_some_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_read_some_t>::do_start() noexcept -> bool { // TODO: stream_file
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
@@ -209,7 +208,7 @@ namespace coio {
 
         /// async_write_some
         template<>
-        auto iocp_state_base_for<async_write_some_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_write_some_t>::do_start() noexcept -> bool { // TODO: stream_file
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
@@ -648,6 +647,7 @@ namespace coio {
             if (error) {
                 if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
                 else result.set_error(to_error_code(error));
+                return;
             }
             ::setsockopt(
                 std::bit_cast<::SOCKET>(handle),

@@ -277,16 +277,20 @@ namespace coio {
              */
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
-                return then(
+                return let_value(
                     this->get_io_scheduler().schedule_io(
                         this->impl_,
                         detail::async_read_some_t{buffer}
                     ),
-                    [total = buffer.size()](std::size_t bytes_transferred) -> std::size_t {
+                    [total = buffer.size()](std::size_t bytes_transferred) noexcept -> detail::async_result<std::size_t, std::error_code> {
+                        detail::async_result<std::size_t, std::error_code> result;
                         if (bytes_transferred == 0 and total > 0) [[unlikely]] {
-                            throw std::system_error{coio::error::eof, "async_read_some"};
+                            result.set_error(error::eof);
                         }
-                        return bytes_transferred;
+                        else {
+                            result.set_value(bytes_transferred);
+                        }
+                        return result;
                     }
                 );
             }
