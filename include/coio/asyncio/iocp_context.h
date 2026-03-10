@@ -30,28 +30,13 @@ namespace coio {
     private:
         static constexpr ::ULONG_PTR wake_completion_key = 1;
 
-        // Forward declaration so iocp_awaitable can hold a typed pointer before
-        // the full definition of iocp_node appears below.
-        struct iocp_node;
-
-        // Extended OVERLAPPED carrying a back-pointer to the owning node.
-        // iocp_awaitable::ov MUST be the first member (offset 0) so that
-        // an `OVERLAPPED*` returned by GetQueuedCompletionStatus can be
-        // safely reinterpret_cast'd back to `iocp_awaitable*`.
-        struct iocp_awaitable {
-            OVERLAPPED ov{};
-            iocp_node* node{}; // back-pointer; refers to iocp_context::iocp_node above
-        };
-
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
-        struct iocp_node : node {
-            iocp_awaitable awaitable;
+        struct iocp_node : ::OVERLAPPED, node {
+            explicit iocp_node(iocp_context& context) noexcept : ::OVERLAPPED{}, node(context) {}
 
-            explicit iocp_node(iocp_context& context) noexcept : node(context) {
-                awaitable.node = this;
-            }
+            virtual auto complete(::DWORD bytes_transferred, ::DWORD error) noexcept -> void = 0;
 
-            virtual auto complete(DWORD bytes_transferred, DWORD error) noexcept -> void = 0;
+            auto do_cancel() -> void;
         };
 
     public:
@@ -201,7 +186,7 @@ namespace coio {
 
         ~iocp_context();
 
-        auto operator=(const iocp_context&) -> iocp_context& = delete;
+        auto operator= (const iocp_context&) -> iocp_context& = delete;
 
     private:
         auto do_one(bool infinite) -> bool;
@@ -214,8 +199,6 @@ namespace coio {
     };
 
     namespace detail {
-        // Per-operation extended storage for operations that need extra
-        // platform-specific data alongside the base Sexpr members.
         template<typename Sexpr>
         struct native_iocp_sexpr {
             using type = Sexpr;
@@ -225,18 +208,9 @@ namespace coio {
         struct native_iocp_sexpr<async_receive_from_t> {
             struct type : async_receive_from_t {
                 explicit type(async_receive_from_t s) noexcept : async_receive_from_t(std::move(s)) {}
-                WSABUF wsabuf{};
-                SOCKADDR_STORAGE from_addr{};
-                INT from_len = sizeof(SOCKADDR_STORAGE);
-            };
-        };
 
-        template<>
-        struct native_iocp_sexpr<async_send_to_t> {
-            struct type : async_send_to_t {
-                explicit type(async_send_to_t s) noexcept : async_send_to_t(std::move(s)) {}
-                WSABUF wsabuf{};
-                SOCKADDR_STORAGE to_addr{};
+                ::sockaddr_storage peer_storage{};
+                int peer_length = sizeof(::sockaddr_storage);
             };
         };
 
@@ -244,18 +218,9 @@ namespace coio {
         struct native_iocp_sexpr<async_accept_t> {
             struct type : async_accept_t {
                 explicit type(async_accept_t s) noexcept : async_accept_t(s) {}
-                SOCKET accept_sock = INVALID_SOCKET;
-                // AcceptEx address buffer: local + remote, each (sizeof(SOCKADDR_STORAGE)+16)
-                char addr_buf[2 * (sizeof(SOCKADDR_STORAGE) + 16)]{};
-            };
-        };
 
-        template<>
-        struct native_iocp_sexpr<async_connect_t> {
-            struct type : async_connect_t {
-                explicit type(async_connect_t s) noexcept : async_connect_t(std::move(s)) {}
-                SOCKADDR_STORAGE peer_sa{};
-                INT peer_sa_len{};
+                socket_native_handle_type accepted = invalid_socket_handle;
+                std::byte output_buffer[2 * (sizeof(::sockaddr_storage) + 16)]{};
             };
         };
 
@@ -271,16 +236,12 @@ namespace coio {
                 : native_type(std::move(sexpr)), iocp_node(ctx), handle(handle) {}
 
         protected:
-            auto do_cancel() -> void {
-                static_assert(always_false<Sexpr>, "this operation isn't supported");
-            }
-
             auto do_start() noexcept -> bool {
                 static_assert(always_false<Sexpr>, "this operation isn't supported");
                 unreachable();
             }
 
-            auto complete(DWORD /*bytes*/, DWORD /*error*/) noexcept -> void override {
+            auto complete(::DWORD /*result*/, ::DWORD /*error*/) noexcept -> void final {
                 static_assert(always_false<Sexpr>, "this operation isn't supported");
             }
 
@@ -294,99 +255,69 @@ namespace coio {
         auto iocp_state_base_for<async_read_some_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_read_some_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_read_some_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_read_some_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_write_some
         template<>
         auto iocp_state_base_for<async_write_some_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_write_some_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_write_some_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_write_some_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_read_some_at
         template<>
         auto iocp_state_base_for<async_read_some_at_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_read_some_at_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_read_some_at_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_read_some_at_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_write_some_at
         template<>
         auto iocp_state_base_for<async_write_some_at_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_write_some_at_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_write_some_at_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_write_some_at_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_receive
         template<>
         auto iocp_state_base_for<async_receive_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_receive_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_receive_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_receive_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_send
         template<>
         auto iocp_state_base_for<async_send_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_send_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_send_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_send_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_receive_from
         template<>
         auto iocp_state_base_for<async_receive_from_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_receive_from_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_receive_from_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_receive_from_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_send_to
         template<>
         auto iocp_state_base_for<async_send_to_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_send_to_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_send_to_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_send_to_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_accept
         template<>
         auto iocp_state_base_for<async_accept_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_accept_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_accept_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_accept_t>::complete(::DWORD, ::DWORD) noexcept -> void;
 
         /// async_connect
         template<>
         auto iocp_state_base_for<async_connect_t>::do_start() noexcept -> bool;
 
         template<>
-        auto iocp_state_base_for<async_connect_t>::do_cancel() -> void;
-
-        template<>
-        auto iocp_state_base_for<async_connect_t>::complete(DWORD, DWORD) noexcept -> void;
+        auto iocp_state_base_for<async_connect_t>::complete(::DWORD, ::DWORD) noexcept -> void;
     }
 }

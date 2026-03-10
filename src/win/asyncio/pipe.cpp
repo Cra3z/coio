@@ -1,5 +1,4 @@
 #include <atomic>
-#include <cstring>
 #include <coio/asyncio/pipe.h>
 #include "../common.h"
 
@@ -28,7 +27,7 @@ namespace coio::detail {
             0,        // default timeout
             nullptr); // default security
         if (read_end == INVALID_HANDLE_VALUE) {
-            throw std::system_error(detail::to_error_code(), "make_pipe: create server end");
+            throw std::system_error(to_error_code(::GetLastError()), "make_pipe: create server end");
         }
 
         // Client (write) end.

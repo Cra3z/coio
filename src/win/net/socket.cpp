@@ -5,79 +5,102 @@
 
 namespace coio::detail::socket {
     namespace {
-        auto check_fd(socket_native_handle_type handle) -> void {
-            if (handle == invalid_socket_handle) {
+        auto check_handle(socket_native_handle_type handle) -> void {
+            if (handle == invalid_socket_handle) [[unlikely]] {
                 throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor)};
             }
         }
     }
 
     auto local_endpoint(socket_native_handle_type handle) -> endpoint {
-        check_fd(handle);
+        check_handle(handle);
         SOCKADDR_STORAGE addr{};
         int len = sizeof(addr);
-        const int rc = ::getsockname(to_socket(handle),
-            reinterpret_cast<SOCKADDR*>(&addr), &len);
+        const int rc = ::getsockname(
+            handle,
+            reinterpret_cast<SOCKADDR*>(&addr), &len
+        );
         throw_wsa_error(rc);
         return sockaddr_storage_to_endpoint(addr);
     }
 
     auto remote_endpoint(socket_native_handle_type handle) -> endpoint {
-        check_fd(handle);
+        check_handle(handle);
         SOCKADDR_STORAGE addr{};
         int len = sizeof(addr);
-        const int rc = ::getpeername(to_socket(handle),
-            reinterpret_cast<SOCKADDR*>(&addr), &len);
+        const int rc = ::getpeername(
+            handle,
+            reinterpret_cast<SOCKADDR*>(&addr), &len
+        );
         throw_wsa_error(rc);
         return sockaddr_storage_to_endpoint(addr);
     }
 
     auto shutdown(socket_native_handle_type handle, shutdown_type how) -> void {
-        check_fd(handle);
+        check_handle(handle);
         int h;
         using enum shutdown_type;
         switch (how) {
-        case shutdown_receive: h = SD_RECEIVE; break;
-        case shutdown_send:    h = SD_SEND;    break;
-        case shutdown_both:    h = SD_BOTH;    break;
+        case shutdown_receive: h = SD_RECEIVE;
+            break;
+        case shutdown_send: h = SD_SEND;
+            break;
+        case shutdown_both: h = SD_BOTH;
+            break;
         default: unreachable();
         }
-        throw_wsa_error(::shutdown(to_socket(handle), h));
+        throw_wsa_error(::shutdown(handle, h));
     }
 
     auto bind(socket_native_handle_type handle, const endpoint& local_endpoint) -> void {
-        check_fd(handle);
+        check_handle(handle);
         auto sa = endpoint_to_sockaddr_in(local_endpoint);
         auto [psa, len] = to_sockaddr(sa);
-        throw_wsa_error(::bind(to_socket(handle), psa, len), "bind");
+        throw_wsa_error(::bind(handle, psa, len), "bind");
     }
 
-    auto set_sockopt(socket_native_handle_type handle, int level, int option_name,
-                     std::span<const std::byte> value) -> void
-    {
-        check_fd(handle);
+    auto set_sockopt(
+        socket_native_handle_type handle, int level, int option_name,
+        std::span<const std::byte> value
+    ) -> void {
+        check_handle(handle);
         throw_wsa_error(
-            ::setsockopt(to_socket(handle), level, option_name,
+            ::setsockopt(
+                handle, level, option_name,
                 reinterpret_cast<const char*>(value.data()),
-                static_cast<int>(value.size())),
-            "basic_socket::set_option");
+                static_cast<int>(value.size())
+            ),
+            "basic_socket::set_option"
+        );
     }
 
-    auto get_sockopt(socket_native_handle_type handle, int level, int option_name,
-                     std::span<std::byte> value) -> void
-    {
-        check_fd(handle);
+    auto get_sockopt(
+        socket_native_handle_type handle, int level, int option_name,
+        std::span<std::byte> value
+    ) -> void {
+        check_handle(handle);
         int n = static_cast<int>(value.size());
         throw_wsa_error(
-            ::getsockopt(to_socket(handle), level, option_name,
-                reinterpret_cast<char*>(value.data()), &n),
-            "basic_socket::get_option");
+            ::getsockopt(
+                handle, level, option_name,
+                reinterpret_cast<char*>(value.data()), &n
+            ),
+            "basic_socket::get_option"
+        );
         COIO_ASSERT(n == static_cast<int>(value.size()));
     }
 
-    auto sol_socket_v() noexcept -> int  { return SOL_SOCKET;  }
-    auto ipproto_ipv6_v() noexcept -> int { return IPPROTO_IPV6; }
-    auto ipproto_tcp_v() noexcept -> int  { return IPPROTO_TCP;  }
+    auto sol_socket_v() noexcept -> int {
+        return SOL_SOCKET;
+    }
+
+    auto ipproto_ipv6_v() noexcept -> int {
+        return IPPROTO_IPV6;
+    }
+
+    auto ipproto_tcp_v() noexcept -> int {
+        return IPPROTO_TCP;
+    }
 
     auto sock_option_traits<::linger>::from_value(const ::linger& value) noexcept -> linger_storage {
         return std::bit_cast<linger_storage>(value);
@@ -87,35 +110,79 @@ namespace coio::detail::socket {
         return std::bit_cast<::linger>(storage);
     }
 
-    auto debug::name()              noexcept -> int { return SO_DEBUG;     }
-    auto do_not_route::name()       noexcept -> int { return SO_DONTROUTE; }
-    auto broadcast::name()          noexcept -> int { return SO_BROADCAST; }
-    auto keep_alive::name()         noexcept -> int { return SO_KEEPALIVE; }
-    auto linger::name()             noexcept -> int { return SO_LINGER;    }
-    auto out_of_band_inline::name() noexcept -> int { return SO_OOBINLINE; }
-    auto receive_buffer_size::name() noexcept -> int { return SO_RCVBUF;   }
-    auto receive_low_watermark::name() noexcept -> int { return SO_RCVLOWAT; }
-    auto reuse_address::name()      noexcept -> int { return SO_REUSEADDR; }
-    auto send_buffer_size::name()   noexcept -> int { return SO_SNDBUF;    }
-    auto send_low_watermark::name() noexcept -> int { return SO_SNDLOWAT;  }
-    auto v6_only::name()            noexcept -> int { return IPV6_V6ONLY;  }
-    auto no_dely::name()            noexcept -> int { return TCP_NODELAY;   }
+    auto debug::name() noexcept -> int {
+        return SO_DEBUG;
+    }
+
+    auto do_not_route::name() noexcept -> int {
+        return SO_DONTROUTE;
+    }
+
+    auto broadcast::name() noexcept -> int {
+        return SO_BROADCAST;
+    }
+
+    auto keep_alive::name() noexcept -> int {
+        return SO_KEEPALIVE;
+    }
+
+    auto linger::name() noexcept -> int {
+        return SO_LINGER;
+    }
+
+    auto out_of_band_inline::name() noexcept -> int {
+        return SO_OOBINLINE;
+    }
+
+    auto receive_buffer_size::name() noexcept -> int {
+        return SO_RCVBUF;
+    }
+
+    auto receive_low_watermark::name() noexcept -> int {
+        return SO_RCVLOWAT;
+    }
+
+    auto reuse_address::name() noexcept -> int {
+        return SO_REUSEADDR;
+    }
+
+    auto send_buffer_size::name() noexcept -> int {
+        return SO_SNDBUF;
+    }
+
+    auto send_low_watermark::name() noexcept -> int {
+        return SO_SNDLOWAT;
+    }
+
+    auto v6_only::name() noexcept -> int {
+        return IPV6_V6ONLY;
+    }
+
+    auto no_dely::name() noexcept -> int {
+        return TCP_NODELAY;
+    }
 
     auto open(int family, int type, int protocol_id) -> socket_native_handle_type {
-        const SOCKET s = ::WSASocketW(family, type, protocol_id,
-            nullptr, 0, WSA_FLAG_OVERLAPPED);
-        if (s == INVALID_SOCKET) {
-            throw std::system_error(::WSAGetLastError(),
-                std::system_category(), "open");
+        const SOCKET handle = ::WSASocketW(
+            family, type, protocol_id,
+            nullptr, 0, WSA_FLAG_OVERLAPPED
+        );
+        if (handle == INVALID_SOCKET) {
+            throw std::system_error(
+                ::WSAGetLastError(),
+                std::system_category(), "open"
+            );
         }
-        return from_socket(s);
+        return handle;
     }
 
     auto close(socket_native_handle_type handle) -> void {
         if (handle == invalid_socket_handle) return;
-        if (::closesocket(to_socket(handle)) == SOCKET_ERROR) {
-            throw std::system_error(::WSAGetLastError(),
-                std::system_category(), "close");
+        if (::closesocket(handle) == SOCKET_ERROR) {
+            throw std::system_error(
+                ::WSAGetLastError(),
+                std::system_category(), "close"
+            );
         }
     }
 
@@ -124,68 +191,77 @@ namespace coio::detail::socket {
     }
 
     auto listen(socket_native_handle_type handle, std::size_t backlog) -> void {
-        check_fd(handle);
-        throw_wsa_error(::listen(to_socket(handle), static_cast<int>(backlog)));
+        check_handle(handle);
+        throw_wsa_error(::listen(handle, static_cast<int>(backlog)));
     }
 
     auto connect(socket_native_handle_type handle, const endpoint& peer) -> void {
-        check_fd(handle);
+        check_handle(handle);
         auto sa = endpoint_to_sockaddr_in(peer);
         auto [psa, len] = to_sockaddr(sa);
-        throw_wsa_error(::connect(to_socket(handle), psa, len), "connect");
+        throw_wsa_error(::connect(handle, psa, len), "connect");
     }
 
     auto accept(socket_native_handle_type handle) -> socket_native_handle_type {
-        check_fd(handle);
-        const SOCKET accepted = ::accept(to_socket(handle), nullptr, nullptr);
+        check_handle(handle);
+        const SOCKET accepted = ::accept(handle, nullptr, nullptr);
         if (accepted == INVALID_SOCKET) {
-            throw std::system_error(::WSAGetLastError(),
-                std::system_category(), "accept");
+            throw std::system_error{::WSAGetLastError(), std::system_category(), "accept"};
         }
-        return from_socket(accepted);
+        return accepted;
     }
 
     auto receive(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
-        check_fd(handle);
-        const int n = ::recv(to_socket(handle),
+        check_handle(handle);
+        const int n = ::recv(
+            handle,
             reinterpret_cast<char*>(buffer.data()),
-            static_cast<int>(buffer.size()), 0);
+            static_cast<int>(buffer.size()), 0
+        );
         throw_wsa_error(n, "receive");
         return static_cast<std::size_t>(n);
     }
 
     auto send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
-        check_fd(handle);
-        const int n = ::send(to_socket(handle),
+        check_handle(handle);
+        const int n = ::send(
+            handle,
             reinterpret_cast<const char*>(buffer.data()),
-            static_cast<int>(buffer.size()), 0);
+            static_cast<int>(buffer.size()), 0
+        );
         throw_wsa_error(n, "send");
         return static_cast<std::size_t>(n);
     }
 
-    auto receive_from(socket_native_handle_type handle,
-                      std::span<std::byte> buffer, const endpoint& src) -> std::size_t
-    {
-        check_fd(handle);
+    auto receive_from(
+        socket_native_handle_type handle,
+        std::span<std::byte> buffer, const endpoint& src
+    ) -> std::size_t {
+        check_handle(handle);
         auto sa = endpoint_to_sockaddr_in(src);
         auto [psa, len] = to_sockaddr(sa);
-        const int n = ::recvfrom(to_socket(handle),
+        const int n = ::recvfrom(
+            handle,
             reinterpret_cast<char*>(buffer.data()),
-            static_cast<int>(buffer.size()), 0, psa, &len);
+            static_cast<int>(buffer.size()), 0, psa, &len
+        );
         throw_wsa_error(n, "receive_from");
         return static_cast<std::size_t>(n);
     }
 
-    auto send_to(socket_native_handle_type handle,
-                 std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t
-    {
-        check_fd(handle);
+    auto send_to(
+        socket_native_handle_type handle,
+        std::span<const std::byte> buffer, const endpoint& dest
+    ) -> std::size_t {
+        check_handle(handle);
         auto sa = endpoint_to_sockaddr_in(dest);
         auto [psa, len] = to_sockaddr(sa);
-        const int n = ::sendto(to_socket(handle),
+        const int n = ::sendto(
+            handle,
             reinterpret_cast<const char*>(buffer.data()),
-            static_cast<int>(buffer.size()), 0, psa, len);
+            static_cast<int>(buffer.size()), 0, psa, len
+        );
         throw_wsa_error(n, "send_to");
         return static_cast<std::size_t>(n);
     }
-} // namespace coio::detail::socket
+}

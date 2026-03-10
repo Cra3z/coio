@@ -9,6 +9,35 @@
 #include "../common.h"
 
 namespace coio {
+    namespace detail {
+        namespace {
+            struct wsa_init_guard {
+                wsa_init_guard() {
+                    ::WSADATA data;
+                    if (const auto error = ::WSAStartup(MAKEWORD(2, 2), &data)) [[unlikely]] {
+                        throw std::system_error(error, std::system_category(), "WSAStartup");
+                    }
+                }
+
+                wsa_init_guard(const wsa_init_guard&) = delete;
+
+                auto operator= (const wsa_init_guard&) -> wsa_init_guard& = delete;
+
+                ~wsa_init_guard() {
+                    ::WSACleanup();
+                }
+            };
+
+            auto wsa_init_library() -> void {
+                static wsa_init_guard _{};
+            }
+        }
+    }
+
+    auto iocp_context::iocp_node::do_cancel() -> void {
+        ::CancelIoEx(context_.iocp_, this);
+    }
+
     iocp_context::scheduler::io_object::io_object(iocp_context& ctx, HANDLE handle)
         : ctx_(&ctx), handle_(handle) {
         if (handle != INVALID_HANDLE_VALUE and handle != nullptr) {
@@ -27,9 +56,10 @@ namespace coio {
 
     iocp_context::iocp_context(std::pmr::memory_resource& memory_resource)
         : loop_base(memory_resource) {
-        iocp_ = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
+        detail::wsa_init_library();
+        iocp_ = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
         if (iocp_ == nullptr) {
-            throw std::system_error(detail::to_error_code());
+            throw std::system_error(detail::to_error_code(::GetLastError()));
         }
     }
 
@@ -42,14 +72,13 @@ namespace coio {
         if (work_count_ == 0) return false;
 
         while (work_count_ > 0) {
-            // Fast path: already-queued completions.
             if (const auto op = op_queue_.try_dequeue()) {
                 op->finish();
                 return true;
             }
 
             std::unique_lock lock{bolt_, std::try_to_lock};
-            if (!lock) {
+            if (not lock) {
                 std::this_thread::yield();
                 continue;
             }
@@ -57,33 +86,31 @@ namespace coio {
             if (work_count_ == 0) break;
 
             // Compute wait duration for timers.
-            DWORD timeout = infinite ? INFINITE : 0;
+            ::DWORD timeout = infinite ? INFINITE : 0;
             if (infinite) {
-                using milliseconds = std::chrono::duration<DWORD, std::milli>;
+                using milliseconds = std::chrono::duration<::DWORD, std::milli>;
                 if (const auto earliest = timer_queue_.earliest()) {
                     const auto now = std::chrono::steady_clock::now();
                     const auto ms = std::chrono::duration_cast<milliseconds>(*earliest - now).count();
-                    timeout = static_cast<DWORD>(std::max<long long>(ms, 0LL));
+                    timeout = static_cast<::DWORD>(std::max<long long>(ms, 0LL));
                     if (timeout > 0) timeout += 1; // round up to avoid spurious timeouts
                 }
             }
 
-            OVERLAPPED* ov = nullptr;
+            OVERLAPPED* overlapped = nullptr;
             ULONG_PTR key = 0;
-            DWORD bytes = 0;
-            const BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &ov, timeout);
-            const DWORD err = success ? 0 : ::GetLastError();
+            ::DWORD bytes = 0;
+            const BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, timeout);
+            const ::DWORD err = success ? 0 : ::GetLastError();
 
-            // Collect any expired timers into a local queue.
             op_queue local_ops;
             timer_queue_.take_ready_timers(local_ops);
 
             lock.unlock();
 
-            // Timeout (ov == nullptr) or a spurious wake from PostQueuedCompletionStatus.
-            if (ov == nullptr or key == wake_completion_key) {
+            if (overlapped == nullptr or key == wake_completion_key) {
                 op_queue_.splice(std::move(local_ops));
-                if (!infinite) {
+                if (not infinite) {
                     const auto op = op_queue_.try_dequeue();
                     if (op) op->finish();
                     return op != nullptr;
@@ -91,17 +118,14 @@ namespace coio {
                 continue;
             }
 
-            // Real I/O completion: retrieve the node from the extended OVERLAPPED.
-            auto* ext = reinterpret_cast<iocp_awaitable*>(ov);
-            iocp_node* inode = ext->node;
-            // Set next_ to nullptr so the node can be safely re-enqueued.
-            static_cast<node*>(inode)->next_ = nullptr;
-            inode->complete(bytes, err); // sets result into the operation
-            local_ops.unsynchronized_enqueue(*static_cast<node*>(inode));
+            auto inode = static_cast<iocp_node*>(overlapped);
+            inode->next_ = nullptr;
+            inode->complete(bytes, err);
+            local_ops.unsynchronized_enqueue(*inode);
 
             op_queue_.splice(std::move(local_ops));
 
-            if (!infinite) {
+            if (not infinite) {
                 const auto op = op_queue_.try_dequeue();
                 if (op) op->finish();
                 return op != nullptr;
@@ -117,6 +141,19 @@ namespace coio {
 
 
     namespace detail {
+        namespace {
+            auto span_to_wsabuf(std::span<std::byte> buffer) noexcept -> ::WSABUF {
+                return {
+                    static_cast<::ULONG>(std::min<std::size_t>(buffer.size(), ULONG_MAX)),
+                    reinterpret_cast<::CHAR*>(buffer.data())
+                };
+            }
+
+            auto span_to_wsabuf(std::span<const std::byte> buffer) noexcept -> ::WSABUF {
+                return span_to_wsabuf(std::span{const_cast<std::byte*>(buffer.data()), buffer.size()});
+            }
+        }
+
         /// async_read_some
         template<>
         auto iocp_state_base_for<async_read_some_t>::do_start() noexcept -> bool {
@@ -129,47 +166,44 @@ namespace coio {
                 immediately_post();
                 return true;
             }
-            ZeroMemory(&awaitable.ov, sizeof(awaitable.ov));
-            const BOOL ok = ::ReadFile(
+
+            ::DWORD bytes_read = 0;
+            const ::BOOL ok = ::ReadFile(
                 handle,
                 buffer.data(),
-                static_cast<DWORD>(buffer.size()),
-                nullptr,
-                &awaitable.ov
+                std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu),
+                &bytes_read,
+                this
             );
-            if (!ok) {
-                const DWORD err = ::GetLastError();
+            if (not ok) {
+                const ::DWORD err = ::GetLastError();
                 if (err == ERROR_IO_PENDING) return true;
-                if (err == ERROR_HANDLE_EOF) {
-                    result.set_value(0);
-                    immediately_post();
-                }
+                if (err == ERROR_HANDLE_EOF) {}
                 else {
-                    result.set_error(to_error_code(err));
+                    complete(0, err);
                     return false;
                 }
             }
+            complete(bytes_read, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_read_some_t>::do_cancel() -> void {
-            ::CancelIoEx(handle, &awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_read_some_t>::complete(DWORD bytes, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) {
-                result.set_stopped();
-            }
-            else if (error == ERROR_HANDLE_EOF or (error == 0 and bytes == 0 and !buffer.empty())) {
-                result.set_value(0); // EOF signalled as 0 bytes
-            }
-            else if (error != 0) {
-                result.set_error(to_error_code(error));
+        auto iocp_state_base_for<async_read_some_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) {
+                    result.set_stopped();
+                }
+                else if (error == ERROR_HANDLE_EOF) {
+                    result.set_value(0);
+                }
+                else {
+                    result.set_error(to_error_code(error));
+                }
             }
             else {
-                result.set_value(static_cast<std::size_t>(bytes));
+                result.set_value(bytes);
             }
         }
 
@@ -185,33 +219,35 @@ namespace coio {
                 immediately_post();
                 return true;
             }
-            ZeroMemory(&awaitable.ov, sizeof(awaitable.ov));
-            const BOOL ok = ::WriteFile(
+
+            ::DWORD bytes_written = 0;
+            const ::BOOL ok = ::WriteFile(
                 handle,
                 buffer.data(),
-                static_cast<DWORD>(buffer.size()),
-                nullptr,
-                &awaitable.ov
+                std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu),
+                &bytes_written,
+                this
             );
-            if (!ok) {
-                const DWORD err = ::GetLastError();
+            if (not ok) {
+                const ::DWORD err = ::GetLastError();
                 if (err == ERROR_IO_PENDING) return true;
-                result.set_error(to_error_code(err));
+                complete(0, err);
                 return false;
             }
+            complete(bytes_written, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_write_some_t>::do_cancel() -> void {
-            ::CancelIoEx(handle, &awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_write_some_t>::complete(DWORD bytes, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) { result.set_stopped(); }
-            else if (error != 0) { result.set_error(to_error_code(error)); }
-            else { result.set_value(static_cast<std::size_t>(bytes)); }
+        auto iocp_state_base_for<async_write_some_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else result.set_error(to_error_code(error));
+            }
+            else {
+                result.set_value(bytes);
+            }
         }
 
         /// async_read_some_at
@@ -226,49 +262,40 @@ namespace coio {
                 immediately_post();
                 return true;
             }
-            ZeroMemory(&awaitable.ov, sizeof(awaitable.ov));
-            awaitable.ov.Offset = static_cast<DWORD>(offset & 0xFFFFFFFFu);
-            awaitable.ov.OffsetHigh = static_cast<DWORD>(offset >> 32u);
-            const BOOL ok = ::ReadFile(
+
+            ::DWORD bytes_read = 0;
+            Offset = static_cast<::DWORD>(offset & 0xff'ff'ff'ffu);
+            OffsetHigh = static_cast<::DWORD>(offset >> 32u);
+            const ::BOOL ok = ::ReadFile(
                 handle,
                 buffer.data(),
-                static_cast<DWORD>(buffer.size()),
-                nullptr,
-                &awaitable.ov
+                std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu),
+                &bytes_read,
+                this
             );
-            if (!ok) {
-                const DWORD err = ::GetLastError();
+            if (not ok) {
+                const ::DWORD err = ::GetLastError();
                 if (err == ERROR_IO_PENDING) return true;
-                if (err == ERROR_HANDLE_EOF) {
-                    result.set_value(0);
-                    immediately_post();
-                }
+                if (err == ERROR_HANDLE_EOF) {}
                 else {
-                    result.set_error(to_error_code(err));
+                    complete(0, err);
                     return false;
                 }
             }
+            complete(bytes_read, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_read_some_at_t>::do_cancel() -> void {
-            ::CancelIoEx(handle, &awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_read_some_at_t>::complete(DWORD bytes, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) {
-                result.set_stopped();
-            }
-            else if (error == ERROR_HANDLE_EOF or (error == 0 and bytes == 0 and !buffer.empty())) {
-                result.set_value(0);
-            }
-            else if (error != 0) {
-                result.set_error(to_error_code(error));
+        auto iocp_state_base_for<async_read_some_at_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else if (error == ERROR_HANDLE_EOF) result.set_value(0);
+                else result.set_error(to_error_code(error));
             }
             else {
-                result.set_value(static_cast<std::size_t>(bytes));
+                result.set_value(bytes);
             }
         }
 
@@ -284,35 +311,37 @@ namespace coio {
                 immediately_post();
                 return true;
             }
-            ZeroMemory(&awaitable.ov, sizeof(awaitable.ov));
-            awaitable.ov.Offset = static_cast<DWORD>(offset & 0xFFFFFFFFu);
-            awaitable.ov.OffsetHigh = static_cast<DWORD>(offset >> 32u);
-            const BOOL ok = ::WriteFile(
+            
+            ::DWORD bytes_written = 0;
+            Offset = static_cast<::DWORD>(offset & 0xff'ff'ff'ffu);
+            OffsetHigh = static_cast<::DWORD>(offset >> 32u);
+            const ::BOOL ok = ::WriteFile(
                 handle,
                 buffer.data(),
-                static_cast<DWORD>(buffer.size()),
-                nullptr,
-                &awaitable.ov
+                std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu),
+                &bytes_written,
+                this
             );
-            if (!ok) {
-                const DWORD err = ::GetLastError();
+            if (not ok) {
+                const ::DWORD err = ::GetLastError();
                 if (err == ERROR_IO_PENDING) return true;
-                result.set_error(to_error_code(err));
+                complete(0, err);
                 return false;
             }
+            complete(bytes_written, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_write_some_at_t>::do_cancel() -> void {
-            ::CancelIoEx(handle, &awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_write_some_at_t>::complete(DWORD bytes, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) { result.set_stopped(); }
-            else if (error != 0) { result.set_error(to_error_code(error)); }
-            else { result.set_value(static_cast<std::size_t>(bytes)); }
+        auto iocp_state_base_for<async_write_some_at_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else result.set_error(to_error_code(error));
+            }
+            else {
+                result.set_value(bytes);
+            }
         }
 
         /// async_receive
@@ -327,45 +356,35 @@ namespace coio {
                 immediately_post();
                 return true;
             }
-            ZeroMemory(&awaitable.ov, sizeof(awaitable.ov));
-            WSABUF wsabuf{
-                static_cast<ULONG>(buffer.size()),
-                reinterpret_cast<CHAR*>(buffer.data())
-            };
-            DWORD flags = 0;
+
+            ::WSABUF wsabuf = span_to_wsabuf(buffer);
+            ::DWORD bytes_received = 0;
+            ::DWORD flags = 0;
             const int rc = ::WSARecv(
-                to_socket(handle),
+                std::bit_cast<::SOCKET>(handle),
                 &wsabuf,
                 1,
-                nullptr,
+                &bytes_received,
                 &flags,
-                &awaitable.ov,
+                this,
                 nullptr
             );
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                result.set_error(to_error_code(static_cast<DWORD>(err)));
+                complete(0, err);
                 return false;
             }
+            complete(bytes_received, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_receive_t>::do_cancel() -> void {
-            ::CancelIoEx(handle, &awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_receive_t>::complete(DWORD bytes, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) {
-                result.set_stopped();
-            }
-            else if (error != 0) {
-                result.set_error(to_error_code(error));
-            }
-            else if (bytes == 0 and !buffer.empty()) {
-                result.set_error(make_error_code(coio::error::eof));
+        auto iocp_state_base_for<async_receive_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else result.set_error(to_error_code(error));
             }
             else {
                 result.set_value(static_cast<std::size_t>(bytes));
@@ -384,39 +403,38 @@ namespace coio {
                 immediately_post();
                 return true;
             }
-            ZeroMemory(&awaitable.ov, sizeof(awaitable.ov));
-            WSABUF wsabuf{
-                static_cast<ULONG>(buffer.size()),
-                const_cast<CHAR*>(reinterpret_cast<const CHAR*>(buffer.data()))
-            };
+            
+            ::WSABUF wsabuf = span_to_wsabuf(buffer);
+            ::DWORD bytes_sent = 0;
             const int rc = ::WSASend(
-                to_socket(handle),
+                std::bit_cast<::SOCKET>(handle),
                 &wsabuf,
                 1,
-                nullptr,
+                &bytes_sent,
                 0,
-                &awaitable.ov,
+                this,
                 nullptr
             );
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                result.set_error(to_error_code(static_cast<DWORD>(err)));
+                complete(0, err);
                 return false;
             }
+            complete(bytes_sent, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_send_t>::do_cancel() -> void {
-            ::CancelIoEx(handle, &awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_send_t>::complete(DWORD bytes, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) { result.set_stopped(); }
-            else if (error != 0) { result.set_error(to_error_code(error)); }
-            else { result.set_value(static_cast<std::size_t>(bytes)); }
+        auto iocp_state_base_for<async_send_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else result.set_error(to_error_code(error));
+            }
+            else {
+                result.set_value(static_cast<std::size_t>(bytes));
+            }
         }
 
         /// async_receive_from
@@ -426,50 +444,42 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
             }
-            ZeroMemory(&this->awaitable.ov, sizeof(this->awaitable.ov));
-            ZeroMemory(&this->from_addr, sizeof(this->from_addr));
-            this->from_len = sizeof(SOCKADDR_STORAGE);
-            this->wsabuf = {
-                static_cast<ULONG>(this->buffer.size()),
-                reinterpret_cast<CHAR*>(this->buffer.data())
-            };
-            DWORD flags = 0;
+            
+            std::memset(&peer_storage, 0, sizeof(peer_storage));
+            peer_length = sizeof(::sockaddr_storage);
+            ::WSABUF wsabuf = span_to_wsabuf(buffer);
+            ::DWORD bytes_received = 0;
+            ::DWORD flags = 0;
             const int rc = ::WSARecvFrom(
-                to_socket(this->handle),
-                &this->wsabuf,
+                std::bit_cast<::SOCKET>(handle),
+                &wsabuf,
                 1,
-                nullptr,
+                &bytes_received,
                 &flags,
-                reinterpret_cast<SOCKADDR*>(&this->from_addr),
-                &this->from_len,
-                &this->awaitable.ov,
+                reinterpret_cast<SOCKADDR*>(&peer_storage),
+                &peer_length,
+                this,
                 nullptr
             );
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                this->result.set_error(to_error_code(static_cast<DWORD>(err)));
+                complete(0, err);
                 return false;
             }
+            complete(bytes_received, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_receive_from_t>::do_cancel() -> void {
-            ::CancelIoEx(this->handle, &this->awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_receive_from_t>::complete(DWORD bytes, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) {
-                this->result.set_stopped();
-            }
-            else if (error != 0) {
-                this->result.set_error(to_error_code(error));
+        auto iocp_state_base_for<async_receive_from_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else result.set_error(to_error_code(error));
             }
             else {
-                this->peer = sockaddr_storage_to_endpoint(this->from_addr);
-                this->result.set_value(static_cast<std::size_t>(bytes));
+                result.set_value(static_cast<std::size_t>(bytes));
             }
         }
 
@@ -480,45 +490,42 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
             }
-            ZeroMemory(&this->awaitable.ov, sizeof(this->awaitable.ov));
-            this->wsabuf = {
-                static_cast<ULONG>(this->buffer.size()),
-                const_cast<CHAR*>(reinterpret_cast<const CHAR*>(this->buffer.data()))
-            };
-            auto sa_variant = endpoint_to_sockaddr_in(this->peer);
-            auto [psa, salen] = to_sockaddr(sa_variant);
-            // Copy to stable storage inside this (native_iocp_sexpr<async_send_to_t>::type).
-            std::memcpy(&this->to_addr, psa, static_cast<std::size_t>(salen));
+            
+            ::WSABUF wsabuf = span_to_wsabuf(buffer);
+            ::DWORD bytes_sent = 0;
+            auto sa = endpoint_to_sockaddr_in(peer);
+            auto [psa, len] = to_sockaddr(sa);
             const int rc = ::WSASendTo(
-                to_socket(this->handle),
-                &this->wsabuf,
+                std::bit_cast<::SOCKET>(handle),
+                &wsabuf,
                 1,
-                nullptr,
+                &bytes_sent,
                 0,
-                reinterpret_cast<SOCKADDR*>(&this->to_addr),
-                salen,
-                &this->awaitable.ov,
+                psa,
+                len,
+                this,
                 nullptr
             );
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                this->result.set_error(to_error_code(static_cast<DWORD>(err)));
+                complete(0, err);
                 return false;
             }
+            complete(bytes_sent, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_send_to_t>::do_cancel() -> void {
-            ::CancelIoEx(this->handle, &this->awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_send_to_t>::complete(DWORD bytes, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) { result.set_stopped(); }
-            else if (error != 0) { result.set_error(to_error_code(error)); }
-            else { result.set_value(static_cast<std::size_t>(bytes)); }
+        auto iocp_state_base_for<async_send_to_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else result.set_error(to_error_code(error));
+            }
+            else {
+                result.set_value(static_cast<std::size_t>(bytes));
+            }
         }
 
         /// async_accept
@@ -528,91 +535,67 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
             }
-            // Determine family from the listening socket.
-            SOCKADDR_STORAGE ls_addr{};
-            int ls_len = sizeof(ls_addr);
-            int family = AF_INET;
-            if (::getsockname(
-                    to_socket(this->handle),
-                    reinterpret_cast<SOCKADDR*>(&ls_addr),
-                    &ls_len
-                ) == 0) {
-                family = ls_addr.ss_family;
+            const auto sock = std::bit_cast<::SOCKET>(handle);
+
+            ::WSAPROTOCOL_INFOW info{};
+            int info_length = sizeof(info);
+            if (::getsockopt(sock, SOL_SOCKET, SO_PROTOCOL_INFO, reinterpret_cast<char*>(&info), &info_length) == SOCKET_ERROR) {
+                result.set_error(to_error_code(::WSAGetLastError()));
+                return false;
             }
 
-            // Create the accept socket (must match listener's family/type/proto).
-            this->accept_sock = ::WSASocketW(
-                family,
-                SOCK_STREAM,
-                IPPROTO_TCP,
+            accepted = ::WSASocketW(
+                info.iAddressFamily,
+                info.iSocketType,
+                info.iProtocol,
                 nullptr,
                 0,
                 WSA_FLAG_OVERLAPPED
             );
-            if (this->accept_sock == INVALID_SOCKET) {
-                this->result.set_error(to_error_code(static_cast<DWORD>(::WSAGetLastError())));
-                return false;
-            }
 
-            ZeroMemory(&this->awaitable.ov, sizeof(this->awaitable.ov));
-            DWORD bytes_received = 0;
-            const auto acceptex = get_acceptex_fn();
-            if (!acceptex) {
-                ::closesocket(this->accept_sock);
-                this->accept_sock = INVALID_SOCKET;
-                this->result.set_error(to_error_code(ERROR_NOT_SUPPORTED));
+            if (accepted == INVALID_SOCKET) {
+                result.set_error(to_error_code(static_cast<::DWORD>(::WSAGetLastError())));
                 return false;
             }
-            const BOOL ok = ::AcceptEx(
-                to_socket(this->handle),
-                this->accept_sock,
-                this->addr_buf,
+            
+            ::DWORD bytes_received = 0;
+            const ::BOOL ok = ::AcceptEx(
+                sock,
+                accepted,
+                output_buffer,
                 0u,
-                // no data to receive
-                sizeof(SOCKADDR_STORAGE) + 16u,
-                // local addr slot
-                sizeof(SOCKADDR_STORAGE) + 16u,
-                // remote addr slot
+                sizeof(::sockaddr_storage) + 16u,
+                sizeof(::sockaddr_storage) + 16u,
                 &bytes_received,
-                &this->awaitable.ov
+                this
             );
-            if (!ok) {
+            if (not ok) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                ::closesocket(this->accept_sock);
-                this->accept_sock = INVALID_SOCKET;
-                this->result.set_error(to_error_code(static_cast<DWORD>(err)));
+                complete(0, err);
                 return false;
             }
+            complete(0, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_accept_t>::do_cancel() -> void {
-            ::CancelIoEx(this->handle, &this->awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_accept_t>::complete(DWORD /*bytes*/, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED or error != 0) {
-                if (this->accept_sock != INVALID_SOCKET) {
-                    ::closesocket(this->accept_sock);
-                    this->accept_sock = INVALID_SOCKET;
-                }
-                if (error == ERROR_OPERATION_ABORTED) this->result.set_stopped();
-                else this->result.set_error(to_error_code(error));
+        auto iocp_state_base_for<async_accept_t>::complete(::DWORD, ::DWORD error) noexcept -> void {
+            if (error) {
+                ::closesocket(std::exchange(accepted, INVALID_SOCKET));
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else result.set_error(to_error_code(error));
                 return;
             }
-            // Make the accepted socket fully functional.
-            const SOCKET ls = to_socket(this->handle);
             ::setsockopt(
-                this->accept_sock,
+                accepted,
                 SOL_SOCKET,
                 SO_UPDATE_ACCEPT_CONTEXT,
-                reinterpret_cast<const char*>(&ls),
-                sizeof(ls)
+                reinterpret_cast<const char*>(&handle),
+                sizeof(handle)
             );
-            this->result.set_value(from_socket(this->accept_sock));
+            result.set_value(accepted);
         }
 
         /// async_connect
@@ -622,63 +605,58 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
             }
-            auto sa_variant = endpoint_to_sockaddr_in(this->peer);
-            auto [psa, salen] = to_sockaddr(sa_variant);
-            std::memcpy(&this->peer_sa, psa, static_cast<std::size_t>(salen));
-            this->peer_sa_len = salen;
 
-            const SOCKET sock = to_socket(this->handle);
-
-            ZeroMemory(&this->awaitable.ov, sizeof(this->awaitable.ov));
-            DWORD bytes_sent = 0;
-
-            const auto connectex = get_connectex_fn();
-            if (!connectex) {
-                this->result.set_error(to_error_code(ERROR_NOT_SUPPORTED));
+            ::LPFN_CONNECTEX ConnectEx = nullptr;
+            ::GUID connectex_guid = WSAID_CONNECTEX;
+            ::DWORD byteCount = 0;
+            if (::WSAIoctl(
+                std::bit_cast<::SOCKET>(handle),
+                SIO_GET_EXTENSION_FUNCTION_POINTER,
+                &connectex_guid, sizeof(connectex_guid),
+                &ConnectEx, sizeof(ConnectEx),
+                &byteCount, nullptr, nullptr) == SOCKET_ERROR)
+            {
+                result.set_error(to_error_code(::WSAGetLastError()));
                 return false;
             }
-            const BOOL ok = connectex(
-                sock,
-                reinterpret_cast<SOCKADDR*>(&this->peer_sa),
-                this->peer_sa_len,
+
+            auto sa = endpoint_to_sockaddr_in(peer);
+            auto [psa, len] = to_sockaddr(sa);
+            ::DWORD bytes_sent = 0;
+            const ::BOOL ok = ConnectEx(
+                std::bit_cast<::SOCKET>(handle),
+                psa,
+                len,
                 nullptr,
                 0,
                 &bytes_sent,
-                &this->awaitable.ov
+                this
             );
-            if (!ok) {
+            if (not ok) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                this->result.set_error(to_error_code(static_cast<DWORD>(err)));
+                complete(0, err);
                 return false;
             }
+            complete(0, 0);
+            immediately_post();
             return true;
         }
 
         template<>
-        auto iocp_state_base_for<async_connect_t>::do_cancel() -> void {
-            ::CancelIoEx(this->handle, &this->awaitable.ov);
-        }
-
-        template<>
-        auto iocp_state_base_for<async_connect_t>::complete(DWORD /*bytes*/, DWORD error) noexcept -> void {
-            if (error == ERROR_OPERATION_ABORTED) {
-                this->result.set_stopped();
-                return;
+        auto iocp_state_base_for<async_connect_t>::complete(::DWORD, ::DWORD error) noexcept -> void {
+            if (error) {
+                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
+                else result.set_error(to_error_code(error));
             }
-            if (error != 0) {
-                this->result.set_error(to_error_code(error));
-                return;
-            }
-            // Update the socket context so that standard socket functions work.
             ::setsockopt(
-                to_socket(this->handle),
+                std::bit_cast<::SOCKET>(handle),
                 SOL_SOCKET,
                 SO_UPDATE_CONNECT_CONTEXT,
                 nullptr,
                 0
             );
-            this->result.set_value();
+            result.set_value();
         }
     }
 }

@@ -42,7 +42,7 @@ namespace coio::detail {
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             nullptr, disposition, flags, nullptr);
         if (h == INVALID_HANDLE_VALUE) {
-            throw std::system_error(detail::to_error_code(), "open");
+            throw std::system_error(to_error_code(::GetLastError()), "open");
         }
         return h;
     }
@@ -54,7 +54,7 @@ namespace coio::detail {
         DWORD n = 0;
         const BOOL ok = ::ReadFile(handle, buffer.data(),
             static_cast<DWORD>(buffer.size()), &n, nullptr);
-        if (!ok) throw std::system_error(detail::to_error_code(), "read_some");
+        if (!ok) throw std::system_error(to_error_code(::GetLastError()), "read_some");
         if (!buffer.empty() && n == 0)
             throw std::system_error{coio::error::eof, "read_some"};
         return static_cast<std::size_t>(n);
@@ -67,7 +67,7 @@ namespace coio::detail {
         DWORD n = 0;
         const BOOL ok = ::WriteFile(handle, buffer.data(),
             static_cast<DWORD>(buffer.size()), &n, nullptr);
-        if (!ok) throw std::system_error(detail::to_error_code(), "write_some");
+        if (!ok) throw std::system_error(to_error_code(::GetLastError()), "write_some");
         return static_cast<std::size_t>(n);
     }
 
@@ -110,14 +110,14 @@ namespace coio::detail {
         DWORD n = 0;
         const BOOL ok = ::WriteFile(handle, buffer.data(),
             static_cast<DWORD>(buffer.size()), &n, &ov);
-        if (!ok) throw std::system_error(detail::to_error_code(), "write_some_at");
+        if (!ok) throw std::system_error(to_error_code(::GetLastError()), "write_some_at");
         return static_cast<std::size_t>(n);
     }
 
     auto close_file(file_native_handle_type handle) -> void {
         if (handle == invalid_file_handle) return;
         if (!::CloseHandle(handle)) {
-            throw std::system_error(detail::to_error_code(), "close");
+            throw std::system_error(to_error_code(::GetLastError()), "close");
         }
     }
 
@@ -137,7 +137,7 @@ namespace coio::detail {
         LARGE_INTEGER dist{}, result{};
         dist.QuadPart = static_cast<LONGLONG>(offset);
         if (!::SetFilePointerEx(handle, dist, &result, move_method)) {
-            throw std::system_error(detail::to_error_code(), "seek");
+            throw std::system_error(to_error_code(::GetLastError()), "seek");
         }
         return static_cast<std::size_t>(result.QuadPart);
     }
@@ -148,7 +148,7 @@ namespace coio::detail {
         }
         LARGE_INTEGER sz{};
         if (!::GetFileSizeEx(handle, &sz)) {
-            throw std::system_error(detail::to_error_code(), "size");
+            throw std::system_error(to_error_code(::GetLastError()), "size");
         }
         return static_cast<std::size_t>(sz.QuadPart);
     }
@@ -161,17 +161,17 @@ namespace coio::detail {
         LARGE_INTEGER pos{};
         pos.QuadPart = static_cast<LONGLONG>(new_size);
         if (!::SetFilePointerEx(handle, pos, nullptr, FILE_BEGIN)) {
-            throw std::system_error(detail::to_error_code(), "resize");
+            throw std::system_error(to_error_code(::GetLastError()), "resize");
         }
         if (!::SetEndOfFile(handle)) {
-            throw std::system_error(detail::to_error_code(), "resize");
+            throw std::system_error(to_error_code(::GetLastError()), "resize");
         }
     }
 
     auto file_sync_all(file_native_handle_type handle) -> void {
         if (handle == invalid_file_handle) return;
         if (!::FlushFileBuffers(handle)) {
-            throw std::system_error(detail::to_error_code(), "sync_all");
+            throw std::system_error(to_error_code(::GetLastError()), "sync_all");
         }
     }
 
@@ -179,6 +179,5 @@ namespace coio::detail {
         // Windows FlushFileBuffers flushes both data and metadata.
         file_sync_all(handle);
     }
-} // namespace coio::detail
-
+}
 // NOLINTEND(*-narrowing-conversions)
