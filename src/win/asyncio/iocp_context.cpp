@@ -621,14 +621,13 @@ namespace coio {
 
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
-            ::DWORD bytes_sent = 0;
             const ::BOOL ok = ConnectEx(
                 std::bit_cast<::SOCKET>(handle),
                 psa,
                 len,
                 nullptr,
                 0,
-                &bytes_sent,
+                nullptr,
                 this
             );
             if (not ok) {

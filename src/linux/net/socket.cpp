@@ -144,9 +144,9 @@ namespace coio::detail::socket {
         return TCP_NODELAY;
     }
 
-    auto open(int family, int type, int protocol_id) -> socket_native_handle_type {
+    auto open(int family, int type, int protocol_id, std::error_code& ec) noexcept -> socket_native_handle_type {
         const int fd = ::socket(family, type, protocol_id);
-        throw_last_error(fd, "open");
+        if (fd == -1) [[unlikely]] ec = std::error_code{errno, std::system_category()};
         return fd;
     }
 

@@ -162,17 +162,9 @@ namespace coio::detail::socket {
         return TCP_NODELAY;
     }
 
-    auto open(int family, int type, int protocol_id) -> socket_native_handle_type {
-        const SOCKET handle = ::WSASocketW(
-            family, type, protocol_id,
-            nullptr, 0, WSA_FLAG_OVERLAPPED
-        );
-        if (handle == INVALID_SOCKET) {
-            throw std::system_error(
-                ::WSAGetLastError(),
-                std::system_category(), "open"
-            );
-        }
+    auto open(int family, int type, int protocol_id, std::error_code& ec) noexcept -> socket_native_handle_type {
+        const ::SOCKET handle = ::WSASocketW(family, type, protocol_id, nullptr, 0, WSA_FLAG_OVERLAPPED);
+        if (handle == INVALID_SOCKET) [[unlickly]] ec = std::error_code(::WSAGetLastError(), std::system_category());
         return handle;
     }
 
