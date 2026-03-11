@@ -1,14 +1,18 @@
 #include <coio/core.h>
 #include <coio/asyncio/io.h>
-#include <coio/asyncio/epoll_context.h>
 #include <coio/net/socket.h>
 #include <coio/net/tcp.h>
 #include <coio/utils/signal_set.h>
 #include "common.h"
 
 #if COIO_OS_LINUX
+#include <coio/asyncio/epoll_context.h>
 using io_context = coio::epoll_context;
+#elif COIO_OS_WINDOWS
+#include <coio/asyncio/iocp_context.h>
+using io_context = coio::iocp_context;
 #endif
+
 using tcp_socket = coio::tcp::socket<io_context::scheduler>;
 using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
 
@@ -42,7 +46,7 @@ catch (const std::system_error& e) {
 auto signal_watchdog(io_context& context) -> coio::task<> {
     coio::signal_set signals{SIGINT, SIGTERM};
     const int signum = co_await signals.async_wait();
-    ::debug("server stop with signal: ({}){}", signum, ::strsignal(signum));
+    ::debug("server stop with signal: ({}){}", signum, coio::strsignal(signum));
     context.request_stop();
 }
 

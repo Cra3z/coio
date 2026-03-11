@@ -32,11 +32,13 @@ namespace coio {
 
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
         struct iocp_node : ::OVERLAPPED, node {
-            explicit iocp_node(iocp_context& context) noexcept : ::OVERLAPPED{}, node(context) {}
+            explicit iocp_node(iocp_context& context, ::HANDLE handle) noexcept : ::OVERLAPPED{}, node(context), handle(handle) {}
 
             virtual auto complete(::DWORD bytes_transferred, ::DWORD error) noexcept -> void = 0;
 
             auto do_cancel() -> void;
+
+            ::HANDLE handle;
         };
 
     public:
@@ -233,7 +235,7 @@ namespace coio {
 
         public:
             iocp_state_base_for(HANDLE handle, iocp_context& ctx, Sexpr sexpr) noexcept
-                : native_type(std::move(sexpr)), iocp_node(ctx), handle(handle) {}
+                : native_type(std::move(sexpr)), iocp_node(ctx, handle) {}
 
         protected:
             auto do_start() noexcept -> bool {
@@ -246,7 +248,6 @@ namespace coio {
             }
 
         protected:
-            HANDLE handle;
             async_result<typename Sexpr::result_type, std::error_code> result;
         };
 

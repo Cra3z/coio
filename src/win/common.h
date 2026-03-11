@@ -22,20 +22,20 @@ namespace coio::detail {
     }
 
     COIO_ALWAYS_INLINE auto throw_win_error(BOOL ok, const char* msg = nullptr) -> void {
-        if (ok) return;
+        if (ok) [[likely]] return;
         const DWORD err = ::GetLastError();
         if (msg) throw std::system_error(static_cast<int>(err), std::system_category(), msg);
         throw std::system_error(static_cast<int>(err), std::system_category());
     }
 
     COIO_ALWAYS_INLINE auto throw_wsa_error(int rc, const char* msg = nullptr) -> void {
-        if (rc != SOCKET_ERROR) return;
+        if (rc != SOCKET_ERROR) [[likely]] return;
         const int err = ::WSAGetLastError();
         if (msg) throw std::system_error(err, std::system_category(), msg);
         throw std::system_error(err, std::system_category());
     }
 
-    auto endpoint_to_sockaddr_in(const endpoint& ep) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6>;
+    auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6>;
 
     auto sockaddr_to_endpoint(::sockaddr* sa) noexcept -> endpoint;
 

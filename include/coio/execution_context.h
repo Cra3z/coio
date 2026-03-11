@@ -1,7 +1,6 @@
 // ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
-#include <iostream>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -9,7 +8,6 @@
 #include <mutex>
 #include <limits>
 #include <queue>
-#include <stop_token>
 #include <utility>
 #include <vector>
 #include "detail/execution.h"

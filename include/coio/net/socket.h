@@ -206,7 +206,7 @@ namespace coio {
         };
 
         [[nodiscard]]
-        auto open(int family, int type, int protocol_id, std::error_code& ec) noexcept -> socket_native_handle_type;
+        auto open(int family, int type, int protocol_id) -> socket_native_handle_type;
 
         auto close(socket_native_handle_type handle) -> void;
 
@@ -233,7 +233,7 @@ namespace coio {
 
         auto send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t;
 
-        auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer, const endpoint& src) -> std::size_t;
+        auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::pair<endpoint, size_t>;
 
         auto send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
     }
@@ -306,17 +306,6 @@ namespace coio {
         COIO_ALWAYS_INLINE auto open(const protocol_type& protocol = protocol_type()) -> void {
             if (is_open()) throw std::system_error{error::already_open, "open"};
             impl_ = get_io_scheduler().make_io_object(detail::socket::open(protocol.family(), protocol.type(), protocol.protocol_id()));
-        }
-
-        /**
-         * \brief open the socket using the specified protocol.
-         * \param protocol an object specifying protocol parameters to be used.
-        */
-        COIO_ALWAYS_INLINE auto open(const protocol_type& protocol, std::error_code& ec) noexcept -> void {
-            if (is_open()) ec = error::already_open;
-            const auto native_handle = detail::socket::open(protocol.family(), protocol.type(), protocol.protocol_id(), ec);
-            if (ec) return;
-            impl_ = get_io_scheduler().make_io_object(native_handle);
         }
 
         /**
@@ -424,18 +413,9 @@ namespace coio {
          * \param peer the remote endpoint to which the socket will be connected.
          * \return a sender of `void`.
         */
-        COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) noexcept {
-            detail::async_result<void, std::error_code> result;
-            if (is_open()) result.set_value();
-            else {
-                std::error_code ec;
-                this->open(protocol_type(), ec);
-                if (ec) [[unlikely]] result.set_error(ec);
-                else result.set_value();
-            }
-            return std::move(result) | let_value([this, peer]() noexcept {
-                return get_io_scheduler().schedule_io(impl_, detail::async_connect_t{peer});
-            });
+        COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) {
+            if (not is_open()) open();
+            return get_io_scheduler().schedule_io(impl_, detail::async_connect_t{peer});
         }
 
     protected:
@@ -485,7 +465,7 @@ namespace coio {
          * \param backlog the maximum length of the queue of pending connections.
          * \throw std::system_error on failure.
          */
-        COIO_ALWAYS_INLINE auto listen(std::size_t backlog = max_backlog()) noexcept -> void {
+        COIO_ALWAYS_INLINE auto listen(std::size_t backlog = max_backlog()) -> void {
            detail::socket::listen(this->native_handle(), backlog);
         }
 
@@ -737,13 +717,12 @@ namespace coio {
         /**
          * \brief read data to the socket.
          * \param buffer data buffer to be read to the socket.
-         * \param peer an endpoint object that receives the endpoint of the remote sender of the datagram.
-         * \return the number of bytes read.
+         * \return the endpoint of the remote sender of the datagram and the number of bytes read.
          * \throw std::system_error on failure.
         */
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto receive_from(std::span<std::byte> buffer, const endpoint& peer) -> std::size_t {
-            return detail::socket::receive_from(this->native_handle(), buffer, peer, false);
+        COIO_ALWAYS_INLINE auto receive_from(std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t> {
+            return detail::socket::receive_from(this->native_handle(), buffer);
         }
 
         /**

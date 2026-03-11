@@ -144,9 +144,11 @@ namespace coio::detail::socket {
         return TCP_NODELAY;
     }
 
-    auto open(int family, int type, int protocol_id, std::error_code& ec) noexcept -> socket_native_handle_type {
+    auto open(int family, int type, int protocol_id) -> socket_native_handle_type {
         const int fd = ::socket(family, type, protocol_id);
-        if (fd == -1) [[unlikely]] ec = std::error_code{errno, std::system_category()};
+        if (fd == -1) [[unlikely]] {
+            throw std::system_error{errno, std::system_category(), "open"};
+        }
         return fd;
     }
 
@@ -192,13 +194,13 @@ namespace coio::detail::socket {
         return n;
     }
 
-    auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer, const endpoint& src) -> std::size_t {
+    auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::pair<endpoint, size_t> {
         check_fd(handle);
-        auto sa = endpoint_to_sockaddr_in(src);
-        auto [psa, len] = to_sockaddr(sa);
-        ::ssize_t n = ::recvfrom(handle, buffer.data(), buffer.size(), 0, psa, &len);
+        ::sockaddr_storage addr{};
+        int len = sizeof(addr);
+        ::ssize_t n = ::recvfrom(handle, buffer.data(), buffer.size(), 0, reinterpret_cast<::sockaddr*>(&addr), &len);
         throw_last_error(n, "receive_from");
-        return n;
+        return {sockaddr_storage_to_endpoint(addr), n};
     }
 
     auto send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {

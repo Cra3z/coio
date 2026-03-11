@@ -9,7 +9,6 @@
 #include <netdb.h>
 #include <coio/detail/error.h>
 #include <coio/net/basic.h>
-#include <coio/utils/scope_exit.h>
 
 namespace coio {
     auto error::gai_category_t::message(int ec) const -> std::string {

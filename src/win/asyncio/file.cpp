@@ -35,7 +35,7 @@ namespace coio::detail {
             }
             if (buffer.empty()) [[unlikely]] return 0;
 
-            const ::HANDLE reset_event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            ::HANDLE reset_event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
             if (reset_event == nullptr) {
                 throw std::system_error{to_error_code(::GetLastError()), msg};
             }
@@ -80,7 +80,7 @@ namespace coio::detail {
             }
             if (buffer.empty()) [[unlikely]] return 0;
 
-            const ::HANDLE reset_event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            ::HANDLE reset_event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
             if (reset_event == nullptr) {
                 throw std::system_error{to_error_code(::GetLastError()), msg};
             }

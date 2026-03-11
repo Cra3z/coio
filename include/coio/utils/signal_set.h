@@ -106,4 +106,7 @@ namespace coio {
         std::set<int> signal_numbers_;
         detail::intrusive_stack<node> listeners_{&node::next_};
     };
+
+    [[nodiscard]]
+    auto strsignal(int signum) noexcept -> std::string_view;
 }

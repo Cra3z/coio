@@ -35,11 +35,12 @@ namespace coio {
     }
 
     auto iocp_context::iocp_node::do_cancel() -> void {
-        ::CancelIoEx(context_.iocp_, this);
+        ::CancelIoEx(handle, this);
     }
 
     iocp_context::scheduler::io_object::io_object(iocp_context& ctx, HANDLE handle)
         : ctx_(&ctx), handle_(handle) {
+        // NOTE: `handle` must be opend with `FILE_FLAG_OVERLAPPED` or `WSA_FLAG_OVERLAPPED`
         if (handle != INVALID_HANDLE_VALUE and handle != nullptr) {
             ::CreateIoCompletionPort(handle, ctx.iocp_, 0, 0);
         }
@@ -85,14 +86,12 @@ namespace coio {
 
             if (work_count_ == 0) break;
 
-            ::DWORD timeout = infinite ? INFINITE : 0;
+            long long timeout = infinite ? INFINITE : 0;
             if (infinite) {
-                using milliseconds = std::chrono::duration<::DWORD, std::milli>;
                 if (const auto earliest = timer_queue_.earliest()) {
-                    const auto now = std::chrono::steady_clock::now();
-                    const auto ms = std::chrono::duration_cast<milliseconds>(*earliest - now).count();
-                    timeout = static_cast<::DWORD>(std::max<long long>(ms, 0LL));
-                    if (timeout > 0) timeout += 1;
+                    const auto duration = *earliest - std::chrono::steady_clock::now();
+                    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+                    timeout = std::clamp(ms, 0ll, 0xff'ff'ff'ffll);
                 }
             }
 
@@ -107,23 +106,14 @@ namespace coio {
 
             lock.unlock();
 
-            if (overlapped == nullptr or key == wake_completion_key) {
-                op_queue_.splice(std::move(local_ops));
-                if (not infinite) {
-                    const auto op = op_queue_.try_dequeue();
-                    if (op) op->finish();
-                    return op != nullptr;
-                }
-                continue;
+            if (overlapped and key != wake_completion_key) {
+                auto inode = static_cast<iocp_node*>(overlapped);
+                inode->next_ = nullptr;
+                inode->complete(bytes, err);
+                local_ops.unsynchronized_enqueue(*inode);
             }
 
-            auto inode = static_cast<iocp_node*>(overlapped);
-            inode->next_ = nullptr;
-            inode->complete(bytes, err);
-            local_ops.unsynchronized_enqueue(*inode);
-
             op_queue_.splice(std::move(local_ops));
-
             if (not infinite) {
                 const auto op = op_queue_.try_dequeue();
                 if (op) op->finish();
@@ -152,6 +142,8 @@ namespace coio {
                 return span_to_wsabuf(std::span{const_cast<std::byte*>(buffer.data()), buffer.size()});
             }
         }
+
+        // TODO: Support asynchronous operations for files which use `FILE_SKIP_COMPLETION_PORT_ON_SUCCESS` as notification mode
 
         /// async_read_some
         template<>
@@ -183,8 +175,6 @@ namespace coio {
                     return false;
                 }
             }
-            complete(bytes_read, 0);
-            immediately_post();
             return true;
         }
 
@@ -233,8 +223,6 @@ namespace coio {
                 complete(0, err);
                 return false;
             }
-            complete(bytes_written, 0);
-            immediately_post();
             return true;
         }
 
@@ -281,8 +269,6 @@ namespace coio {
                     return false;
                 }
             }
-            complete(bytes_read, 0);
-            immediately_post();
             return true;
         }
 
@@ -327,8 +313,6 @@ namespace coio {
                 complete(0, err);
                 return false;
             }
-            complete(bytes_written, 0);
-            immediately_post();
             return true;
         }
 
@@ -374,8 +358,6 @@ namespace coio {
                 complete(0, err);
                 return false;
             }
-            complete(bytes_received, 0);
-            immediately_post();
             return true;
         }
 
@@ -420,8 +402,6 @@ namespace coio {
                 complete(0, err);
                 return false;
             }
-            complete(bytes_sent, 0);
-            immediately_post();
             return true;
         }
 
@@ -466,8 +446,6 @@ namespace coio {
                 complete(0, err);
                 return false;
             }
-            complete(bytes_received, 0);
-            immediately_post();
             return true;
         }
 
@@ -511,8 +489,6 @@ namespace coio {
                 complete(0, err);
                 return false;
             }
-            complete(bytes_sent, 0);
-            immediately_post();
             return true;
         }
 
@@ -574,8 +550,6 @@ namespace coio {
                 complete(0, err);
                 return false;
             }
-            complete(0, 0);
-            immediately_post();
             return true;
         }
 
@@ -605,24 +579,64 @@ namespace coio {
                 return false;
             }
 
+            const auto sock = std::bit_cast<::SOCKET>(handle);
             ::LPFN_CONNECTEX ConnectEx = nullptr;
             ::GUID connectex_guid = WSAID_CONNECTEX;
-            ::DWORD byteCount = 0;
+            ::DWORD byte_count = 0;
+
             if (::WSAIoctl(
-                std::bit_cast<::SOCKET>(handle),
+                sock,
                 SIO_GET_EXTENSION_FUNCTION_POINTER,
                 &connectex_guid, sizeof(connectex_guid),
                 &ConnectEx, sizeof(ConnectEx),
-                &byteCount, nullptr, nullptr) == SOCKET_ERROR)
+                &byte_count, nullptr, nullptr) == SOCKET_ERROR)
             {
                 result.set_error(to_error_code(::WSAGetLastError()));
                 return false;
             }
 
+            {
+                ::WSAPROTOCOL_INFOW info{};
+                int info_length = sizeof(info);
+                if (::getsockopt(sock, SOL_SOCKET, SO_PROTOCOL_INFO, reinterpret_cast<char*>(&info), &info_length) != 0) {
+                    result.set_error(to_error_code(::WSAGetLastError()));
+                    return false;
+                }
+
+                ::DWORD err = 0;
+                if (info.iAddressFamily == AF_INET) {
+                    ::sockaddr_in addr4 = {
+                        .sin_family = AF_INET,
+                        .sin_port = 0,
+                        .sin_addr = in4addr_any
+                    };
+                    if (::bind(sock, reinterpret_cast<::sockaddr*>(&addr4), sizeof(addr4)) == SOCKET_ERROR) {
+                        err = ::WSAGetLastError();
+                    }
+                }
+                else if (info.iAddressFamily == AF_INET6) {
+                    ::sockaddr_in6 addr6 = {
+                        .sin6_family = AF_INET6,
+                        .sin6_port = 0,
+                        .sin6_addr = in6addr_any
+                    };
+                    if (::bind(sock, reinterpret_cast<::sockaddr*>(&addr6), sizeof(addr6)) == SOCKET_ERROR) {
+                        err = ::WSAGetLastError();
+                    }
+                }
+                else {
+                    err = WSAEAFNOSUPPORT;
+                }
+                if (err and err != WSAEINVAL) {
+                    result.set_error(to_error_code(err));
+                    return false;
+                }
+            }
+
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
             const ::BOOL ok = ConnectEx(
-                std::bit_cast<::SOCKET>(handle),
+                sock,
                 psa,
                 len,
                 nullptr,
@@ -636,8 +650,6 @@ namespace coio {
                 complete(0, err);
                 return false;
             }
-            complete(0, 0);
-            immediately_post();
             return true;
         }
 

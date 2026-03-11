@@ -1,12 +1,15 @@
 #include <thread>
 #include <coio/core.h>
 #include <coio/asyncio/io.h>
-#include <coio/asyncio/epoll_context.h>
 #include <coio/asyncio/pipe.h>
 #include "common.h"
 
 #if COIO_OS_LINUX
+#include <coio/asyncio/epoll_context.h>
 using io_context = coio::epoll_context;
+#elif COIO_OS_WINDOWS
+#include <coio/asyncio/iocp_context.h>
+using io_context = coio::iocp_context;
 #endif
 
 auto main() -> int {
@@ -19,8 +22,8 @@ auto main() -> int {
             while (true) {
                 auto n = co_await r.async_read_some(coio::as_writable_bytes(buffer));
                 std::string_view message{buffer, n};
-                if (message.ends_with('\x1a')) break;
                 std::clog << message;
+                if (message.ends_with('\n')) break;
             }
         }
         catch (std::system_error& e) {
@@ -40,7 +43,7 @@ auto main() -> int {
           "cillum dolore eu fugiat nulla pariatur.",
           "Excepteur sint occaecat cupidatat non proident",
           "sunt in culpa qui officia deserunt mollit anim id est laborum.",
-          "\x1a"
+          "\n"
         };
         for (std::string_view message : messages) {
             co_await coio::async_write(w, coio::as_bytes(message));
