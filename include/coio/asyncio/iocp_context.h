@@ -102,13 +102,14 @@ namespace coio {
             private:
                 iocp_context* ctx_;
                 detail::file_native_handle_type handle_ = detail::invalid_file_handle;
+                std::size_t offset_ = 0; // for `stream_file`
             };
 
             template<std::move_constructible Sexpr>
             struct io_sender {
                 using sender_concept = execution::sender_t;
                 using completion_signatures = execution::completion_signatures<
-                    detail::set_value_t<typename Sexpr::result_type>,
+                    typename Sexpr::value_signature,
                     execution::set_error_t(std::error_code),
                     execution::set_stopped_t()
                 >;
@@ -121,7 +122,7 @@ namespace coio {
                     state_base(Rcvr rcvr, Args&&... args) noexcept
                         : base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
 
-                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
+                    COIO_ALWAYS_INLINE auto do_finish(bool) noexcept -> void {
                         this->result.forward_to(std::move(this->rcvr_));
                     }
 
@@ -170,10 +171,33 @@ namespace coio {
             }
 
             template<typename Sexpr>
+            COIO_ALWAYS_INLINE static auto transform_sexpr(io_object& obj, Sexpr sexpr) noexcept {
+                if constexpr (not std::same_as<Sexpr, detail::async_read_some_t> and not std::same_as<Sexpr, detail::async_write_some_t>) {
+                    return std::move(sexpr);
+                }
+                else {
+                    using result_t = std::conditional_t<
+                        std::same_as<Sexpr, detail::async_read_some_t>,
+                        detail::async_read_some_at_t,
+                        detail::async_write_some_at_t
+                    >;
+                    return result_t{
+                        .offset = std::exchange(obj.offset_, obj.offset_ + sexpr.buffer.size()),
+                        .buffer = sexpr.buffer
+                    };
+                }
+            }
+
+            template<typename Sexpr>
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto schedule_io(io_object& obj, Sexpr sexpr) noexcept {
+                using transformed_sexpr_t = decltype(transform_sexpr(obj, std::move(sexpr)));
                 return stop_when(
-                    io_sender<Sexpr>{obj.handle_, ctx_, std::move(sexpr)},
+                    io_sender<transformed_sexpr_t>{
+                        obj.handle_,
+                        ctx_,
+                        transform_sexpr(obj, std::move(sexpr))
+                    },
                     ctx_->stop_source_.get_token()
                 );
             }
@@ -202,12 +226,12 @@ namespace coio {
 
     namespace detail {
         template<typename Sexpr>
-        struct native_iocp_sexpr {
+        struct iocp_sexpr_wrapper {
             using type = Sexpr;
         };
 
         template<>
-        struct native_iocp_sexpr<async_receive_from_t> {
+        struct iocp_sexpr_wrapper<async_receive_from_t> {
             struct type : async_receive_from_t {
                 explicit type(async_receive_from_t s) noexcept : async_receive_from_t(std::move(s)) {}
 
@@ -217,7 +241,7 @@ namespace coio {
         };
 
         template<>
-        struct native_iocp_sexpr<async_accept_t> {
+        struct iocp_sexpr_wrapper<async_accept_t> {
             struct type : async_accept_t {
                 explicit type(async_accept_t s) noexcept : async_accept_t(s) {}
 
@@ -228,10 +252,10 @@ namespace coio {
 
         template<typename Sexpr>
         class iocp_state_base_for :
-            private native_iocp_sexpr<Sexpr>::type,
+            private iocp_sexpr_wrapper<Sexpr>::type,
             public iocp_context::iocp_node {
         private:
-            using native_type = typename native_iocp_sexpr<Sexpr>::type;
+            using native_type = typename iocp_sexpr_wrapper<Sexpr>::type;
 
         public:
             iocp_state_base_for(HANDLE handle, iocp_context& ctx, Sexpr sexpr) noexcept
@@ -243,12 +267,12 @@ namespace coio {
                 unreachable();
             }
 
-            auto complete(::DWORD /*result*/, ::DWORD /*error*/) noexcept -> void final {
+            auto complete(::DWORD, ::DWORD) noexcept -> void final {
                 static_assert(always_false<Sexpr>, "this operation isn't supported");
             }
 
         protected:
-            async_result<typename Sexpr::result_type, std::error_code> result;
+            async_result<typename Sexpr::value_signature, execution::set_error_t(std::error_code)> result;
         };
 
         /// async_read_some

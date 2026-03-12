@@ -15,12 +15,11 @@ using io_context = coio::iocp_context;
 using udp_socket = coio::udp::socket<io_context::scheduler>;
 
 auto handle_connection(io_context::scheduler sched) -> coio::task<> try {
-    udp_socket socket{sched};
-    socket.open(coio::udp::v4());
+    udp_socket socket{sched, coio::udp::v4()};
+    socket.bind(coio::endpoint{coio::ipv4_address::any(), 0});
 
-    coio::endpoint server_endpoint{coio::ipv4_address::loopback(), 8087};
+    const coio::endpoint remote_endpoint{coio::ipv4_address::loopback(), 8087};
 
-    ::println("UDP echo client started");
     ::println("local endpoint: {}", socket.local_endpoint());
     ::println("input messages to send to echo server (type 'exit' or 'quit' to quit):");
 
@@ -33,19 +32,8 @@ auto handle_connection(io_context::scheduler sched) -> coio::task<> try {
         if (content.empty()) continue;
         if (content == "exit" or content == "quit") break;
 
-        // Send message to server
-        co_await socket.async_send_to(
-            coio::as_bytes(content),
-            server_endpoint
-        );
-
-        // Receive echo response
-        coio::endpoint sender_endpoint;
-        const auto length = co_await socket.async_receive_from(
-            coio::as_writable_bytes(buffer),
-            sender_endpoint
-        );
-
+        co_await socket.async_send_to(coio::as_bytes(content), remote_endpoint);
+        const auto [_, length] = co_await socket.async_receive_from(coio::as_writable_bytes(buffer));
         ::println("-- {}", std::string_view{buffer, length});
     }
 }
@@ -60,4 +48,3 @@ auto main() -> int {
     context.run();
     coio::this_thread::sync_wait(scope.join());
 }
-

@@ -364,11 +364,16 @@ namespace coio {
         template<>
         auto iocp_state_base_for<async_receive_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
             if (error) {
-                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
-                else result.set_error(to_error_code(error));
+                if (error == ERROR_OPERATION_ABORTED) {
+                    result.set_stopped();
+                    return;
+                }
+                if (error == ERROR_NETNAME_DELETED) error = WSAECONNRESET;
+                else if (error == ERROR_PORT_UNREACHABLE) error = WSAECONNREFUSED;
+                result.set_error(to_error_code(error));
             }
             else {
-                result.set_value(static_cast<std::size_t>(bytes));
+                result.set_value(bytes);
             }
         }
 
@@ -408,11 +413,16 @@ namespace coio {
         template<>
         auto iocp_state_base_for<async_send_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
             if (error) {
-                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
-                else result.set_error(to_error_code(error));
+                if (error == ERROR_OPERATION_ABORTED) {
+                    result.set_stopped();
+                    return;
+                }
+                if (error == ERROR_NETNAME_DELETED) error = WSAECONNRESET;
+                else if (error == ERROR_PORT_UNREACHABLE) error = WSAECONNREFUSED;
+                result.set_error(to_error_code(error));
             }
             else {
-                result.set_value(static_cast<std::size_t>(bytes));
+                result.set_value(bytes);
             }
         }
 
@@ -452,11 +462,16 @@ namespace coio {
         template<>
         auto iocp_state_base_for<async_receive_from_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
             if (error) {
-                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
-                else result.set_error(to_error_code(error));
+                if (error == ERROR_OPERATION_ABORTED) {
+                    result.set_stopped();
+                    return;
+                }
+                if (error == ERROR_NETNAME_DELETED) error = WSAECONNRESET;
+                else if (error == ERROR_PORT_UNREACHABLE) error = WSAECONNREFUSED;
+                result.set_error(to_error_code(error));
             }
             else {
-                result.set_value(static_cast<std::size_t>(bytes));
+                result.set_value(sockaddr_storage_to_endpoint(peer_storage), bytes);
             }
         }
 
@@ -495,11 +510,16 @@ namespace coio {
         template<>
         auto iocp_state_base_for<async_send_to_t>::complete(::DWORD bytes, ::DWORD error) noexcept -> void {
             if (error) {
-                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
-                else result.set_error(to_error_code(error));
+                if (error == ERROR_OPERATION_ABORTED) {
+                    result.set_stopped();
+                    return;
+                }
+                if (error == ERROR_NETNAME_DELETED) error = WSAECONNRESET;
+                else if (error == ERROR_PORT_UNREACHABLE) error = WSAECONNREFUSED;
+                result.set_error(to_error_code(error));
             }
             else {
-                result.set_value(static_cast<std::size_t>(bytes));
+                result.set_value(bytes);
             }
         }
 

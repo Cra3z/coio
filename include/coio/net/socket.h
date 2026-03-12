@@ -273,6 +273,10 @@ namespace coio {
         basic_socket(scheduler_type scheduler, native_handle_type handle) :
             impl_(scheduler.make_io_object(handle)) {}
 
+        basic_socket(scheduler_type scheduler, const protocol_type& protocol) : basic_socket(std::move(scheduler)) {
+            this->open(protocol);
+        }
+
         basic_socket(const basic_socket&) = delete;
 
         basic_socket(basic_socket&& other) = default;
@@ -631,8 +635,8 @@ namespace coio {
                     this->impl_,
                     detail::async_receive_t{buffer}
                 ),
-                [total = buffer.size()](std::size_t bytes_transferred) noexcept -> detail::async_result<std::size_t, std::error_code> {
-                    detail::async_result<std::size_t, std::error_code> result;
+                [total = buffer.size()](std::size_t bytes_transferred) noexcept {
+                    detail::async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                     if (bytes_transferred == 0 and total > 0) [[unlikely]] {
                         result.set_error(error::eof);
                     }
@@ -777,8 +781,7 @@ namespace coio {
         /**
          * \brief receive message data asynchronously.
          * \param buffer the buffers containing the message part to receive.
-         * \param peer an endpoint object that receives the endpoint of the remote sender of the datagram.
-         * \return a sender of `std::size_t`.
+         * \return a sender of `endpoint` and `std::size_t`.
          * \note
          * 1) the program must ensure that no other calls to `receive`, `receive_from`, `async_receive`, or
          * `async_receive_from` are performed until this operation completes.\n
@@ -786,10 +789,10 @@ namespace coio {
          *  on the same socket object from different threads simultaneously.
          */
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto async_receive_from(std::span<std::byte> buffer, const endpoint& peer) {
+        COIO_ALWAYS_INLINE auto async_receive_from(std::span<std::byte> buffer) {
             return this->get_io_scheduler().schedule_io(
                 this->impl_,
-                detail::async_receive_from_t{buffer, peer}
+                detail::async_receive_from_t{buffer}
             );
         }
 

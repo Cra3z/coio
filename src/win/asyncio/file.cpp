@@ -9,23 +9,21 @@ namespace coio::detail {
             if (bool(mode & open_mode::read_only))  access |= GENERIC_READ;
             if (bool(mode & open_mode::write_only)) access |= GENERIC_WRITE;
             if (bool(mode & open_mode::read_write)) access |= GENERIC_READ | GENERIC_WRITE;
-            if (bool(mode & open_mode::append))     access |= FILE_APPEND_DATA;
 
-            ::DWORD flags = FILE_FLAG_OVERLAPPED;
+            ::DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
             if (random_access) flags |= FILE_FLAG_RANDOM_ACCESS;
+            else flags |= FILE_FLAG_SEQUENTIAL_SCAN;
             if (bool(mode & open_mode::sync_all_on_write)) flags |= FILE_FLAG_WRITE_THROUGH;
             return {access, flags};
         }
 
         auto to_creation_disposition(open_mode mode) noexcept -> ::DWORD {
-            const bool create    = bool(mode & open_mode::create);
-            const bool exclusive = bool(mode & open_mode::exclusive);
-            const bool truncate  = bool(mode & open_mode::truncate);
+            if (bool(mode & open_mode::create)) {
+                if (bool(mode & open_mode::exclusive)) return CREATE_NEW;
+                return OPEN_ALWAYS;
+            }
 
-            if (exclusive) return CREATE_NEW;
-            if (truncate and create) return CREATE_ALWAYS;
-            if (truncate) return TRUNCATE_EXISTING;
-            if (create) return OPEN_ALWAYS;
+            if (bool(mode & open_mode::truncate)) return TRUNCATE_EXISTING;
             return OPEN_EXISTING;
         }
 
@@ -117,10 +115,36 @@ namespace coio::detail {
     auto open_file(zstring_view path, open_mode mode, bool random_access) -> file_native_handle_type {
         auto [access, flags] = to_native_openmode(mode, random_access);
         const ::DWORD disposition = to_creation_disposition(mode);
-        const auto handle = ::CreateFileA(path.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, disposition, flags, nullptr);
+        const auto handle = ::CreateFileA(path.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, disposition, flags, nullptr);
         if (handle == INVALID_HANDLE_VALUE) {
-            throw std::system_error(to_error_code(::GetLastError()), "open");
+            throw std::system_error{to_error_code(::GetLastError()), "open"};
         }
+
+        if (disposition == OPEN_ALWAYS) {
+            if (bool(mode & open_mode::truncate)) {
+                if (not ::SetEndOfFile(handle)) {
+                    const ::DWORD err = ::GetLastError();
+                    ::CloseHandle(handle);
+                    throw std::system_error{to_error_code(err), "open"};
+                }
+            }
+        }
+
+        if (disposition == OPEN_ALWAYS or disposition == OPEN_EXISTING) {
+            if (bool(mode & open_mode::append)) {
+                ::LARGE_INTEGER distance_to_move{.QuadPart = 0};
+                ::LARGE_INTEGER new_file_pointer{};
+                if (::SetFilePointerEx(handle, distance_to_move, &new_file_pointer, FILE_END)) {
+                    // impl.offset_ = static_cast<uint64_t>(new_file_pointer.QuadPart);
+                }
+                else {
+                    const ::DWORD err = ::GetLastError();
+                    ::CloseHandle(handle);
+                    throw std::system_error{to_error_code(err), "open"};
+                }
+            }
+        }
+
         return handle;
     }
 

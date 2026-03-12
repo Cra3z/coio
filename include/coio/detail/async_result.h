@@ -1,38 +1,39 @@
 #pragma once
+#include <tuple>
 #include <type_traits>
 #include <variant>
 #include "execution.h"
 #include "coio/utils/utility.h"
 
 namespace coio::detail {
-    template<typename T, typename E>
-    class async_result {
+    template<typename, typename>
+    class async_result;
+
+    template<typename... Values, typename Error>
+    class async_result<execution::set_value_t(Values...), execution::set_error_t(Error)> {
     public:
         using sender_concept = execution::sender_t;
         using receiver_concept = execution::receiver_t;
-        using value_type = T;
-        using error_type = E;
         using completion_signatures = execution::completion_signatures<
-            detail::set_value_t<value_type>,
-            execution::set_error_t(error_type),
+            execution::set_value_t(Values...),
+            execution::set_error_t(Error),
             execution::set_stopped_t()
         >;
 
     public:
         async_result() = default;
 
-        template<typename... Args> requires (std::is_void_v<T> and sizeof...(Args) == 0) or (std::constructible_from<T, Args...>)
-        auto set_value(Args&&... args) noexcept {
+        COIO_ALWAYS_INLINE auto set_value(Values... values) noexcept {
             COIO_ASSERT(result_.index() == 0);
-            result_.template emplace<1>(std::forward<Args>(args)...);
+            result_.template emplace<1>(std::forward<Values>(values)...);
         }
 
-        auto set_error(error_type e) noexcept -> void {
+        COIO_ALWAYS_INLINE auto set_error(Error e) noexcept -> void {
             COIO_ASSERT(result_.index() == 0);
-            result_.template emplace<2>(std::move(e));
+            result_.template emplace<2>(std::forward<Error>(e));
         }
 
-        auto set_stopped() noexcept -> void {
+        COIO_ALWAYS_INLINE auto set_stopped() noexcept -> void {
             COIO_ASSERT(result_.index() == 0);
             result_.template emplace<0>();
         }
@@ -43,19 +44,14 @@ namespace coio::detail {
         }
 
         template<execution::receiver_of<completion_signatures> Rcvr>
-        auto forward_to(Rcvr&& rcvr) noexcept -> void {
+        COIO_ALWAYS_INLINE auto forward_to(Rcvr&& rcvr) noexcept -> void {
             switch (result_.index()) {
             case 0: {
                 execution::set_stopped(std::forward<Rcvr>(rcvr));
                 break;
             }
             case 1: {
-                if constexpr (std::is_void_v<T>) {
-                    execution::set_value(std::forward<Rcvr>(rcvr));
-                }
-                else {
-                    execution::set_value(std::forward<Rcvr>(rcvr), value_type(std::get<1>(result_)));
-                }
+                std::apply(std::bind_front(execution::set_value, std::forward<Rcvr>(rcvr)), std::move(std::get<1>(result_)));
                 break;
             }
             case 2: {
@@ -67,11 +63,11 @@ namespace coio::detail {
         }
 
         template<execution::receiver_of<completion_signatures> Rcvr>
-        auto connect(Rcvr rcvr) && noexcept {
+        COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
             struct state {
                 using operation_state_concept = execution::operation_state_t;
 
-                auto start() & noexcept -> void {
+                COIO_ALWAYS_INLINE auto start() & noexcept -> void {
                     self_.forward_to(std::move(rcvr_));
                 }
 
@@ -82,10 +78,6 @@ namespace coio::detail {
         }
 
     private:
-        std::variant<
-            std::monostate,
-            std::conditional_t<std::is_void_v<value_type>, std::monostate, value_type>,
-            error_type
-        > result_;
+        std::variant<std::monostate, std::tuple<Values...>, Error> result_;
     };
 }

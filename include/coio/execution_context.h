@@ -62,7 +62,8 @@ namespace coio {
                     ++this->context_.work_count_;
                     auto stop_token = coio::get_stop_token(execution::get_env(this->rcvr_));
                     if (stop_token.stop_requested()) {
-                        finish();
+                        --this->context_.work_count_;
+                        execution::set_stopped(std::move(this->rcvr_));
                         return;
                     }
                     stop_cb_.emplace(
@@ -77,11 +78,7 @@ namespace coio {
                 auto finish() noexcept -> void override {
                     --this->context_.work_count_;
                     stop_cb_.reset();
-                    if (coio::get_stop_token(execution::get_env(this->rcvr_)).stop_requested()) {
-                        execution::set_stopped(std::move(this->rcvr_));
-                        return;
-                    }
-                    this->do_finish();
+                    this->do_finish(coio::get_stop_token(execution::get_env(this->rcvr_)).stop_requested());
                 }
 
             protected:
@@ -113,8 +110,9 @@ namespace coio {
                         return true;
                     }
 
-                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
-                        execution::set_value(std::move(rcvr_));
+                    COIO_ALWAYS_INLINE auto do_finish(bool canceled) noexcept -> void {
+                        if (canceled) execution::set_stopped(std::move(rcvr_));
+                        else execution::set_value(std::move(rcvr_));
                     }
 
                     COIO_ALWAYS_INLINE static auto do_cancel(state_base*) noexcept -> void {}
@@ -184,8 +182,9 @@ namespace coio {
                         return true;
                     }
 
-                    auto do_finish() noexcept -> void {
-                        execution::set_value(std::move(this->rcvr_));
+                    auto do_finish(bool canceled) noexcept -> void {
+                        if (canceled) execution::set_stopped(std::move(rcvr_));
+                        else execution::set_value(std::move(rcvr_));
                     }
 
                     auto do_cancel() noexcept -> void {

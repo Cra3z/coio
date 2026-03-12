@@ -83,7 +83,7 @@ namespace coio {
             struct io_sender {
                 using sender_concept = execution::sender_t;
                 using completion_signatures = execution::completion_signatures<
-                    detail::set_value_t<typename Sexpr::result_type>,
+                    typename Sexpr::value_signature,
                     execution::set_error_t(std::error_code),
                     execution::set_stopped_t()
                 >;
@@ -95,7 +95,7 @@ namespace coio {
                     template<typename... Args>
                     state_base(Rcvr rcvr, Args&&... args) noexcept : base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
 
-                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
+                    COIO_ALWAYS_INLINE auto do_finish(bool) noexcept -> void {
                         this->result.forward_to(std::move(this->rcvr_));
                     }
 
@@ -180,33 +180,33 @@ namespace coio {
     };
 
     namespace detail {
-        struct uring_msghdr {
-            std::variant<::sockaddr_in, ::sockaddr_in6> peer;
-            ::iovec buffer;
-            ::msghdr msg;
-        };
-
         template<typename Sexpr>
-        struct native_uring_sexpr {
+        struct uring_sexpr_wrapper {
             using type = Sexpr;
         };
 
         template<>
-        struct native_uring_sexpr<async_send_to_t> {
-            struct type : uring_msghdr {
+        struct uring_sexpr_wrapper<async_send_to_t> {
+            struct type {
                 type(async_send_to_t s) noexcept;
+                std::variant<::sockaddr_in, ::sockaddr_in6> peer;
+                ::iovec buffer;
+                ::msghdr msg;
             };
         };
 
         template<>
-        struct native_uring_sexpr<async_receive_from_t> {
-            struct type : uring_msghdr {
+        struct uring_sexpr_wrapper<async_receive_from_t> {
+            struct type {
                 type(async_receive_from_t s) noexcept;
+                ::sockaddr_storage peer;
+                ::iovec buffer;
+                ::msghdr msg;
             };
         };
 
         template<>
-        struct native_uring_sexpr<async_connect_t> {
+        struct uring_sexpr_wrapper<async_connect_t> {
             struct type {
                 type(async_connect_t s) noexcept;
                 std::variant<::sockaddr_in, ::sockaddr_in6> peer;
@@ -214,9 +214,9 @@ namespace coio {
         };
 
         template<typename Sexpr>
-        class uring_state_base_for : private native_uring_sexpr<Sexpr>::type, public uring_context::uring_node {
+        class uring_state_base_for : private uring_sexpr_wrapper<Sexpr>::type, public uring_context::uring_node {
         private:
-            using base1 = typename native_uring_sexpr<Sexpr>::type;
+            using base1 = typename uring_sexpr_wrapper<Sexpr>::type;
 
         public:
             uring_state_base_for(int fd, uring_context& context, Sexpr sexpr) noexcept :
@@ -255,7 +255,7 @@ namespace coio {
                     }
                 }
                 else {
-                    if constexpr (std::is_void_v<typename Sexpr::result_type>) {
+                    if constexpr (std::same_as<typename Sexpr::value_signature, execution::set_value_t()>) {
                         result.set_value();
                     }
                     else {
@@ -266,7 +266,7 @@ namespace coio {
 
         protected:
             int fd;
-            async_result<typename Sexpr::result_type, std::error_code> result;
+            async_result<typename Sexpr::value_signature, execution::set_error_t(std::error_code)> result;
         };
 
         /// async_read_some
@@ -296,6 +296,9 @@ namespace coio {
         /// async_receive_from
         template<>
         auto uring_state_base_for<async_receive_from_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
+
+        template<>
+        auto uring_state_base_for<async_receive_from_t>::complete(int cqe_res) -> void;
 
         /// async_send_to
         template<>

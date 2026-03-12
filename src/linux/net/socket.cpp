@@ -197,7 +197,7 @@ namespace coio::detail::socket {
     auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::pair<endpoint, size_t> {
         check_fd(handle);
         ::sockaddr_storage addr{};
-        int len = sizeof(addr);
+        ::socklen_t len = sizeof(addr);
         ::ssize_t n = ::recvfrom(handle, buffer.data(), buffer.size(), 0, reinterpret_cast<::sockaddr*>(&addr), &len);
         throw_last_error(n, "receive_from");
         return {sockaddr_storage_to_endpoint(addr), n};

@@ -1,5 +1,4 @@
 #pragma once
-#include "../detail/config.h"
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -7,6 +6,7 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include "../detail/config.h"
 #include "../utils/format.h"
 #if COIO_OS_WINDOWS
 #include <BaseTsd.h>

@@ -338,9 +338,7 @@ namespace coio {
                 result.set_error(std::error_code{errno, std::system_category()});
                 return false;
             }
-            else {
-                result.set_value(n);
-            }
+            result.set_value(n);
             immediately_post();
             return true;
         }
@@ -382,9 +380,7 @@ namespace coio {
                 result.set_error(std::error_code{errno, std::system_category()});
                 return false;
             }
-            else {
-                result.set_value(n);
-            }
+            result.set_value(n);
             immediately_post();
             return true;
         }
@@ -414,9 +410,11 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
             }
-            auto sa = endpoint_to_sockaddr_in(peer);
-            auto [psa, len] = to_sockaddr(sa);
-            const ::ssize_t n = ::recvfrom(fd, buffer.data(), buffer.size(), MSG_DONTWAIT, psa, &len);
+            ::socklen_t len;
+            const ::ssize_t n = ::recvfrom(
+                fd, buffer.data(), buffer.size(), MSG_DONTWAIT,
+                reinterpret_cast<::sockaddr*>(&peer), &len
+            );
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLIN, EPOLLET)) [[unlikely]] {
@@ -428,24 +426,24 @@ namespace coio {
                 result.set_error(std::error_code{errno, std::system_category()});
                 return false;
             }
-            else {
-                result.set_value(n);
-            }
+            result.set_value(sockaddr_storage_to_endpoint(peer), n);
             immediately_post();
             return true;
         }
 
         template<>
         auto epoll_state_base_for<async_receive_from_t>::do_perform() noexcept -> void {
-            auto sa = endpoint_to_sockaddr_in(peer);
-            auto [psa, len] = to_sockaddr(sa);
-            const ::ssize_t n = ::recvfrom(fd, buffer.data(), buffer.size(), MSG_DONTWAIT, psa, &len);
+            ::socklen_t len;
+            const ::ssize_t n = ::recvfrom(
+                fd, buffer.data(), buffer.size(), 0,
+                reinterpret_cast<::sockaddr*>(&peer), &len
+            );
             if (n == -1) {
                 COIO_ASSERT(not is_blocking_errno(errno));
                 result.set_error(std::error_code{errno, std::system_category()});
             }
             else {
-                result.set_value(n);
+                result.set_value(sockaddr_storage_to_endpoint(peer), n);
             }
         }
 
@@ -476,9 +474,7 @@ namespace coio {
                 result.set_error(std::error_code{errno, std::system_category()});
                 return false;
             }
-            else {
-                result.set_value(n);
-            }
+            result.set_value(n);
             immediately_post();
             return true;
         }

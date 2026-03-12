@@ -282,8 +282,8 @@ namespace coio {
                         this->impl_,
                         detail::async_read_some_t{buffer}
                     ),
-                    [total = buffer.size()](std::size_t bytes_transferred) noexcept -> detail::async_result<std::size_t, std::error_code> {
-                        detail::async_result<std::size_t, std::error_code> result;
+                    [total = buffer.size()](std::size_t bytes_transferred) noexcept {
+                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                         if (bytes_transferred == 0 and total > 0) [[unlikely]] {
                             result.set_error(error::eof);
                         }
@@ -349,7 +349,6 @@ namespace coio {
              * \param offset The offset at which the data will be read.
              * \param buffer A buffer to receive the data read from the file.
              * \return a sender of `std::size_t` representing the number of bytes read.
-             * \throw std::system_error if EOF is reached when buffer is not empty or on other failures.
              */
             COIO_ALWAYS_INLINE auto async_read_some_at(
                 std::size_t offset,
@@ -360,8 +359,8 @@ namespace coio {
                         this->impl_,
                         detail::async_read_some_at_t{offset, buffer}
                     ),
-                    [total = buffer.size()](std::size_t bytes_transferred) noexcept -> detail::async_result<std::size_t, std::error_code> {
-                        detail::async_result<std::size_t, std::error_code> result;
+                    [total = buffer.size()](std::size_t bytes_transferred) noexcept {
+                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                         if (bytes_transferred == 0 and total > 0) [[unlikely]] {
                             result.set_error(error::eof);
                         }
@@ -395,12 +394,8 @@ namespace coio {
              * \param offset The offset at which the data will be written.
              * \param buffer The data to be written to the file.
              * \return a sender of `std::size_t` representing the number of bytes written.
-             * \throw std::system_error on failure.
              */
-            COIO_ALWAYS_INLINE auto async_write_some_at(
-                std::size_t offset,
-                std::span<const std::byte> buffer
-            ) -> std::size_t {
+            COIO_ALWAYS_INLINE auto async_write_some_at(std::size_t offset, std::span<const std::byte> buffer) {
                 return this->get_io_scheduler().schedule_io(
                     this->impl_,
                     detail::async_write_some_at_t{offset, buffer}

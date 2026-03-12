@@ -7,7 +7,8 @@
 
 #if COIO_OS_LINUX
 #include <coio/asyncio/epoll_context.h>
-using io_context = coio::epoll_context;
+#include <coio/asyncio/uring_context.h>
+using io_context = coio::uring_context;
 #elif COIO_OS_WINDOWS
 #include <coio/asyncio/iocp_context.h>
 using io_context = coio::iocp_context;
@@ -16,31 +17,15 @@ using io_context = coio::iocp_context;
 using udp_socket = coio::udp::socket<io_context::scheduler>;
 
 auto start_server(io_context::scheduler sched) -> coio::task<> try {
-    udp_socket socket{sched};
-    socket.open(coio::udp::v4());
+    udp_socket socket{sched, coio::udp::v4()};
     socket.bind(coio::endpoint{coio::ipv4_address::any(), 8087});
 
     ::debug("UDP echo server \"{}\" started...", socket.local_endpoint());
 
     char buffer[1024];
     while (true) {
-        // Receive data from client
-        coio::endpoint sender_endpoint;
-        const auto length = co_await socket.async_receive_from(
-            coio::as_writable_bytes(buffer),
-            sender_endpoint
-        );
-
-        ::debug("received {} bytes from [{}]: {}",
-            length,
-            sender_endpoint,
-            std::string_view{buffer, length});
-
-        // Echo the data back to sender
-        co_await socket.async_send_to(
-            coio::as_bytes(buffer, length),
-            sender_endpoint
-        );
+        const auto [remote_endpoint, length] = co_await socket.async_receive_from(coio::as_writable_bytes(buffer));
+        co_await socket.async_send_to(coio::as_bytes(buffer, length), remote_endpoint);
     }
 }
 catch (const std::system_error& e) {

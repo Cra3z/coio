@@ -19,13 +19,13 @@
 
 - **Sender/Receiver model** — Composable asynchronous algorithms via `std::execution`
 - **Coroutine types** — `task<T, Alloc>` and `generator<Ref, Val>` for async computations and lazy sequences
-- **Execution contexts** — `time_loop`, `epoll_context`, `uring_context` with thread-safe `run()`
+- **Execution contexts** — `time_loop`, `epoll_context`, `uring_context` and `iocp_context` with thread-safe `run()`
 - **Networking** — TCP/UDP sockets with sync and async operations (Linux)
 - **Synchronization** — `async_mutex`, `async_semaphore`, `async_latch`
 - **Utilities** — Timers, concurrent queues, signal handling
 
 > [!NOTE]
-> Some network and async-io facilities are currently only implemented using epoll and io_uring on linux.
+> Some network and async-io facilities are currently only implemented using epoll and io_uring on Linux, and IOCP on Windows.
 
 ## Build and Install
 

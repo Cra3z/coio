@@ -1,13 +1,11 @@
 #pragma once
 #include <WinSock2.h>
 #include <WS2tcpip.h>
-#include <MSWSock.h>
+#include <MSWSock.h> // IWYU pragma: keep
 #include <Windows.h>
-#include <cstdio>
-#include <exception>
 #include <system_error>
 #include <variant>
-#include <coio/detail/error.h>
+#include <coio/detail/error.h> // IWYU pragma: keep
 #include <coio/detail/config.h>
 
 namespace coio {
@@ -30,7 +28,9 @@ namespace coio::detail {
 
     COIO_ALWAYS_INLINE auto throw_wsa_error(int rc, const char* msg = nullptr) -> void {
         if (rc != SOCKET_ERROR) [[likely]] return;
-        const int err = ::WSAGetLastError();
+        int err = ::WSAGetLastError();
+        if (err == ERROR_NETNAME_DELETED) err = WSAECONNRESET;
+        else if (err == ERROR_PORT_UNREACHABLE) err = WSAECONNREFUSED;
         if (msg) throw std::system_error(err, std::system_category(), msg);
         throw std::system_error(err, std::system_category());
     }
@@ -39,7 +39,7 @@ namespace coio::detail {
 
     auto sockaddr_to_endpoint(::sockaddr* sa) noexcept -> endpoint;
 
-    auto sockaddr_storage_to_endpoint(SOCKADDR_STORAGE& addr) noexcept -> endpoint;
+    auto sockaddr_storage_to_endpoint(::sockaddr_storage& addr) noexcept -> endpoint;
 
     auto to_sockaddr(std::variant<::sockaddr_in, ::sockaddr_in6>& sa) noexcept -> std::pair<::sockaddr*, int>;
 }

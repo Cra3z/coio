@@ -1,7 +1,6 @@
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <algorithm>
-#include <cstring>
 #include <span>
 #include <stop_token>  // IWYU pragma: keep
 #include <string_view>
@@ -363,7 +362,7 @@ namespace coio {
                 return execution::env{execution::prop{
                     execution::get_await_completion_adaptor,
                     execution::let_value([](std::error_code ec, std::size_t bytes_transferred) noexcept {
-                        async_result<std::size_t, std::error_code> result;
+                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                         if (ec) {
                             if (ec == std::errc::operation_canceled) result.set_stopped();
                             else result.set_error(ec);
@@ -703,7 +702,7 @@ namespace coio {
                 return execution::env{execution::prop{
                     execution::get_await_completion_adaptor,
                     execution::let_value([](std::error_code ec, std::size_t bytes_transferred) noexcept {
-                        async_result<std::size_t, std::error_code> result;
+                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                         if (ec) {
                             if (ec == std::errc::operation_canceled) result.set_stopped();
                             else result.set_error(ec);
