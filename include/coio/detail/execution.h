@@ -255,6 +255,28 @@ namespace coio {
                 return std::move(default_value);
             }
         }
+
+        template<typename Env>
+        struct fwd_env_t {
+            template<typename Prop, typename... Args>
+                requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
+                    and std::invocable<Prop, Env, Args...>
+            COIO_ALWAYS_INLINE decltype(auto) query(const Prop& prop, Args&&... args) const noexcept {
+                return prop(inner, std::forward<Args>(args)...);
+            }
+
+            Env inner;
+        };
+
+        template<typename Env>
+        COIO_ALWAYS_INLINE auto fwd_env(fwd_env_t<Env> env) noexcept -> fwd_env_t<Env> {
+            return env;
+        }
+
+        template<typename Env>
+        COIO_ALWAYS_INLINE auto fwd_env(Env env) noexcept -> fwd_env_t<Env> {
+            return fwd_env_t<Env>{env};
+        }
     }
 
     template<typename Scheduler>

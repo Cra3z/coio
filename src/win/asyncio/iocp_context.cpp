@@ -6,6 +6,7 @@
 #include <MSWSock.h>
 #include <Windows.h>
 #include <coio/asyncio/iocp_context.h>
+#include <coio/asyncio/file.h>
 #include "../common.h"
 
 namespace coio {
@@ -42,7 +43,12 @@ namespace coio {
         : ctx_(&ctx), handle_(handle) {
         // NOTE: `handle` must be opend with `FILE_FLAG_OVERLAPPED` or `WSA_FLAG_OVERLAPPED`
         if (handle != INVALID_HANDLE_VALUE and handle != nullptr) {
-            ::CreateIoCompletionPort(handle, ctx.iocp_, 0, 0);
+            if (::LARGE_INTEGER current{}; ::SetFilePointerEx(handle, {}, &current, FILE_CURRENT)) {
+                offset_ = static_cast<std::size_t>(current.QuadPart);
+            }
+            if (::CreateIoCompletionPort(handle, ctx.iocp_, 0, 0) == nullptr) {
+                throw std::system_error{detail::to_error_code(::GetLastError()), "iocp_context::make_io_object"};
+            }
         }
     }
 
@@ -54,6 +60,55 @@ namespace coio {
         if (handle_ == INVALID_HANDLE_VALUE) return;
         ::CancelIoEx(handle_, nullptr);
     }
+
+    auto iocp_context::scheduler::io_object::file_resize(std::size_t new_size) -> void {
+        detail::throw_win_error(::SetFilePointerEx(handle_, {.QuadPart = ::LONGLONG(new_size)}, nullptr, FILE_BEGIN), "resize");
+        detail::throw_win_error(::SetEndOfFile(handle_), "resize");
+        detail::throw_win_error(::SetFilePointerEx(handle_, {.QuadPart = ::LONGLONG(offset_)}, nullptr, FILE_BEGIN), "resize");
+    }
+
+    auto iocp_context::scheduler::io_object::file_seek(std::size_t offset, detail::seek_whence whence) -> std::size_t {
+        if (handle_ == INVALID_HANDLE_VALUE) {
+            throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor), "seek"};
+        }
+        if (offset > LONG_LONG_MAX) {
+            throw std::system_error{std::make_error_code(std::errc::value_too_large), "seek"};
+        }
+
+        ::DWORD method;
+        switch (whence)
+        {
+        case detail::seek_whence::seek_set:
+            method = FILE_BEGIN;
+            break;
+        case detail::seek_whence::seek_cur:
+            method = FILE_BEGIN;
+            offset = offset_ + offset;
+            break;
+        case detail::seek_whence::seek_end:
+            method = FILE_END;
+            break;
+        default:
+            throw std::system_error{std::make_error_code(std::errc::invalid_argument), "seek"};
+        }
+
+        ::LARGE_INTEGER new_offset{};
+        detail::throw_win_error(::SetFilePointerEx(handle_, {.QuadPart = ::LONGLONG(offset)}, &new_offset, method), "seek");
+        return offset_ = new_offset.QuadPart;
+    }
+
+    auto iocp_context::scheduler::io_object::file_read(std::span<std::byte> buffer) -> std::size_t {
+        const auto n = detail::file_read(handle_, buffer);
+        offset_ += buffer.size();
+        return n;
+    }
+
+    auto iocp_context::scheduler::io_object::file_write(std::span<const std::byte> buffer) -> std::size_t {
+        const auto n = detail::file_write(handle_, buffer);
+        offset_ += buffer.size();
+        return n;
+    }
+
 
     iocp_context::iocp_context(std::pmr::memory_resource& memory_resource)
         : loop_base(memory_resource) {
@@ -147,7 +202,7 @@ namespace coio {
 
         /// async_read_some
         template<>
-        auto iocp_state_base_for<async_read_some_t>::do_start() noexcept -> bool { // TODO: stream_file
+        auto iocp_state_base_for<async_read_some_t>::do_start() noexcept -> bool {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
@@ -198,7 +253,7 @@ namespace coio {
 
         /// async_write_some
         template<>
-        auto iocp_state_base_for<async_write_some_t>::do_start() noexcept -> bool { // TODO: stream_file
+        auto iocp_state_base_for<async_write_some_t>::do_start() noexcept -> bool {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;

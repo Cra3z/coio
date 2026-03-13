@@ -30,7 +30,7 @@
 ## Build and Install
 
 ### Requirements
-- C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 2019+)
+- C++20 compatible compiler
 - CMake 3.26+
 
 ### Build Options
@@ -38,7 +38,7 @@
 - `COIO_SENDERS_BACKEND` (NVIDIA/BEMAN/CXX26, default NVIDIA) - Which std::execution implementation to use:
   - `NVIDIA` - NVIDIA/stdexec implementation
   - `BEMAN` - bemanproject/execution implementation  
-  - `CXX26` - Standard library implementation (C++26+)
+  - `CXX26` - Standard library implementation
 
 ### Dependencies
 - [liburing](https://github.com/axboe/liburing) (only if using `uring_context`)

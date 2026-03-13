@@ -25,7 +25,7 @@ This document describes the public API of **coio**. It is intended to be a stabl
   - [6.1 async_scope](#61-async_scope)
   - [6.2 timer](#62-timer)
 - [7. Async I/O utilities](#7-async-io-utilities)
-- [8. Networking (Linux)](#8-networking)
+- [8. Networking](#8-networking)
 - [9. Synchronization primitives](#9-synchronization-primitives)
 - [10. Error handling](#10-error-handling)
 - [11. Thread safety (summary)](#11-thread-safety-summary)
@@ -171,25 +171,19 @@ Execution context with a timer queue and a manually-driven event loop.
 
 Header: `#include <coio/asyncio/epoll_context.h>`
 
-Execution context backed by **epoll**. Includes all `time_loop` APIs plus Linux I/O scheduling.
-
-- Recommended for general-purpose Linux network servers.
-- Provides an I/O scheduler with an `io_object` that owns a file descriptor and can cancel pending operations.
+Execution context backed by **epoll**. Includes all `time_loop` APIs plus epoll-based async I/O.
 
 ### 4.4 uring_context (Linux)
 
 Header: `#include <coio/asyncio/uring_context.h>`
 
-Execution context backed by **io_uring**. Includes all `time_loop` APIs plus io_uring-based I/O.
-
-- Recommended for high-performance I/O on Linux 5.1+.
-- `uring_context(depth)` controls submission queue depth.
+Execution context backed by **io_uring**. Includes all `time_loop` APIs plus io_uring-based async I/O.
 
 ### 4.5 iocp_context (Windows)
 
 Header: `#include <coio/asyncio/iocp_context.h>`
 
-Execution context backed by **IOCP**. Includes all `time_loop` APIs plus IOCP-based I/O.
+Execution context backed by **IOCP**. Includes all `time_loop` APIs plus IOCP-based async I/O.
 
 ### 4.6 work_guard
 

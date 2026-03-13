@@ -171,27 +171,6 @@ namespace coio::detail {
         }
     }
 
-    auto file_seek(file_native_handle_type handle, std::size_t offset, seek_whence whence) -> std::size_t {
-        if (handle == invalid_file_handle) {
-            throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor), "seek"};
-        }
-
-        ::DWORD move_method;
-        switch (whence) {
-        case seek_whence::seek_set: move_method = FILE_BEGIN;   break;
-        case seek_whence::seek_cur: move_method = FILE_CURRENT; break;
-        case seek_whence::seek_end: move_method = FILE_END;     break;
-        default: unreachable();
-        }
-
-        ::LARGE_INTEGER dist{}, result{};
-        dist.QuadPart = static_cast<::LONGLONG>(offset);
-        if (not ::SetFilePointerEx(handle, dist, &result, move_method)) {
-            throw std::system_error(to_error_code(::GetLastError()), "seek");
-        }
-        return static_cast<std::size_t>(result.QuadPart);
-    }
-
     auto file_size(file_native_handle_type handle) -> std::size_t {
         if (handle == invalid_file_handle) {
             throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor), "size"};
@@ -201,20 +180,6 @@ namespace coio::detail {
             throw std::system_error(to_error_code(::GetLastError()), "size");
         }
         return static_cast<std::size_t>(sz.QuadPart);
-    }
-
-    auto file_resize(file_native_handle_type handle, std::size_t new_size) -> void {
-        if (handle == invalid_file_handle) {
-            throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor), "resize"};
-        }
-        ::LARGE_INTEGER pos{};
-        pos.QuadPart = static_cast<::LONGLONG>(new_size);
-        if (not ::SetFilePointerEx(handle, pos, nullptr, FILE_BEGIN)) {
-            throw std::system_error(to_error_code(::GetLastError()), "resize");
-        }
-        if (not ::SetEndOfFile(handle)) {
-            throw std::system_error(to_error_code(::GetLastError()), "resize");
-        }
     }
 
     auto file_sync_all(file_native_handle_type handle) -> void {

@@ -267,7 +267,12 @@ namespace coio {
              * \throw std::system_error on failure.
              */
             COIO_ALWAYS_INLINE auto read_some(std::span<std::byte> buffer) -> std::size_t {
-                return detail::file_read(this->native_handle(), buffer);
+                if constexpr (requires { this->impl_.file_read(buffer); }) {
+                    return this->impl_.file_read(buffer);
+                }
+                else {
+                    return detail::file_read(this->native_handle(), buffer);
+                }
             }
 
             /**
@@ -305,7 +310,12 @@ namespace coio {
              * \throw std::system_error on failure.
              */
             COIO_ALWAYS_INLINE auto write_some(std::span<const std::byte> buffer) -> std::size_t {
-                return detail::file_write(this->native_handle(), buffer);
+                if constexpr (requires { this->impl_.file_write(buffer); }) {
+                    return this->impl_.file_write(buffer);
+                }
+                else {
+                    return detail::file_write(this->native_handle(), buffer);
+                }
             }
 
             /**
@@ -469,7 +479,12 @@ namespace coio {
          * \throw std::system_error on failure.
          */
         COIO_ALWAYS_INLINE auto resize(std::size_t new_size) -> void {
-            return detail::file_resize(this->native_handle(), new_size);
+            if constexpr (requires { this->impl_.file_resize(new_size); }) {
+                return this->impl_.file_resize(new_size);
+            }
+            else {
+                return detail::file_resize(this->native_handle(), new_size);
+            }
         }
 
         /**
@@ -484,6 +499,7 @@ namespace coio {
 
         /**
          * \brief Set the file position indicator.
+         * \param offset The offset to seek to.
          * \param whence The position from which to seek:
          *   - seek_set: Seek from beginning of file
          *   - seek_cur: Seek from current position
@@ -491,8 +507,13 @@ namespace coio {
          * \return The new position from the beginning of the file.
          * \throw std::system_error on failure.
          */
-        COIO_ALWAYS_INLINE auto seek(detail::seek_whence whence) -> std::size_t {
-            return detail::file_seek(this->native_handle(), whence);
+        COIO_ALWAYS_INLINE auto seek(std::size_t offset, detail::seek_whence whence) -> std::size_t {
+            if constexpr (requires { this->impl_.file_seek(offset, whence); }) {
+                return this->impl_.file_seek(offset, whence);
+            }
+            else {
+                return detail::file_seek(this->native_handle(), offset, whence);
+            }
         }
 
         /**
@@ -585,7 +606,12 @@ namespace coio {
          * \throw std::system_error on failure.
          */
         COIO_ALWAYS_INLINE auto resize(std::size_t new_size) -> void {
-            return detail::file_resize(this->native_handle(), new_size);
+            if constexpr (requires { this->impl_.file_resize(new_size); }) {
+                return this->impl_.file_resize(new_size);
+            }
+            else {
+                return detail::file_resize(this->native_handle(), new_size);
+            }
         }
 
         /**

@@ -266,19 +266,8 @@ namespace coio {
             struct receiver {
                 using receiver_concept = execution::receiver_t;
 
-                struct env {
-                    template<typename Prop, typename... Args>
-                        requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
-                            and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
-                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
-                        return prop(inner, std::forward<Args>(args)...);
-                    }
-
-                    execution::env_of_t<Rcvr> inner;
-                };
-
                 COIO_ALWAYS_INLINE auto get_env() const noexcept {
-                    return env{execution::get_env(state_->rcvr)};
+                    return detail::fwd_env(execution::get_env(state_->rcvr));
                 }
 
                 COIO_ALWAYS_INLINE auto set_value(std::size_t bytes_transferred, bool again) && noexcept -> void {
@@ -558,19 +547,8 @@ namespace coio {
             struct receiver {
                 using receiver_concept = execution::receiver_t;
 
-                struct env {
-                    template<typename Prop, typename... Args>
-                        requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
-                            and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
-                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
-                        return prop(inner, std::forward<Args>(args)...);
-                    }
-
-                    execution::env_of_t<Rcvr> inner;
-                };
-
                 COIO_ALWAYS_INLINE auto get_env() const noexcept {
-                    return env{execution::get_env(state_->rcvr)};
+                    return detail::fwd_env(execution::get_env(state_->rcvr));
                 }
 
                 COIO_ALWAYS_INLINE auto set_value(std::size_t bytes_transferred) && noexcept -> void {
