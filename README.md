@@ -20,7 +20,7 @@
 - **Sender/Receiver model** — Composable asynchronous algorithms via `std::execution`
 - **Coroutine types** — `task<T, Alloc>` and `generator<Ref, Val>` for async computations and lazy sequences
 - **Execution contexts** — `time_loop`, `epoll_context`, `uring_context` and `iocp_context` with thread-safe `run()`
-- **Networking** — TCP/UDP sockets with sync and async operations (Linux)
+- **Networking** — TCP/UDP sockets with sync and async operations
 - **Synchronization** — `async_mutex`, `async_semaphore`, `async_latch`
 - **Utilities** — Timers, concurrent queues, signal handling
 

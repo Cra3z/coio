@@ -279,6 +279,11 @@ namespace coio {
                     return *ctx_;
                 }
 
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE static auto query(execution::get_forward_progress_guarantee_t) noexcept -> execution::forward_progress_guarantee {
+                    return execution::forward_progress_guarantee::parallel;
+                }
+
                 friend auto operator== (const scheduler_base& lhs, const scheduler_base& rhs) -> bool = default;
 
             protected:
