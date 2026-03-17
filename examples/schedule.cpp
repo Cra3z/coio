@@ -31,7 +31,7 @@ namespace {
 auto main() -> int {
     using namespace std::string_view_literals;
     worker workers[]{"alice"sv, "bob"sv};
-    coio::this_thread::sync_wait(coio::just() | coio::then([] {
+    auto _ = coio::this_thread::sync_wait(coio::just() | coio::then([] {
         ::debug("in main thread");
     }) | coio::continues_on(workers[0].scheduler()) | coio::then([] {
         ::debug("in worker-alice thread");

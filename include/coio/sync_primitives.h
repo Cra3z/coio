@@ -1,13 +1,10 @@
 #pragma once
 #include <atomic>
 #include <bit>
-#include <coroutine>
-#include <cstddef>
-#include <cstdint>
 #include <limits>
 #include <mutex>
 #include <utility>
-#include "core.h"
+#include "detail/execution.h"
 
 namespace coio {
     template<typename Mutex>
@@ -115,11 +112,8 @@ namespace coio {
 
     class async_mutex {
     public:
-        class lock_guard_sender;
-
         class lock_sender {
             friend async_mutex;
-            friend lock_guard_sender;
         private:
             struct state_base {
                 using operation_state_concept = execution::operation_state_t;
@@ -221,7 +215,7 @@ namespace coio {
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto lock_guard() noexcept {
-            return then(lock(), [this]() noexcept {
+            return execution::then(lock(), [this]() noexcept {
                 return async_unique_lock{*this, std::adopt_lock};
             });
         }
@@ -262,37 +256,76 @@ namespace coio {
     class async_semaphore {
     public:
         using count_type = std::atomic_signed_lock_free::value_type;
+
     private:
-        class acquire_awaiter {
+        struct state_base {
+            using operation_state_concept = execution::operation_state_t;
+            using complete_fn_t = void(*)(state_base*) noexcept;
+
+            state_base(async_semaphore& sema, complete_fn_t complete) noexcept : sema_(sema), complete_(complete) {}
+
+            state_base(const state_base&) = delete;
+
+            auto operator= (const state_base&) -> state_base& = delete;
+
+            async_semaphore& sema_;
+            const complete_fn_t complete_;
+            state_base* next_ = nullptr;
+        };
+
+        template<typename Rcvr>
+        struct state : state_base {
+            state(async_semaphore& sema, Rcvr rcvr) noexcept : state_base(sema, &complete), rcvr_(std::move(rcvr)) {}
+
+            COIO_ALWAYS_INLINE auto start() & noexcept -> void {
+                if (this->sema_.try_acquire()) {
+                    this->sema_.mtx_.unlock();
+                    execution::set_value(std::move(rcvr_));
+                    return;
+                }
+                this->next_ = std::exchange(this->sema_.waiting_list_head_, this);
+                this->sema_.mtx_.unlock();
+            }
+
+            static auto complete(state_base* self) noexcept -> void {
+                auto this_ = static_cast<state*>(self);
+                execution::set_value(std::move(this_->rcvr_));
+            }
+
+            Rcvr rcvr_;
+        };
+
+        class acquire_sender {
             friend async_semaphore;
-        private:
-            acquire_awaiter(async_semaphore& sema) noexcept : sema_(sema) {}
+        public:
+            using sender_concept = execution::sender_t;
+            using completion_signatures = execution::completion_signatures<execution::set_value_t(), execution::set_error_t(std::exception_ptr)>;
 
         public:
-            acquire_awaiter(const acquire_awaiter&) = delete;
+            explicit acquire_sender(async_semaphore& sema) noexcept : sema_(&sema) {}
 
-            auto operator= (const acquire_awaiter&) -> acquire_awaiter& = delete;
+            acquire_sender(const acquire_sender&) = delete;
 
-            auto await_ready() const noexcept -> bool {
-                if (sema_.try_acquire()) {
-                    sema_.mtx_.unlock();
-                    return true;
-                }
-                return false;
+            acquire_sender(acquire_sender&& other) noexcept : sema_(std::exchange(other.sema_, nullptr)) {}
+
+            auto operator= (acquire_sender other) noexcept -> acquire_sender& {
+                std::swap(sema_, other.sema_);
+                return *this;
             }
 
-            auto await_suspend(std::coroutine_handle<> this_coro) noexcept -> void {
-                coro_ = this_coro;
-                next_ = std::exchange(sema_.waiting_list_head_, this);
-                sema_.mtx_.unlock();
+            template<execution::receiver_of<completion_signatures> Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> state<Rcvr> {
+                COIO_ASSERT(sema_ != nullptr);
+                return state<Rcvr>{*std::exchange(sema_, nullptr), std::move(rcvr)};
             }
 
-            static auto await_resume() noexcept -> void {}
+            template<std::same_as<acquire_sender>, typename...>
+            static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                return {};
+            }
 
         private:
-            async_semaphore& sema_;
-            std::coroutine_handle<> coro_;
-            acquire_awaiter* next_ = nullptr;
+            async_semaphore* sema_;
         };
 
     public:
@@ -310,9 +343,10 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto acquire() noexcept -> task<> {
-            co_await mtx_.lock();
-            co_await acquire_awaiter{*this};
+        COIO_ALWAYS_INLINE auto acquire() noexcept {
+            return mtx_.lock() | execution::let_value([this]() noexcept {
+                return acquire_sender{*this};
+            });
         }
 
         [[nodiscard]]
@@ -329,36 +363,36 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto release() noexcept -> task<> {
-            auto lock_guard = co_await mtx_.lock_guard();
-            if (waiting_list_head_) {
-                auto continuation = waiting_list_head_->coro_;
-                waiting_list_head_ = waiting_list_head_->next_;
-                lock_guard.unlock();
-                continuation.resume();
-            }
-            else {
-                lock_guard.unlock();
-                auto current = counter_.load(std::memory_order_acquire);
-                do {
-                    if (current == max()) std::terminate();
+        COIO_ALWAYS_INLINE auto release() noexcept {
+            return mtx_.lock_guard() | execution::then([this](auto lock_guard) {
+                if (waiting_list_head_) {
+                    auto head = std::exchange(waiting_list_head_, waiting_list_head_->next_);
+                    lock_guard.unlock();
+                    head->complete_(head);
                 }
-                while (not counter_.compare_exchange_weak(
-                    current, current + 1,
-                    std::memory_order_acq_rel, std::memory_order_acquire
-                ));
-            }
+                else {
+                    lock_guard.unlock();
+                    auto current = counter_.load(std::memory_order_acquire);
+                    do {
+                        if (current == max()) std::terminate();
+                    }
+                    while (not counter_.compare_exchange_weak(
+                        current, current + 1,
+                        std::memory_order_acq_rel, std::memory_order_acquire
+                    ));
+                }
+            });
         }
 
         [[nodiscard]]
-        auto count() const noexcept -> count_type {
+        COIO_ALWAYS_INLINE auto count() const noexcept -> count_type {
             return counter_.load(std::memory_order_acquire);
         }
 
     private:
         std::atomic_signed_lock_free counter_;
         async_mutex mtx_;
-        acquire_awaiter* waiting_list_head_{};
+        state_base* waiting_list_head_ = nullptr;
     };
 
     using async_binary_semaphore = async_semaphore<1>;

@@ -35,18 +35,15 @@ auto main() -> int {
     coio::conqueue<std::string> channel;
     auto writer = [&](coio::scheduler auto sched, std::string_view name, std::initializer_list<std::string_view> datum) -> coio::task<> {
         for (auto str : datum) {
-            co_await coio::then(channel.emplace(str) | coio::continues_on(sched), [&] {
-                ::debug("{} writes {}", name, str);
-            });
+            ::debug("{} writes {}", name, str);
+            co_await coio::continues_on(channel.emplace(str), sched);
         }
     };
 
     auto reader = [&](coio::scheduler auto sched, std::string_view name) -> coio::task<> {
         while (true) {
-            auto str = co_await coio::then(channel.pop() | coio::continues_on(sched), [&](std::string str_) {
-                ::debug("{} reads {}", name, str_);
-                return str_;
-            });
+            auto str = co_await coio::continues_on(channel.pop(), sched);
+            ::debug("{} reads {}", name, str);
             if (str == "bye") break;
         }
     };
@@ -66,5 +63,5 @@ auto main() -> int {
         start_reader(workers[3].scheduler(), "reader-2"),
         start_reader(workers[4].scheduler(), "reader-3"),
         start_reader(workers[5].scheduler(), "reader-4")
-    )).value();
+    ));
 }
