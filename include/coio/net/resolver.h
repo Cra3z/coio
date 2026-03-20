@@ -89,7 +89,7 @@ namespace coio {
          */
         [[nodiscard]]
         auto async_resolve(query_t query) const -> task<generator<result_t>> {
-            co_await sched_.schedule();
+            co_await execution::schedule(sched_);
             co_return resolve(std::move(query));
         }
 
@@ -98,7 +98,7 @@ namespace coio {
          */
         [[nodiscard]]
         auto async_resolve(protocol_type protocol, query_t query) const -> task<generator<result_t>> {
-            co_await sched_.schedule();
+            co_await execution::schedule(sched_);
             co_return resolve(std::move(protocol), std::move(query));
         }
 

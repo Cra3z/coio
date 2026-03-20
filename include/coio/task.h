@@ -88,7 +88,7 @@ namespace coio {
                         execution::set_value(std::move(rcvr_));
                     }
                     else {
-                        execution::set_value(std::move(rcvr_), static_cast<T>(std::get<1>(this->result_)));
+                        execution::set_value(std::move(rcvr_), static_cast<T&&>(std::get<1>(this->result_)));
                     }
                     break;
                 }
@@ -134,7 +134,7 @@ namespace coio {
             COIO_ALWAYS_INLINE auto await_resume() -> T {
                 switch (this->result_.index()) {
                 case 1: {
-                    return static_cast<T>(std::get<1>(this->result_));
+                    return static_cast<std::add_rvalue_reference_t<T>>(std::get<1>(this->result_));
                 }
                 case 2: {
                     std::rethrow_exception(std::move(std::get<2>(this->result_)));

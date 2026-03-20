@@ -1,5 +1,8 @@
 #pragma once
 #include <string_view>
+#ifdef __cpp_lib_format
+#include <format>
+#endif
 
 namespace coio {
     template<typename CharType, typename CharTraits = std::char_traits<CharType>>
