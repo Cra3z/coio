@@ -21,6 +21,7 @@
 - **Coroutine types** — `task<T, Alloc>` and `generator<Ref, Val>` for async computations and lazy sequences
 - **Execution contexts** — `time_loop`, `epoll_context`, `uring_context` and `iocp_context` with thread-safe `run()`
 - **Networking** — TCP/UDP sockets with sync and async operations
+- **TLS/SSL** — OpenSSL-backed `ssl::context` and `ssl::stream` layered on coio sockets
 - **Synchronization** — `async_mutex`, `async_semaphore`, `async_latch`
 - **Utilities** — Timers, concurrent queues, signal handling
 
@@ -35,6 +36,7 @@
 
 ### Build Options
 - `COIO_BUILD_EXAMPLES` (ON/OFF, default OFF) - Build example programs
+- `COIO_WITH_SSL` (ON/OFF, default OFF) - Enable TLS/SSL support via OpenSSL
 - `COIO_SENDERS_BACKEND` (NVIDIA/BEMAN/CXX26, default NVIDIA) - Which std::execution implementation to use:
   - `NVIDIA` - NVIDIA/stdexec implementation
   - `BEMAN` - bemanproject/execution implementation  
@@ -42,6 +44,7 @@
 
 ### Dependencies
 - [liburing](https://github.com/axboe/liburing) (only if using `uring_context`)
+- [OpenSSL](https://www.openssl.org/) (only if building with `COIO_WITH_SSL=ON`)
 - [NVIDIA/stdexec](https://github.com/NVIDIA/stdexec) (only if using `NVIDIA` std::execution implement)
 - [bemanproject/execution](https://github.com/bemanproject/execution) (only if using `BEMAN` std::execution implement)
 
@@ -54,6 +57,12 @@ cmake --build <build directory>
 ### Build with Examples
 ```shell
 cmake -S . -B <build directory> -DCOIO_BUILD_EXAMPLES=ON
+cmake --build <build directory>
+```
+
+### Build with TLS/SSL
+```shell
+cmake -S . -B <build directory> -DCOIO_WITH_SSL=ON
 cmake --build <build directory>
 ```
 

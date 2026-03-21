@@ -26,6 +26,7 @@ This document describes the public API of **coio**. It is intended to be a stabl
   - [6.2 timer](#62-timer)
 - [7. Async I/O utilities](#7-async-io-utilities)
 - [8. Networking](#8-networking)
+- [8.1 TLS/SSL](#81-tlsssl)
 - [9. Synchronization primitives](#9-synchronization-primitives)
 - [10. Error handling](#10-error-handling)
 - [11. Thread safety (summary)](#11-thread-safety-summary)
@@ -66,6 +67,7 @@ This document describes the public API of **coio**. It is intended to be a stabl
 | TCP/UDP descriptors        | `#include <coio/net/tcp.h>`, `#include <coio/net/udp.h>` |
 | sockets                    | `#include <coio/net/socket.h>`                           |
 | resolver                   | `#include <coio/net/resolver.h>`                         |
+| TLS/SSL                    | `#include <coio/ssl/context.h>`, `#include <coio/ssl/stream.h>` |
 
 ---
 
@@ -255,6 +257,30 @@ This header provides concepts and helper functions for `read`, `write`, and deli
 Headers: `#include <coio/net/...>`
 
 > Networking backends are currently implemented only on Linux and Windows.
+
+### 8.1 TLS/SSL
+
+Headers: `#include <coio/ssl/context.h>`, `#include <coio/ssl/stream.h>`
+
+TLS support is available when coio is built with `COIO_WITH_SSL=ON`.
+
+`coio::ssl::context` wraps OpenSSL `SSL_CTX*` and owns reusable TLS configuration:
+
+- method selection through `coio::ssl::method`
+- verification configuration with `set_verify_mode`, `set_verify_depth`, `set_default_verify_paths`, `load_verify_file`, `add_verify_path`
+- certificate and private key loading with `use_certificate_file`, `use_certificate_chain_file`, `use_private_key_file`, `check_private_key`
+- protocol and cipher controls with `set_min_protocol_version`, `set_max_protocol_version`, `set_cipher_list`, `set_options`, `clear_options`
+
+`coio::ssl::stream<NextLayer>` layers TLS over an existing stream transport, typically `coio::tcp::socket<...>`.
+
+Core operations:
+
+- `handshake(handshake_type)` / `async_handshake(handshake_type)`
+- `shutdown()` / `async_shutdown()`
+- `read_some(...)` / `async_read_some(...)`
+- `write_some(...)` / `async_write_some(...)`
+
+`ssl::stream` integrates with `coio/asyncio/io.h`, so `coio::async_read` and `coio::async_write` can be used on encrypted streams the same way as on plain sockets.
 
 ### Address and endpoint types
 

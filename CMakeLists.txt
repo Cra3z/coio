@@ -9,6 +9,7 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/permissive->")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
 
 option(COIO_BUILD_EXAMPLES "whether to build examples" OFF)
+option(COIO_WITH_SSL "Enable SSL/TLS support via OpenSSL" OFF)
 set(COIO_SENDERS_BACKEND "NVIDIA" CACHE STRING "the backend to use for std::execution support.
     available options are: NVIDIA, BEMAN, CXX26.
     NVIDIA - use NVIDIA/stdexec implementation,
@@ -43,6 +44,23 @@ target_sources(
     FILES
     ${COIO_PUBLIC_HEADERS}
 )
+
+file(GLOB_RECURSE COIO_PORTABLE_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/portable/*.cpp")
+target_sources(
+    ${PROJECT_NAME}
+    PRIVATE
+    ${COIO_PORTABLE_SOURCES}
+)
+
+if (COIO_WITH_SSL)
+    find_package(OpenSSL "1.1.0" REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC COIO_HAS_SSL=1)
+    file(GLOB_RECURSE COIO_SSL_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/ssl/*.cpp")
+    target_sources(${PROJECT_NAME} PRIVATE ${COIO_SSL_SOURCES})
+else()
+    target_compile_definitions(${PROJECT_NAME} PUBLIC COIO_HAS_SSL=0)
+endif()
 
 if (LINUX)
     file(GLOB_RECURSE COIO_LINUX_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/linux/*.cpp")
