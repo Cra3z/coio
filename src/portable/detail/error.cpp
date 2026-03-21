@@ -4,7 +4,7 @@ namespace coio::error {
     namespace {
         struct misc_category_t : std::error_category {
             auto name() const noexcept -> const char* override {
-                return "coio::net::error::misc";
+                return "coio.error.misc";
             }
 
             auto message(int ec) const -> std::string override {
@@ -21,23 +21,10 @@ namespace coio::error {
                 }
             }
         };
-
-        struct gai_category_t : std::error_category {
-            auto name() const noexcept -> const char* override {
-                return "coio::net::error::gai";
-            }
-
-            auto message(int ec) const -> std::string override;
-        };
     }
 
     auto misc_category() noexcept -> const std::error_category& {
         static misc_category_t instance;
-        return instance;
-    }
-
-    auto gai_category() noexcept -> const std::error_category& {
-        static gai_category_t instance;
         return instance;
     }
 }
