@@ -3,8 +3,8 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include "types.h"
 #include "../detail/config.h"
+#include "../utils/utility.h"
 #include "../utils/zstring_view.h"
 
 #if not COIO_HAS_SSL
@@ -14,6 +14,44 @@
 typedef struct ssl_ctx_st SSL_CTX;
 
 namespace coio::ssl {
+    enum class method {
+        sslv23,
+        sslv23_client,
+        sslv23_server,
+
+        tls,
+        tls_client,
+        tls_server,
+    };
+
+    enum class verify_mode : int {
+        none = 0x00,
+        peer = 0x01,
+        fail_if_no_peer_cert = 0x02,
+        client_once = 0x04,
+    };
+
+    enum class file_format : int {
+        pem = 1,
+        asn1 = 2,
+    };
+
+    enum class handshake_type : unsigned char {
+        client,
+        server,
+    };
+
+    [[nodiscard]]
+    constexpr auto operator| (verify_mode lhs, verify_mode rhs) noexcept -> verify_mode {
+        return static_cast<verify_mode>(to_underlying(lhs) | to_underlying(rhs));
+    }
+
+    [[nodiscard]]
+    constexpr auto operator& (verify_mode lhs, verify_mode rhs) noexcept -> verify_mode {
+        return static_cast<verify_mode>(to_underlying(lhs) & to_underlying(rhs));
+    }
+
+
     class context {
     public:
         using native_handle_type = ::SSL_CTX*;
