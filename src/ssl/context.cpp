@@ -30,15 +30,13 @@ namespace coio::error {
 
 namespace coio::ssl {
     namespace {
-        struct openssl_init_guard {
-            openssl_init_guard() {
-                ::OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr);
-            }
-        };
-
         [[noreturn]]
         COIO_ALWAYS_INLINE auto throw_last_error(const char* msg) {
-            throw std::system_error{static_cast<int>(::ERR_get_error()), error::ssl_category(), msg};
+            const auto err = ::ERR_get_error();
+            if (ERR_SYSTEM_ERROR(err)) {
+                throw std::system_error{static_cast<int>(err & ERR_SYSTEM_MASK), std::system_category(), msg};
+            }
+            throw std::system_error{static_cast<int>(err), error::ssl_category(), msg};
         }
 
         [[nodiscard]]
@@ -61,6 +59,14 @@ namespace coio::ssl {
                 throw std::system_error{std::make_error_code(std::errc::not_supported), "unsupported SSL method"};
             }
         }
+
+        struct openssl_init_guard {
+            openssl_init_guard() {
+                if (::OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr) == 0) [[unlikely]] {
+                    throw_last_error("failed to initialize OpenSSL");
+                }
+            }
+        };
     }
 
     context::context(method m) {
@@ -135,12 +141,12 @@ namespace coio::ssl {
 
     auto context::use_tmp_dh_file(zstring_view filename) -> void {
         ::ERR_clear_error();
-        auto* bio = ::BIO_new_file(filename.c_str(), "r");
+        auto bio = ::BIO_new_file(filename.c_str(), "r");
         if (bio == nullptr) {
             throw_last_error("BIO_new_file");
         }
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
-        auto* params = ::PEM_read_bio_Parameters(bio, nullptr);
+        auto params = ::PEM_read_bio_Parameters(bio, nullptr);
         ::BIO_free(bio);
         if (params == nullptr) {
             throw_last_error("PEM_read_bio_Parameters");
@@ -150,7 +156,7 @@ namespace coio::ssl {
             throw_last_error("SSL_CTX_set0_tmp_dh_pkey");
         }
 #else
-        auto* dh = ::PEM_read_bio_DHparams(bio, nullptr, nullptr, nullptr);
+        auto dh = ::PEM_read_bio_DHparams(bio, nullptr, nullptr, nullptr);
         ::BIO_free(bio);
         if (dh == nullptr) {
             throw_last_error("PEM_read_bio_DHparams");
@@ -199,9 +205,9 @@ namespace coio::ssl {
     }
 
     auto context::password_callback_impl(char* buffer, int size, int rwflag, void* userdata) -> int {
-        auto* self = static_cast<context*>(userdata);
+        auto self = static_cast<context*>(userdata);
         if (self == nullptr or not self->password_cb_) return 0;
-        auto password = self->password_cb_(static_cast<std::size_t>(std::max(size, 0)), rwflag != 0);
+        auto password = self->password_cb_(static_cast<std::size_t>(std::max(size, 0)), password_purpose{rwflag != 0});
         const auto length = std::min<int>(static_cast<int>(password.size()), std::max(size - 1, 0));
         if (length > 0) {
             std::memcpy(buffer, password.data(), static_cast<std::size_t>(length));

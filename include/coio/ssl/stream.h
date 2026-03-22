@@ -11,7 +11,6 @@
 #endif
 
 typedef struct ssl_st SSL;
-typedef struct bio_st BIO;
 
 namespace coio::ssl {
     namespace detail {
@@ -23,14 +22,10 @@ namespace coio::ssl {
         protected:
             explicit stream_base(context& ctx);
 
-            stream_base(const stream_base&) = delete;
-
             stream_base(stream_base&& other) noexcept : ssl_(std::exchange(other.ssl_, nullptr)) {}
 
             // ReSharper disable once CppHiddenFunction
             ~stream_base();
-
-            auto operator= (const stream_base&) -> stream_base& = delete;
 
             auto operator= (stream_base&& other) noexcept -> stream_base& {
                 if (this != &other) [[likely]] ssl_ = std::exchange(other.ssl_, nullptr);

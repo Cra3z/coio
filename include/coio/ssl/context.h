@@ -51,11 +51,16 @@ namespace coio::ssl {
         return static_cast<verify_mode>(to_underlying(lhs) & to_underlying(rhs));
     }
 
+    enum class password_purpose : bool {
+        for_reading, ///< reading/decryption
+        for_writing  ///< writing/encryption
+    };
 
     class context {
     public:
         using native_handle_type = ::SSL_CTX*;
-        using password_callback_type = std::function<std::string(std::size_t, bool)>;
+        /// function signature: (std::size_t max_length, password_purpose purpose) -> std::string
+        using password_callback_type = std::function<std::string(std::size_t, password_purpose)>;
 
     public:
         explicit context(native_handle_type ctx) noexcept : ctx_(ctx) {}

@@ -18,3 +18,7 @@ foreach(EXAMPLE_FILE ${EXAMPLE_FILES})
 endforeach()
 
 add_subdirectory(http_server)
+
+if (COIO_WITH_SSL)
+    add_subdirectory(stmp_client)
+endif()

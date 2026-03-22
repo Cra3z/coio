@@ -16,7 +16,6 @@ namespace coio::ssl::detail {
 
         [[nodiscard]]
         auto ssl_failure_code(int ssl_error) noexcept -> std::error_code {
-            if (const auto ec = last_ERR_error_code()) return ec;
             if (ssl_error == SSL_ERROR_ZERO_RETURN) return coio::error::make_error_code(coio::error::eof);
             if (ssl_error == SSL_ERROR_SYSCALL) {
 #if COIO_OS_WINDOWS
@@ -25,7 +24,11 @@ namespace coio::ssl::detail {
                 return {errno, std::system_category()};
 #endif
             }
-            return std::make_error_code(std::errc::io_error);
+            const auto err = ::ERR_get_error();
+            if (ERR_SYSTEM_ERROR(err)) {
+                return {static_cast<int>(err & ERR_SYSTEM_MASK), std::system_category()};
+            }
+            return {static_cast<int>(err), error::ssl_category()};
         }
 
         [[noreturn]]
@@ -110,7 +113,7 @@ namespace coio::ssl::detail {
                 flush_output();
                 continue;
             }
-            throw_ssl_failure(ssl_error, "SSL_do_handshake");
+            throw_ssl_failure(ssl_error, "handshake");
         }
     }
 
@@ -134,7 +137,7 @@ namespace coio::ssl::detail {
                 co_await async_flush_output();
                 continue;
             }
-            throw_ssl_failure(ssl_error, "SSL_do_handshake");
+            throw_ssl_failure(ssl_error, "async_handshake");
         }
     }
 
@@ -163,7 +166,7 @@ namespace coio::ssl::detail {
                 continue;
             }
             if (ssl_error == SSL_ERROR_ZERO_RETURN) return;
-            throw_ssl_failure(ssl_error, "SSL_shutdown");
+            throw_ssl_failure(ssl_error, "shutdown");
         }
     }
 
@@ -192,7 +195,7 @@ namespace coio::ssl::detail {
                 continue;
             }
             if (ssl_error == SSL_ERROR_ZERO_RETURN) co_return;
-            throw_ssl_failure(ssl_error, "SSL_shutdown");
+            throw_ssl_failure(ssl_error, "async_shutdown");
         }
     }
 
@@ -217,7 +220,7 @@ namespace coio::ssl::detail {
                 flush_output();
                 continue;
             }
-            throw_ssl_failure(ssl_error, "SSL_read_ex");
+            throw_ssl_failure(ssl_error, "read_some");
         }
     }
 
@@ -242,7 +245,7 @@ namespace coio::ssl::detail {
                 flush_output();
                 continue;
             }
-            throw_ssl_failure(ssl_error, "SSL_write_ex");
+            throw_ssl_failure(ssl_error, "write_some");
         }
     }
 
@@ -267,7 +270,7 @@ namespace coio::ssl::detail {
                 co_await async_flush_output();
                 continue;
             }
-            throw_ssl_failure(ssl_error, "SSL_read_ex");
+            throw_ssl_failure(ssl_error, "async_read_some");
         }
     }
 
@@ -292,7 +295,7 @@ namespace coio::ssl::detail {
                 co_await async_flush_output();
                 continue;
             }
-            throw_ssl_failure(ssl_error, "SSL_write_ex");
+            throw_ssl_failure(ssl_error, "async_write_some");
         }
     }
 
