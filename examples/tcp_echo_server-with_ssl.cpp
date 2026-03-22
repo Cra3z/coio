@@ -1,9 +1,9 @@
-#include <array>
-#include <filesystem>
 #include <coio/core.h>
 #include <coio/asyncio/io.h>
+#include <coio/net/socket.h>
 #include <coio/net/tcp.h>
 #include <coio/ssl/stream.h>
+#include <coio/utils/signal_set.h>
 #include "common.h"
 
 #if COIO_OS_LINUX
@@ -18,52 +18,55 @@ using tcp_socket = coio::tcp::socket<io_context::scheduler>;
 using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
 using ssl_stream = coio::ssl::stream<tcp_socket>;
 
-auto handle_client(tcp_socket socket, coio::ssl::context& ssl_ctx) -> coio::task<> try {
-    ssl_stream stream{std::move(socket), ssl_ctx};
+auto handle_connection(ssl_stream stream) -> coio::task<> {
     co_await stream.async_handshake(coio::ssl::handshake_type::server);
-
-    std::array<char, 4096> buffer{};
-    while (true) {
-        const auto bytes = co_await stream.async_read_some(coio::as_writable_bytes(buffer));
-        co_await coio::async_write(stream, coio::as_bytes(std::span{buffer.data(), bytes}));
+    auto remote_endpoint = stream.lowest_layer().remote_endpoint();
+    ::debug("new connection from [{}]", remote_endpoint);
+    try {
+        char buffer[1024];
+        while (true) {
+            const auto length = co_await stream.async_read_some(coio::as_writable_bytes(buffer));
+            ::debug("{}", std::string_view{buffer, length});
+            co_await coio::async_write(stream, coio::as_bytes(buffer, length));
+        }
+    }
+    catch (const std::system_error& e) {
+        ::debug("connection with [{}] broken because \"{}\"", remote_endpoint, e.what());
     }
 }
-catch (const std::system_error& e) {
-    if (e.code() != coio::error::eof) {
-        println("ssl server session error: {}", e.what());
-    }
-}
-catch (const std::exception& e) {
-    println("ssl server session error: {}", e.what());
-}
 
-auto serve(io_context::scheduler sched, coio::async_scope& client_scope, std::string cert, std::string key) -> coio::task<> try {
+auto start_server(io_context::scheduler sched, coio::async_scope& scope, coio::zstring_view cert, coio::zstring_view key) -> coio::task<> try {
     coio::ssl::context ssl_ctx{coio::ssl::method::tls_server};
-    // ssl_ctx.add_verify_path(std::filesystem::path{cert}.parent_path().c_str());
     ssl_ctx.use_certificate_file(cert);
     ssl_ctx.use_private_key_file(key);
     ssl_ctx.check_private_key();
-
-    tcp_acceptor acceptor{sched, {coio::ipv4_address::loopback(), 8443}};
-    println("ssl echo server listening on 127.0.0.1:8443");
+    tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8088}};
+    ::debug("server \"{}\" start...", acceptor.local_endpoint());
     while (true) {
-        auto socket = co_await acceptor.async_accept();
-        client_scope.spawn(handle_client(std::move(socket), ssl_ctx));
+        scope.spawn(handle_connection(ssl_stream{co_await acceptor.async_accept(), ssl_ctx}));
     }
 }
-catch (const std::exception& e) {
-    println("error: {}", e.what());
+catch (const std::system_error& e) {
+    ::println("acceptor error: {}", e.what());
+}
+
+auto signal_watchdog(io_context& context) -> coio::task<> {
+    coio::signal_set signals{SIGINT, SIGTERM};
+    const int signum = co_await signals.async_wait();
+    ::debug("server stop with signal: ({}){}", signum, coio::strsignal(signum));
+    context.request_stop();
 }
 
 auto main(int argc, char** argv) -> int {
     if (argc < 3) {
-        println(std::cerr, "usage: ssl_echo_server <cert.pem> <key.pem>");
-        return 1;
+        ::println(std::cerr, "usage: {} <certificate-file> <private-key-file>", argv[0]);
+        ::println(std::cerr, "for example: {} examples/resources/cert.pem examples/resources/key.pem", argv[0]);
+        return EXIT_FAILURE;
     }
-
     io_context context;
     coio::async_scope scope;
-    scope.spawn(serve(context.get_scheduler(), scope, argv[1], argv[2]));
+    scope.spawn(start_server(context.get_scheduler(), scope, argv[1], argv[2]));
+    scope.spawn(signal_watchdog(context));
     context.run();
     coio::this_thread::sync_wait(scope.join());
 }
