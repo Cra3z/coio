@@ -5,6 +5,7 @@
 #include <mutex>
 #include <utility>
 #include "detail/execution.h"
+#include "detail/intrusive_stack.h"
 
 namespace coio {
     template<typename Mutex>

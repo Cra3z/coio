@@ -1,3 +1,4 @@
+#include <array>
 #include <memory_resource>
 #include <coio/generator.h>
 #include "common.h"
