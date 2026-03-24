@@ -7,6 +7,7 @@
 #include "detail/concepts.h"
 #include "detail/co_memory.h"
 #include "detail/execution.h"
+#include "utils/allocator_resource.h"
 #include "utils/stop_token.h"
 #include "utils/utility.h"
 
@@ -222,6 +223,10 @@ namespace coio {
         struct task_promise : task_promise_return<T>, promise_alloc_control<Alloc> {
             task_promise() = default;
 
+            task_promise(std::allocator_arg_t, auto alloc, const auto&...) noexcept : alloc_adaptor_(std::move(alloc)) {}
+
+            task_promise(const auto&, std::allocator_arg_t, auto alloc, const auto&...) noexcept : alloc_adaptor_(std::move(alloc)) {}
+
             COIO_ALWAYS_INLINE auto get_return_object() noexcept -> TaskType {
                 return std::coroutine_handle<task_promise>::from_promise(*this);
             }
@@ -237,10 +242,13 @@ namespace coio {
 
             COIO_ALWAYS_INLINE auto get_env() const noexcept {
                 return execution::env{
+                    execution::prop{get_allocator, alloc_adaptor_.get_allocator()},
                     execution::prop{get_stop_token, this->state_->get_stop_token()},
                     execution::prop{execution::get_scheduler, execution::inline_scheduler{}}
                 };
             }
+
+            COIO_NO_UNIQUE_ADDRESS allocator_adaptor<Alloc> alloc_adaptor_;
         };
     }
 
