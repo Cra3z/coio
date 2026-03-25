@@ -15,7 +15,7 @@ namespace coio {
         };
 
         template<typename T>
-        static constexpr bool is_small_object = sizeof(T) <= sizeof(void*) and alignof(T) <= alignof(void*);
+        static constexpr bool is_small_object = sizeof(T) <= 2 * sizeof(void*) and alignof(T) <= alignof(void*);
 
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
         struct proxied_base {
@@ -41,7 +41,7 @@ namespace coio {
             COIO_ALWAYS_INLINE auto alloc_impl(std::size_t bytes) -> void* {
                 using alloc_t = typename std::allocator_traits<Alloc>::template rebind_alloc<placeholder<N>>;
                 using traits_t = std::allocator_traits<alloc_t>;
-                alloc_t alloc = alloc_;
+                alloc_t alloc(alloc_);
                 std::size_t count = bytes == 0 ? 1 : (bytes + N - 1) / N;
                 return traits_t::allocate(alloc, count);
             }
@@ -94,7 +94,7 @@ namespace coio {
             }
 
             auto destroy() noexcept -> void override {
-                if constexpr (is_small_object<Alloc>) { // this object allocated at `allocator_resource::storage_`
+                if constexpr (is_small_object<proxied>) { // this object allocated at `allocator_resource::storage_`
                     std::destroy_at(this);
                 }
                 else {
@@ -114,7 +114,7 @@ namespace coio {
         template<simple_allocator Alloc>
         explicit allocator_resource(Alloc alloc) { // NOLINT(*-pro-type-member-init)
             proxied<Alloc>* location = nullptr;
-            if constexpr (is_small_object<Alloc>) {
+            if constexpr (is_small_object<proxied<Alloc>>) {
                 location = std::construct_at(reinterpret_cast<proxied<Alloc>*>(storage_), alloc);
             }
             else {
@@ -159,7 +159,7 @@ namespace coio {
 
     private:
         proxied_base* impl_;
-        alignas(void*) std::byte storage_[sizeof(void*)];
+        alignas(void*) std::byte storage_[2 * sizeof(void*)];
     };
 
 
@@ -177,14 +177,30 @@ namespace coio {
 
     template<>
     struct allocator_adaptor<void> {
-        allocator_adaptor() noexcept : resource(std::allocator<std::byte>{}) {}
+        allocator_adaptor() noexcept : allocator_adaptor(std::allocator<std::byte>{}) {}
 
-        explicit allocator_adaptor(simple_allocator auto alloc) noexcept : resource(std::move(alloc)) {}
+        // ReSharper disable once CppPossiblyUninitializedMember
+        explicit allocator_adaptor(simple_allocator auto alloc) noexcept : resource(std::construct_at(reinterpret_cast<allocator_resource*>(storage), std::move(alloc))) {} // NOLINT(*-pro-type-member-init)
 
-        COIO_ALWAYS_INLINE auto get_allocator() const noexcept -> std::pmr::polymorphic_allocator<> {
-            return &resource;
+        // ReSharper disable once CppPossiblyUninitializedMember
+        template<typename T>
+        explicit allocator_adaptor(std::pmr::polymorphic_allocator<T> alloc) noexcept : resource(alloc.resource()) {} // NOLINT(*-pro-type-member-init)
+
+        allocator_adaptor(const allocator_adaptor&) = delete;
+
+        ~allocator_adaptor() {
+            if (resource == reinterpret_cast<allocator_resource*>(storage)) {
+                std::destroy_at(resource);
+            }
         }
 
-        mutable allocator_resource resource;
+        auto operator= (const allocator_adaptor&) -> allocator_adaptor& = delete;
+
+        COIO_ALWAYS_INLINE auto get_allocator() const noexcept -> std::pmr::polymorphic_allocator<> {
+            return resource;
+        }
+
+        alignas(allocator_resource) std::byte storage[sizeof(allocator_resource)];
+        std::pmr::memory_resource* resource;
     };
 }
