@@ -66,9 +66,9 @@ auto qux() -> coio::task<void, my_allocator<>> {
 auto main() -> int {
     std::byte buffer[1024];
     std::pmr::monotonic_buffer_resource resource{buffer, std::ranges::size(buffer), std::pmr::null_memory_resource()};
-    // the coroutine `foo`, and `bar` at line 52, will be allocated on `buffer`
+    // the coroutine `foo`, and `bar` at line 58, will be allocated on `buffer`
     coio::this_thread::sync_wait(foo(std::allocator_arg, std::pmr::polymorphic_allocator<>{&resource}));
 
-    // the coroutine `qux`, and `bar` at line 57, will be allocated on `my_allocator_global_state::buffer`
+    // the coroutine `qux`, and `bar` at line 63, will be allocated on `my_allocator_global_state::buffer`
     coio::this_thread::sync_wait(qux());
 }

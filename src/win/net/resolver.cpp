@@ -57,4 +57,23 @@ namespace coio {
             }
         }
     }
+
+    namespace error {
+        namespace {
+            struct gai_category_t : std::error_category {
+                auto name() const noexcept -> const char* override {
+                    return "coio.error.getaddrinfo";
+                }
+
+                auto message(int ec) const -> std::string override {
+                    return ::gai_strerrorA(ec);
+                }
+            };
+        }
+
+        auto gai_category() noexcept -> const std::error_category& {
+            static gai_category_t instance;
+            return instance;
+        }
+    }
 }

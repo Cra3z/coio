@@ -308,7 +308,7 @@ namespace coio {
         }
 
         template<stoppable_promise ReceiverPromise>
-        COIO_ALWAYS_INLINE auto as_awaitable(ReceiverPromise& receiver) && {
+        COIO_ALWAYS_INLINE auto as_awaitable(ReceiverPromise& receiver) && noexcept {
             return detail::task_awaiter<T, promise_type, ReceiverPromise>{
                 std::exchange(coro_, {}),
                 receiver
@@ -316,7 +316,7 @@ namespace coio {
         }
 
         template<execution::receiver_of<completion_signatures> Receiver>
-        COIO_ALWAYS_INLINE auto connect(Receiver receiver) && {
+        COIO_ALWAYS_INLINE auto connect(Receiver receiver) && noexcept {
             return detail::task_operation<T, promise_type, Receiver>{
                 std::exchange(coro_, {}),
                 std::move(receiver)

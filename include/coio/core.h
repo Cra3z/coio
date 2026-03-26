@@ -4,7 +4,7 @@
 #include "execution_context.h"
 #include "detail/execution.h"
 #include "detail/intrusive_stack.h"
-#include "utils/async_scope.h"
+#include "utils/async_scope.h" // IWYU pragma: keep
 
 namespace coio {
     using execution::scheduler;
@@ -135,7 +135,9 @@ namespace coio {
                 break;
             }
             case 2: {
-                execution::set_error(std::move(this->receiver), std::move(std::get<2>(result)));
+                std::visit([this](auto error) {
+                    execution::set_error(std::move(this->receiver), std::move(error));
+                }, std::get<2>(result));
                 break;
             }
             default: unreachable();
@@ -188,9 +190,8 @@ namespace coio {
         using base = state_value<Receiver, Value, Error>;
         using value_type = Value;
         using error_type = Error;
-        template<std::size_t J>
-        using receiver_at = receiver<Receiver, value_type, error_type>;
-        using states_type = std::tuple<execution::connect_result_t<Sender, receiver_at<I>>...>;
+        using receiver_type = receiver<Receiver, value_type, error_type>;
+        using states_type = std::tuple<execution::connect_result_t<Sender, receiver_type>...>;
 
         template<typename Rcvr, typename Sndrs>
         state(Rcvr&& rcvr, Sndrs&& when_any_sndrs) :
@@ -199,7 +200,7 @@ namespace coio {
                 detail::elide{
                     execution::connect,
                     std::get<I>(std::forward<Sndrs>(when_any_sndrs)),
-                    receiver_at<I>{this}
+                    receiver_type{this}
                 }...
             } {}
 

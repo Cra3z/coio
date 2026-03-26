@@ -6,15 +6,10 @@
 #include <sys/un.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <netdb.h>
 #include <coio/detail/error.h>
 #include <coio/net/basic.h>
 
 namespace coio {
-    auto error::gai_category_t::message(int ec) const -> std::string {
-        return ::gai_strerror(ec);
-    }
-
     ipv4_address::ipv4_address(std::uint32_t host_u32) noexcept : net_u32_(::htonl(host_u32)) {}
 
     ipv4_address::ipv4_address(const std::string& str) {

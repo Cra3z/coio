@@ -5,10 +5,6 @@
 #include "../common.h"
 
 namespace coio {
-    auto error::gai_category_t::message(int ec) const -> std::string {
-        return ::gai_strerrorA(ec);
-    }
-
     ipv4_address::ipv4_address(std::uint32_t host_u32) noexcept
         : net_u32_(::htonl(host_u32)) {}
 
