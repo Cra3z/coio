@@ -272,9 +272,10 @@ namespace coio {
         static constexpr auto terminate_on_error = [](const auto&...) noexcept -> std::invoke_result_t<execution::just_t> {
             std::terminate();
         };
+
         atomutex mutex_;
-        std::size_t count_{};
         state state_{state::unused};
+        std::size_t count_{};
         state_node* head_{};
         inplace_stop_source stop_source_;
     };

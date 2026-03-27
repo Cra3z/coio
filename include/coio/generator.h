@@ -1,3 +1,4 @@
+// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <cassert>
 #include <ranges>
@@ -30,17 +31,17 @@ namespace coio {
 
                 COIO_ALWAYS_INLINE auto get_yielded() -> Yielded {
                     COIO_ASSERT(ptr_ != nullptr);
-                    return ptr_-> get_yielded();
+                    return ptr_->get_yielded();
                 }
 
                 COIO_ALWAYS_INLINE auto try_rethrow() -> void {
                     COIO_ASSERT(ptr_ != nullptr);
-                    ptr_-> try_rethrow();
+                    ptr_->try_rethrow();
                 }
 
                 COIO_ALWAYS_INLINE auto get_yielded_or_throw() -> Yielded {
                     COIO_ASSERT(ptr_ != nullptr);
-                    return ptr_-> get_yielded_or_rethrow();
+                    return ptr_->get_yielded_or_rethrow();
                 }
 
                 COIO_ALWAYS_INLINE auto done() const noexcept -> bool {
@@ -50,22 +51,22 @@ namespace coio {
 
                 COIO_ALWAYS_INLINE auto prev() noexcept -> node_handle_t& {
                     COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
-                    return ptr_-> prev_;
+                    return ptr_->prev_;
                 }
 
                 COIO_ALWAYS_INLINE auto prev() const noexcept -> const node_handle_t& {
                     COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
-                    return ptr_-> prev_;
+                    return ptr_->prev_;
                 }
 
                 COIO_ALWAYS_INLINE auto top() noexcept -> node_handle_t& {
                     COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
-                    return ptr_-> top_;
+                    return ptr_->top_;
                 }
 
                 COIO_ALWAYS_INLINE auto top() const noexcept -> const node_handle_t& {
                     COIO_ASSERT(coro_ != nullptr and ptr_ != nullptr);
-                    return ptr_-> top_;
+                    return ptr_->top_;
                 }
 
                 COIO_ALWAYS_INLINE auto coro() const noexcept -> std::coroutine_handle<> {
@@ -144,7 +145,7 @@ namespace coio {
 
             struct range_yield_awaiter : rvalue_generator_yield_awaiter {
                 ~range_yield_awaiter() {
-                    if (this-> new_top_) this-> new_top_.destroy();
+                    if (this->new_top_) this->new_top_.destroy();
                 }
             };
 
@@ -176,7 +177,7 @@ namespace coio {
                 return {prev_};
             }
 
-            auto return_void() const noexcept -> void {}
+            static auto return_void() noexcept -> void {}
 
             auto unhandled_exception() -> void {
                 if (not top_.prev()) throw;
@@ -346,6 +347,7 @@ namespace coio {
         }
 
         [[nodiscard]]
+        // ReSharper disable once CppMemberFunctionMayBeStatic
         COIO_ALWAYS_INLINE auto end() const noexcept -> std::default_sentinel_t {
             return std::default_sentinel;
         }

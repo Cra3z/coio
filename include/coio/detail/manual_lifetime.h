@@ -1,5 +1,6 @@
 #pragma once
 #include <concepts>
+#include <functional>
 #include <memory>
 #include <type_traits>
 #include "config.h"
@@ -30,7 +31,7 @@ namespace coio::detail {
             return *::new(static_cast<void*>(storage_)) T(std::invoke(std::forward<Fn>(fn), std::forward<Args>(args)...));
         }
 
-        COIO_ALWAYS_INLINE auto destroy() & noexcept -> void { // pre: `construct` has been called
+        COIO_ALWAYS_INLINE auto destroy() & noexcept -> void { // pre: `construct` or `elide_construct` has been called
             std::destroy_at(&get());
         }
 

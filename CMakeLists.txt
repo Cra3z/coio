@@ -44,6 +44,13 @@ target_sources(
     ${COIO_PUBLIC_HEADERS}
 )
 
+file(GLOB_RECURSE COIO_PORTABLE_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/portable/*.cpp")
+target_sources(
+    ${PROJECT_NAME}
+    PRIVATE
+    ${COIO_PORTABLE_SOURCES}
+)
+
 if (LINUX)
     file(GLOB_RECURSE COIO_LINUX_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/linux/*.cpp")
     target_sources(

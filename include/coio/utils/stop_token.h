@@ -418,7 +418,7 @@ namespace coio {
                     template<typename Prop, typename... Args>
                         requires std::default_initializable<Prop> and (forwarding_query(Prop{}))
                             and std::invocable<Prop, execution::env_of_t<Rcvr>, Args...>
-                    COIO_ALWAYS_INLINE decltype(auto) query(const Prop& prop, Args&&... args) const noexcept {
+                    COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
                         return prop(execution::get_env(d->rcvr), std::forward<Args>(args)...);
                     }
 

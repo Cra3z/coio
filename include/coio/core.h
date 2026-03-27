@@ -69,7 +69,7 @@ namespace coio {
             requires std::default_initializable<Prop> and
                 (forwarding_query(Prop{})) and
                 std::invocable<Prop, execution::env_of_t<Receiver>, Args...>
-        COIO_ALWAYS_INLINE decltype(auto) query(const Prop& prop, Args&&... args) const noexcept {
+        COIO_ALWAYS_INLINE auto query(const Prop& prop, Args&&... args) const noexcept {
             return prop(execution::get_env(state->receiver), std::forward<Args>(args)...);
         }
 
@@ -117,27 +117,36 @@ namespace coio {
         template<typename Rcvr>
         state_value(std::size_t total, Rcvr&& rcvr) : state_base<Receiver>{total, std::forward<Rcvr>(rcvr)} {}
 
-        COIO_ALWAYS_INLINE auto finish() -> void override {
+        auto finish() -> void override {
             switch (result.index()) {
             case 0: {
                 execution::set_stopped(std::move(this->receiver));
                 break;
             }
             case 1: {
-                std::visit([this](auto&& tpl) {
-                    std::apply(
-                        [this](auto&&... values) {
-                            execution::set_value(std::move(this->receiver), std::move(values)...);
+                if constexpr (specialization_of<std::remove_cvref_t<decltype(std::get<1>(result))>, std::variant>) {
+                    std::visit(
+                        [this](auto tpl) {
+                            std::apply(std::bind_front(execution::set_value, std::move(this->receiver)), std::move(tpl));
                         },
-                        tpl
+                        std::move(std::get<1>(result))
                     );
-                }, std::get<1>(result));
+                }
+                else { // no value
+                    unreachable();
+                }
                 break;
             }
             case 2: {
-                std::visit([this](auto error) {
-                    execution::set_error(std::move(this->receiver), std::move(error));
-                }, std::get<2>(result));
+                if constexpr (specialization_of<std::remove_cvref_t<decltype(std::get<2>(result))>, std::variant>) {
+                    std::visit(
+                        std::bind_front(execution::set_error, std::move(this->receiver)),
+                        std::move(std::get<2>(result))
+                    );
+                }
+                else { // no error
+                    unreachable();
+                }
                 break;
             }
             default: unreachable();

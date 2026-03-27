@@ -1,3 +1,4 @@
+// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include "config.h"
 #include "concepts.h"
@@ -275,7 +276,7 @@ namespace coio {
 
         template<typename Env>
         COIO_ALWAYS_INLINE auto fwd_env(Env env) noexcept -> fwd_env_t<Env> {
-            return fwd_env_t<Env>{env};
+            return fwd_env_t<Env>{std::move(env)};
         }
     }
 
