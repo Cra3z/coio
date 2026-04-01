@@ -135,8 +135,7 @@ namespace coio {
 
             std::unique_lock lock{bolt_, std::try_to_lock};
             if (not lock) {
-                std::this_thread::yield();
-                continue;
+                return consume(infinite);
             }
 
             if (work_count_ == 0) break;
@@ -156,19 +155,21 @@ namespace coio {
             const ::BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, timeout);
             const ::DWORD err = success ? 0 : ::GetLastError();
 
-            op_queue local_ops;
-            timer_queue_.take_ready_timers(local_ops);
+            node* ready_time_ops = nullptr;
+            timer_queue_.take_ready_timers(ready_time_ops, &node::next_);
 
             lock.unlock();
 
+            node* ready_io_ops = nullptr;
             if (overlapped and key != wake_completion_key) {
                 auto inode = static_cast<iocp_node*>(overlapped);
-                inode->next_ = nullptr;
                 inode->complete(bytes, err);
-                local_ops.unsynchronized_enqueue(*inode);
+                inode->next_ = std::exchange(ready_io_ops, inode);
             }
 
-            op_queue_.splice(std::move(local_ops));
+            if (ready_time_ops) op_queue_.enqueue(*ready_time_ops);
+            if (ready_io_ops) op_queue_.enqueue(*ready_io_ops);
+
             if (not infinite) {
                 const auto op = op_queue_.try_dequeue();
                 if (op) op->finish();

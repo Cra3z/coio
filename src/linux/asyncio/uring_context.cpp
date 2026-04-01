@@ -70,8 +70,7 @@ namespace coio {
 
             std::unique_lock lock{bolt_, std::try_to_lock};
             if (not lock) {
-                std::this_thread::yield();
-                continue;
+                return consume(infinite);
             }
 
             if (work_count_ == 0) break;
@@ -80,7 +79,7 @@ namespace coio {
                 submit_sqes();
             }
 
-            op_queue local_op_queue;
+            node* ready_io_ops = nullptr;
             ::io_uring_cqe* cqe = nullptr;
             std::optional cqe_guard{scope_exit{[&] {
                 ::io_uring_cqe_seen(&uring_, cqe);
@@ -118,12 +117,13 @@ namespace coio {
                     auto op = static_cast<uring_node*>(user_data);
                     COIO_TSAN_ACQUIRE(op);
                     op->complete(cqe->res);
-                    local_op_queue.unsynchronized_enqueue(*op);
+                    op->next_ = std::exchange(ready_io_ops, op);
                 }
             }
             cqe_guard.reset();
 
-            timer_queue_.take_ready_timers(local_op_queue);
+            node* ready_time_ops = nullptr;
+            timer_queue_.take_ready_timers(ready_time_ops, &node::next_);
 
             while (true) {
                 ::io_uring_cqe* peeked_cqes[8]{};
@@ -137,13 +137,15 @@ namespace coio {
                         auto op = static_cast<uring_node*>(user_data);
                         COIO_TSAN_ACQUIRE(op);
                         op->complete(peeked_cqe->res);
-                        local_op_queue.unsynchronized_enqueue(*op);
+                        op->next_ = std::exchange(ready_io_ops, op);
                     }
                 }
             }
 
             lock.unlock();
-            op_queue_.splice(std::move(local_op_queue));
+
+            if (ready_time_ops) op_queue_.enqueue(*ready_time_ops);
+            if (ready_io_ops) op_queue_.enqueue(*ready_io_ops);
 
             if (not infinite) {
                 const auto op = op_queue_.try_dequeue();

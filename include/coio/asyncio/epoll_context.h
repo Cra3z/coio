@@ -8,6 +8,7 @@
 #include "../execution_context.h"
 #include "../detail/async_result.h"
 #include "../detail/io_descriptions.h"
+#include "../detail/manual_lifetime.h"
 #include "../utils/atomutex.h"
 
 namespace coio {
@@ -215,8 +216,8 @@ namespace coio {
 
     private:
         int epoll_fd_;
+        atomutex bolt_;
         detail::reactor_interrupter interrupter_;
-        std::mutex bolt_;
     };
 
     namespace detail {

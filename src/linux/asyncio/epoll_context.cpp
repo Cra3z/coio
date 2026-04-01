@@ -161,8 +161,7 @@ namespace coio {
 
             std::unique_lock lock{bolt_, std::try_to_lock};
             if (not lock) {
-                std::this_thread::yield();
-                continue;
+                return consume(infinite);
             }
 
             if (work_count_ == 0) break;
@@ -181,8 +180,10 @@ namespace coio {
             if (ready_count == -1 and errno == EINTR) continue;
             detail::throw_last_error(ready_count, "epoll_wait");
 
-            op_queue local_op_queue;
-            timer_queue_.take_ready_timers(local_op_queue);
+            node* ready_time_ops = nullptr;
+            node* ready_io_ops = nullptr;
+            timer_queue_.take_ready_timers(ready_time_ops, &node::next_);
+
             for (int i = 0; i < ready_count; ++i) {
                 const auto& [event, data] = ready_events[i];
                 COIO_ASSERT(data.ptr != nullptr);
@@ -203,14 +204,15 @@ namespace coio {
 
                 for (auto op : ops) {
                     if (op == nullptr) continue;
-                    op->next_ = nullptr;
                     op->perform();
-                    local_op_queue.unsynchronized_enqueue(*op);
+                    op->next_ = std::exchange(ready_io_ops, op);
                 }
             }
 
             lock.unlock();
-            op_queue_.splice(std::move(local_op_queue));
+
+            if (ready_time_ops) op_queue_.enqueue(*ready_time_ops);
+            if (ready_io_ops) op_queue_.enqueue(*ready_io_ops);
 
             if (not infinite) {
                 const auto op = op_queue_.try_dequeue();

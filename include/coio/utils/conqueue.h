@@ -147,18 +147,6 @@ namespace coio {
             co_return *result;
         }
 
-        auto pop_all() {
-            return this->pop_all(std::allocator_arg, get_allocator());
-        }
-
-        template<typename OtherAlloc>
-        auto pop_all(std::allocator_arg_t, const OtherAlloc&) -> task<container_type, OtherAlloc> {
-            auto _ = co_await mtx_.lock_guard();
-            container_type result = std::move(container_);
-            container_.clear();
-            co_return result;
-        }
-
     private:
         Container container_;
         const size_type capacity_;

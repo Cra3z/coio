@@ -8,6 +8,7 @@
 #include <mutex>
 #include <limits>
 #include <queue>
+#include <semaphore>
 #include <utility>
 #include <vector>
 #include "detail/execution.h"
@@ -20,10 +21,7 @@ namespace coio {
         class loop_base {
             friend Ctx;
         public:
-            class node {
-                friend Ctx;
-                friend loop_base;
-            public:
+            struct node {
                 node(Ctx& context) noexcept : context_(context) {}
 
                 node(const node&) = delete;
@@ -32,9 +30,8 @@ namespace coio {
 
                 auto operator= (const node&) -> node& = delete;
 
-                virtual auto finish() noexcept -> void = 0;
+                virtual auto finish() -> void = 0;
 
-            protected:
                 COIO_ALWAYS_INLINE auto immediately_post() -> void {
                     COIO_ASSERT(next_ == nullptr);
                     auto& context = context_;
@@ -42,7 +39,6 @@ namespace coio {
                     context.interrupt();
                 }
 
-            protected:
                 Ctx& context_;
                 node* next_{};
             };
@@ -59,10 +55,10 @@ namespace coio {
                 using Base::Base;
 
                 auto start() & noexcept -> void {
-                    ++this->context_.work_count_;
+                    this->context_.work_started();
                     auto stop_token = coio::get_stop_token(execution::get_env(this->rcvr_));
                     if (stop_token.stop_requested()) {
-                        --this->context_.work_count_;
+                        this->context_.work_finished();
                         execution::set_stopped(std::move(this->rcvr_));
                         return;
                     }
@@ -75,8 +71,8 @@ namespace coio {
                     }
                 }
 
-                auto finish() noexcept -> void override {
-                    --this->context_.work_count_;
+                auto finish() -> void override {
+                    this->context_.work_finished();
                     stop_cb_.reset();
                     this->do_finish(coio::get_stop_token(execution::get_env(this->rcvr_)).stop_requested());
                 }
@@ -318,8 +314,7 @@ namespace coio {
             }
 
             COIO_ALWAYS_INLINE auto request_stop() -> void {
-                auto self = static_cast<Ctx*>(this);
-                if (stop_source_.request_stop()) self->interrupt();
+                if (stop_source_.request_stop()) shutdown();
             }
 
             COIO_ALWAYS_INLINE auto work_started() noexcept -> void {
@@ -327,10 +322,7 @@ namespace coio {
             }
 
             COIO_ALWAYS_INLINE auto work_finished() noexcept -> void {
-                if (--work_count_ == 0) {
-                    auto self = static_cast<Ctx*>(this);
-                    self->interrupt();
-                }
+                if (--work_count_ == 0) shutdown();
             }
 
             auto poll_one() -> bool {
@@ -359,6 +351,19 @@ namespace coio {
                     if (count < std::numeric_limits<std::size_t>::max()) ++count;
                 }
                 return count;
+            }
+
+        protected:
+            COIO_ALWAYS_INLINE auto consume(bool infinite) -> bool {
+                node* op = infinite ? op_queue_.dequeue() : op_queue_.try_dequeue();
+                if (op) op->finish();
+                return op;
+            }
+
+            COIO_ALWAYS_INLINE auto shutdown() -> void {
+                auto self = static_cast<Ctx*>(this);
+                self->interrupt();
+                op_queue_.request_stop();
             }
 
         protected:
@@ -419,17 +424,50 @@ namespace coio {
 
     private:
         auto do_one(bool infinite) -> bool {
+            if (work_count_ == 0) return false;
+
             while (work_count_ > 0) {
-                timer_queue_.take_ready_timers(op_queue_);
                 if (const auto op = op_queue_.try_dequeue()) {
                     op->finish();
                     return true;
                 }
-                if (not infinite) break;
+
+                std::unique_lock lock{bolt_, std::try_to_lock};
+                if (not lock) {
+                    return consume(infinite);
+                }
+
+                if (infinite) {
+                    if (const auto earliest = timer_queue_.earliest()) {
+                        static_cast<void>(sema_.try_acquire_until(*earliest));
+                    }
+                    else {
+                        sema_.acquire();
+                    }
+                }
+
+                node* ready_time_ops = nullptr;
+                timer_queue_.take_ready_timers(ready_time_ops, &node::next_);
+
+                lock.unlock();
+
+                if (ready_time_ops) op_queue_.enqueue(*ready_time_ops);
+
+                if (not infinite) {
+                    const auto op = op_queue_.try_dequeue();
+                    if (op) op->finish();
+                    return op != nullptr;
+                }
             }
             return false;
         }
 
-        static auto interrupt() noexcept -> void {}
+        COIO_ALWAYS_INLINE auto interrupt() noexcept -> void {
+            sema_.release();
+        }
+
+    private:
+        atomutex bolt_;
+        std::counting_semaphore<> sema_{0};
     };
 }

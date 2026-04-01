@@ -231,7 +231,7 @@ namespace coio {
 
     private:
         ::HANDLE iocp_;
-        std::mutex bolt_;
+        atomutex bolt_;
     };
 
     namespace detail {

@@ -1,7 +1,7 @@
 #pragma once
 #include <format>
 #include <iostream>
-#include <sstream>
+#include <syncstream>
 #include <thread>
 
 template<typename... Args>
@@ -21,7 +21,7 @@ auto println(std::ostream& out, std::format_string<Args...> fmt, Args&&... args)
 
 template<typename... Args>
 auto println(std::format_string<Args...> fmt, Args&&... args) ->void {
-    ::println(std::cout, fmt, std::forward<Args>(args)...);
+    ::println(std::clog, fmt, std::forward<Args>(args)...);
 }
 
 inline auto println(std::ostream& out) -> void {
@@ -29,11 +29,13 @@ inline auto println(std::ostream& out) -> void {
 }
 
 inline auto println() -> void {
-    ::println(std::cout);
+    ::println(std::clog);
 }
 
 template<typename... Args>
-void debug(std::format_string<Args...> fmt, Args&&... args) {
-    auto thread_name = (std::stringstream{} << std::this_thread::get_id()).str();
-    std::clog << std::format("[thread-{}] {}\n", thread_name, std::format(fmt, std::forward<Args>(args)...));
+auto debug(std::format_string<Args...> fmt, Args&&... args) -> void {
+    std::osyncstream{std::clog} <<
+        "[" << std::chrono::system_clock::now() << "] " <<
+        "[thread-" << std::this_thread::get_id() << "] " <<
+        std::format(fmt, std::forward<Args>(args)...) << std::endl;
 }
