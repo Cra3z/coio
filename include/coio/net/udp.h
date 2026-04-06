@@ -52,6 +52,9 @@ namespace coio {
         [[nodiscard]]
         static auto protocol_id() noexcept -> int;
 
+        [[nodiscard]]
+        friend auto operator== (const udp& lhs, const udp& rhs) noexcept -> bool = default;
+
     private:
         int family_;
     };

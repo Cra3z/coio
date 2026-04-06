@@ -58,6 +58,9 @@ namespace coio {
         [[nodiscard]]
         static auto protocol_id() noexcept -> int;
 
+        [[nodiscard]]
+        friend auto operator== (const tcp& lhs, const tcp& rhs) noexcept -> bool = default;
+
     private:
         int family_;
     };

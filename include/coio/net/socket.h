@@ -585,7 +585,7 @@ namespace coio {
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto read_some(std::span<std::byte> buffer) -> std::size_t {
             const auto bytes_transferred = detail::socket::receive(this->native_handle(), buffer);
-            if (bytes_transferred == 0) [[unlikely]] throw std::system_error{error::eof, "read_some"};
+            if (bytes_transferred == 0 and not buffer.empty()) [[unlikely]] throw std::system_error{error::eof, "read_some"};
             return bytes_transferred;
         }
 

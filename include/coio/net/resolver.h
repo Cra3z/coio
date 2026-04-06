@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include "basic.h"
 #include "../generator.h"
 #include "../core.h"
@@ -59,7 +60,7 @@ namespace coio {
         explicit basic_resolver(Scheduler sched) noexcept : sched_(std::move(sched)) {}
 
         [[nodiscard]]
-        auto get_scheduler() const noexcept -> Scheduler {
+        COIO_ALWAYS_INLINE auto get_scheduler() const noexcept -> Scheduler {
             return sched_;
         }
 
@@ -67,7 +68,7 @@ namespace coio {
          * \brief resolve a query into a sequence of endpoint entries.
          */
         [[nodiscard]]
-        auto resolve(query_t query) const -> generator<result_t> {
+        COIO_ALWAYS_INLINE static auto resolve(query_t query) -> generator<result_t> {
             return detail::resolve_impl(std::move(query), protocol_type::type(), protocol_type::protocol_id());
         }
 
@@ -75,7 +76,7 @@ namespace coio {
          * \brief resolve a query into a sequence of endpoint entries.
          */
         [[nodiscard]]
-        auto resolve(const protocol_type& protocol, query_t query) const -> generator<result_t> {
+        COIO_ALWAYS_INLINE static auto resolve(const protocol_type& protocol, query_t query) -> generator<result_t> {
             return detail::resolve_impl(
                 std::move(query),
                 protocol.family(),
@@ -88,18 +89,20 @@ namespace coio {
          * \brief asynchronously resolve a query into a sequence of endpoint entries.
          */
         [[nodiscard]]
-        auto async_resolve(query_t query) const -> task<generator<result_t>> {
-            co_await execution::schedule(sched_);
-            co_return resolve(std::move(query));
+        COIO_ALWAYS_INLINE auto async_resolve(query_t query) const {
+            return execution::schedule(sched_) | execution::then([=] {
+                return resolve(std::move(query));
+            });
         }
 
         /**
          * \brief asynchronously resolve a query into a sequence of endpoint entries.
          */
         [[nodiscard]]
-        auto async_resolve(protocol_type protocol, query_t query) const -> task<generator<result_t>> {
-            co_await execution::schedule(sched_);
-            co_return resolve(std::move(protocol), std::move(query));
+        COIO_ALWAYS_INLINE auto async_resolve(protocol_type protocol, query_t query) const {
+            return execution::schedule(sched_) | execution::then([=] {
+                 return resolve(std::move(protocol), std::move(query));
+             });
         }
 
     private:

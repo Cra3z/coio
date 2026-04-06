@@ -83,6 +83,12 @@
 #define COIO_ASSUME(expr) __assume(expr)
 #endif
 
+#ifdef __cpp_deleted_function
+#define COIO_DELETE_WITH_REASON(reason) delete(reason)
+#else
+#define COIO_DELETE_WITH_REASON(reason) delete
+#endif
+
 #if COIO_CXX_STANDARD >= COIO_CXX_STD23 and defined(__cpp_lib_start_lifetime_as)
 #define COIO_START_LIFETIME_AS(type, address) void(std::start_lifetime_as<type>(address))
 #define COIO_START_LIFETIME_AS_ARRAY(type, address, size) void(std::start_lifetime_as_array<type>(address, size))

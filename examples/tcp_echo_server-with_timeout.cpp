@@ -19,7 +19,7 @@ using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
 auto with_timeout(coio::execution::sender auto sndr, io_context::scheduler sched, std::chrono::milliseconds ms) {
     return coio::when_any(
         std::move(sndr),
-        sched.schedule_after(ms) | coio::let_value([]{ return coio::just_stopped(); })
+        sched.schedule_after(ms) | coio::let_value([]() noexcept { return coio::just_stopped(); })
     );
 }
 
