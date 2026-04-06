@@ -1,9 +1,9 @@
-#pragma once
+﻿#pragma once
 #include <type_traits>
 #include <concepts>
 #include <coroutine>
 #include <ranges>
-#include "config.h"
+#include <coio/detail/config.h>
 
 namespace coio {
     namespace detail {

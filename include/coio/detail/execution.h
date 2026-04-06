@@ -1,7 +1,7 @@
-// ReSharper disable CppRedundantTypenameKeyword
+﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
-#include "config.h"
-#include "concepts.h"
+#include <coio/detail/config.h>
+#include <coio/detail/concepts.h>
 #ifdef COIO_EXECUTION_USE_NVIDIA
 #if __has_include(<stdexec/execution.hpp>) // https://github.com/NVIDIA/stdexec
 #include <stdexec/execution.hpp>

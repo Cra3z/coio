@@ -1,6 +1,6 @@
-#pragma once
-#include "socket.h"
-#include "resolver.h"
+﻿#pragma once
+#include <coio/net/socket.h>
+#include <coio/net/resolver.h>
 
 namespace coio {
     class tcp {

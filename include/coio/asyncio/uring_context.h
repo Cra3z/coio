@@ -1,14 +1,14 @@
-// ReSharper disable CppRedundantTypenameKeyword
+﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
-#include "../detail/config.h"
+#include <coio/detail/config.h>
 #if not COIO_HAS_IO_URING
 #error "uh, where is <liburing.h>?"
 #endif
 #include <liburing.h>
 #include <netinet/in.h>
-#include "../execution_context.h"
-#include "../detail/async_result.h"
-#include "../detail/io_descriptions.h"
+#include <coio/execution_context.h>
+#include <coio/detail/async_result.h>
+#include <coio/detail/io_descriptions.h>
 
 namespace coio {
     namespace detail {

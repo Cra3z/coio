@@ -1,10 +1,10 @@
-// implement https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p3149r11.html
+﻿// implement https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p3149r11.html
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <mutex>
-#include "atomutex.h"
-#include "stop_token.h"
-#include "utility.h"
+#include <coio/utils/atomutex.h>
+#include <coio/utils/stop_token.h>
+#include <coio/utils/utility.h>
 
 namespace coio {
     class async_scope {

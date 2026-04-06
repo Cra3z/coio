@@ -1,12 +1,12 @@
-// ReSharper disable CppRedundantTypenameKeyword
+﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <algorithm>
 #include <span>
 #include <stop_token>  // IWYU pragma: keep
 #include <string_view>
-#include "coio/detail/async_result.h"
-#include "../core.h"
-#include "../detail/error.h" //  IWYU pragma: keep
+#include <coio/detail/async_result.h>
+#include <coio/core.h>
+#include <coio/detail/error.h> //  IWYU pragma: keep
 
 namespace coio {
     template<typename T>

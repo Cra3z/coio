@@ -1,15 +1,15 @@
-// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
+﻿// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
 #pragma once
-#include "../detail/config.h"
+#include <coio/detail/config.h>
 #if not COIO_HAS_EPOLL
 #error "uh, where is <sys/epoll.h>?"
 #endif
 #include <sys/socket.h>
-#include "../execution_context.h"
-#include "../detail/async_result.h"
-#include "../detail/io_descriptions.h"
-#include "../detail/manual_lifetime.h"
-#include "../utils/atomutex.h"
+#include <coio/execution_context.h>
+#include <coio/detail/async_result.h>
+#include <coio/detail/io_descriptions.h>
+#include <coio/detail/manual_lifetime.h>
+#include <coio/utils/atomutex.h>
 
 namespace coio {
     namespace detail {

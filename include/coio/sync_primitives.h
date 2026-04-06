@@ -1,11 +1,11 @@
-#pragma once
+﻿#pragma once
 #include <atomic>
 #include <bit>
 #include <limits>
 #include <mutex>
 #include <utility>
-#include "detail/execution.h"
-#include "detail/intrusive_stack.h"
+#include <coio/detail/execution.h>
+#include <coio/detail/intrusive_stack.h>
 
 namespace coio {
     template<typename Mutex>

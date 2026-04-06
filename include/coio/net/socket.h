@@ -1,10 +1,10 @@
-// ReSharper disable CppRedundantTypenameKeyword
+﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <span>
-#include "../core.h"
-#include "../detail/async_result.h"
-#include "../detail/error.h"
-#include "../detail/io_descriptions.h"
+#include <coio/core.h>
+#include <coio/detail/async_result.h>
+#include <coio/detail/error.h>
+#include <coio/detail/io_descriptions.h>
 
 struct linger;
 

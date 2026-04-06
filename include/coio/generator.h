@@ -1,11 +1,11 @@
-// ReSharper disable CppRedundantTypenameKeyword
+﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <cassert>
 #include <ranges>
 #include <iterator>
 #include <variant>
-#include "detail/concepts.h"
-#include "detail/co_memory.h"
+#include <coio/detail/concepts.h>
+#include <coio/detail/co_memory.h>
 
 namespace coio {
     template<std::ranges::range Range, typename Alloc = std::allocator<std::byte>>

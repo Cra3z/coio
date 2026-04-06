@@ -1,10 +1,10 @@
-// ReSharper disable CppRedundantTypenameKeyword
+﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <memory>
 #include <memory_resource>
 #include <cstddef>
-#include "utility.h"
-#include "../detail/concepts.h"
+#include <coio/utils/utility.h>
+#include <coio/detail/concepts.h>
 
 namespace coio {
     class allocator_resource : public std::pmr::memory_resource {

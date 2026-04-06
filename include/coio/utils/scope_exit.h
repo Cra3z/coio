@@ -1,7 +1,7 @@
-#pragma once
+﻿#pragma once
 #include <utility>
-#include "../detail/config.h"
-#include "../detail/concepts.h"
+#include <coio/detail/config.h>
+#include <coio/detail/concepts.h>
 
 namespace coio {
 

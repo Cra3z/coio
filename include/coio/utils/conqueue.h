@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <atomic>
 #include <concepts>
 #include <deque>
@@ -8,9 +8,9 @@
 #include <shared_mutex>
 #include <type_traits>
 #include <vector>
-#include "../task.h"
-#include "../sync_primitives.h"
-#include "../utils/inplace_vector.h"
+#include <coio/task.h>
+#include <coio/sync_primitives.h>
+#include <coio/utils/inplace_vector.h>
 
 namespace coio {
     namespace detail {

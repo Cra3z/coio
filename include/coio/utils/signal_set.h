@@ -1,9 +1,9 @@
-#pragma once
+﻿#pragma once
 #include <csignal> // IWYU pragma: keep
 #include <set>
 #include <utility>
-#include "../detail/execution.h"
-#include "../detail/intrusive_stack.h"
+#include <coio/detail/execution.h>
+#include <coio/detail/intrusive_stack.h>
 
 namespace coio {
     namespace detail {

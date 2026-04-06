@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <charconv>
 #include <concepts>
 #include <cstddef>
@@ -11,8 +11,8 @@
 #include <utility>
 #include <variant>
 #include <vector>
-#include "../detail/config.h"
-#include "type_traits.h"
+#include <coio/detail/config.h>
+#include <coio/utils/type_traits.h>
 
 namespace coio::json {
     class value;

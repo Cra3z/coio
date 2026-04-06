@@ -1,8 +1,8 @@
-#pragma once
+﻿#pragma once
 #include <string>
-#include "basic.h"
-#include "../generator.h"
-#include "../core.h"
+#include <coio/net/basic.h>
+#include <coio/generator.h>
+#include <coio/core.h>
 
 namespace coio {
     namespace detail {

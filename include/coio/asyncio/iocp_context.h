@@ -1,16 +1,16 @@
-// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
+﻿// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
-#include "../detail/config.h"
+#include <coio/detail/config.h>
 #if not COIO_HAS_IOCP
 #error "IOCP is not available"
 #endif
 
 #include <BaseTsd.h>
 #include <WinSock2.h>
-#include "../execution_context.h"
-#include "../detail/async_result.h"
-#include "../detail/io_descriptions.h"
+#include <coio/execution_context.h>
+#include <coio/detail/async_result.h>
+#include <coio/detail/io_descriptions.h>
 
 namespace coio {
     namespace detail {

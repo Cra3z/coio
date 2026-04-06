@@ -1,10 +1,10 @@
-#pragma once
+﻿#pragma once
 #include <concepts>
 #include <functional>
 #include <tuple>
 #include <type_traits>
 #include <utility>
-#include "config.h"
+#include <coio/detail/config.h>
 
 namespace coio::detail {
     template<typename T, typename... Args>

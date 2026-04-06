@@ -1,4 +1,4 @@
-// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
+﻿// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
 // ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <atomic>
@@ -11,9 +11,9 @@
 #include <semaphore>
 #include <utility>
 #include <vector>
-#include "detail/execution.h"
-#include "detail/op_queue.h"
-#include "utils/stop_token.h"
+#include <coio/detail/execution.h>
+#include <coio/detail/op_queue.h>
+#include <coio/utils/stop_token.h>
 
 namespace coio {
     namespace detail {

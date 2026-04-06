@@ -1,6 +1,6 @@
-#pragma once
+﻿#pragma once
 #include <atomic>
-#include "concepts.h"
+#include <coio/detail/concepts.h>
 
 namespace coio::detail {
     enum class stack_status : unsigned char {

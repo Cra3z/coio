@@ -1,10 +1,10 @@
-// ReSharper disable CppRedundantTypenameKeyword
+﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
-#include "task.h" // IWYU pragma: keep
-#include "execution_context.h"
-#include "detail/execution.h"
-#include "detail/intrusive_stack.h"
-#include "utils/async_scope.h" // IWYU pragma: keep
+#include <coio/task.h> // IWYU pragma: keep
+#include <coio/execution_context.h>
+#include <coio/detail/execution.h>
+#include <coio/detail/intrusive_stack.h>
+#include <coio/utils/async_scope.h> // IWYU pragma: keep
 
 namespace coio {
     using execution::scheduler;

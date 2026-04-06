@@ -1,6 +1,6 @@
-#pragma once
+﻿#pragma once
 #include <atomic>
-#include "../detail/config.h"
+#include <coio/detail/config.h>
 
 namespace coio {
     class atomutex {

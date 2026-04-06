@@ -1,7 +1,7 @@
-#pragma once
+﻿#pragma once
 #include <utility>
-#include "../detail/config.h"
-#include "type_traits.h" // IWYU pragma: keep
+#include <coio/detail/config.h>
+#include <coio/utils/type_traits.h> // IWYU pragma: keep
 
 namespace coio {
 #ifdef __cpp_lib_unreachable

@@ -1,9 +1,9 @@
-#pragma once
+﻿#pragma once
 #include <concepts>
 #include <functional>
 #include <memory>
 #include <type_traits>
-#include "config.h"
+#include <coio/detail/config.h>
 
 namespace coio::detail {
     template<typename T>

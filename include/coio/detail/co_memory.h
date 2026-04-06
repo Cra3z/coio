@@ -1,8 +1,8 @@
-#pragma once
+﻿#pragma once
 #include <cstring>
 #include <memory>
 #include <utility>
-#include "config.h"
+#include <coio/detail/config.h>
 
 namespace coio::detail {
     struct default_align_t {

@@ -1,15 +1,15 @@
-#pragma once
+﻿#pragma once
 #include <coroutine>
 #include <tuple>
 #include <utility>
 #include <variant>
-#include "detail/config.h"
-#include "detail/concepts.h"
-#include "detail/co_memory.h"
-#include "detail/execution.h"
-#include "utils/allocator_resource.h"
-#include "utils/stop_token.h"
-#include "utils/utility.h"
+#include <coio/detail/config.h>
+#include <coio/detail/concepts.h>
+#include <coio/detail/co_memory.h>
+#include <coio/detail/execution.h>
+#include <coio/utils/allocator_resource.h>
+#include <coio/utils/stop_token.h>
+#include <coio/utils/utility.h>
 
 namespace coio {
     namespace detail {

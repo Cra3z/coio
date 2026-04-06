@@ -1,4 +1,4 @@
-// ReSharper disable CppRedundantTypenameKeyword
+﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <concepts>
 #include <mutex>
@@ -6,11 +6,11 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
-#include "atomutex.h"
-#include "scope_exit.h"
-#include "type_traits.h"
-#include "../detail/elide.h"
-#include "../detail/execution.h"
+#include <coio/utils/atomutex.h>
+#include <coio/utils/scope_exit.h>
+#include <coio/utils/type_traits.h>
+#include <coio/detail/elide.h>
+#include <coio/detail/execution.h>
 
 namespace coio {
     namespace detail {

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -6,7 +6,7 @@
 #include <span>
 #include <stdexcept>
 #include <utility>
-#include "coio/detail/config.h"
+#include <coio/detail/config.h>
 
 namespace coio {
     /// A dynamic buffer similar to boost::beast::flat_buffer

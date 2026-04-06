@@ -1,11 +1,11 @@
-#pragma once
+﻿#pragma once
 #include <atomic>
 #include <compare>
 #include <utility>
 #include <type_traits>
 #include <typeindex>
 #include <concepts>
-#include "../detail/config.h"
+#include <coio/detail/config.h>
 
 namespace coio {
 

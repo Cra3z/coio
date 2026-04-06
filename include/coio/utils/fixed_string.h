@@ -1,12 +1,12 @@
-#pragma once
+﻿#pragma once
 #include <ostream>
 #include <concepts>
 #include <cstring>
 #include <iterator>
 #include <string_view>
 #include <typeindex>
-#include "../detail/config.h"
-#include "format.h"
+#include <coio/detail/config.h>
+#include <coio/utils/format.h>
 
 namespace coio {
     template<typename CharType, std::size_t N>

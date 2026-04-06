@@ -1,11 +1,11 @@
-#pragma once
+﻿#pragma once
 #include <filesystem>
 #include <utility>
-#include "../core.h"
-#include "../detail/async_result.h"
-#include "../detail/error.h"
-#include "../detail/io_descriptions.h"
-#include "../utils/zstring_view.h"
+#include <coio/core.h>
+#include <coio/detail/async_result.h>
+#include <coio/detail/error.h>
+#include <coio/detail/io_descriptions.h>
+#include <coio/utils/zstring_view.h>
 
 namespace coio {
     namespace detail {

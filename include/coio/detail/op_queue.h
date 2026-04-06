@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <algorithm>
 #include <concepts>
 #include <functional>
@@ -8,8 +8,8 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
-#include "config.h"
-#include "../utils/atomutex.h"
+#include <coio/detail/config.h>
+#include <coio/utils/atomutex.h>
 
 namespace coio::detail {
     class queue_event {
