@@ -53,12 +53,19 @@ namespace coio {
                 }
 
                 auto operator= (io_object other) noexcept -> io_object& {
-                    std::ranges::swap(ctx_, other.ctx_);
-                    std::ranges::swap(fd_, other.fd_);
+                    swap(other);
                     return *this;
                 }
 
-            public:
+                auto swap(io_object& other) noexcept -> void {
+                    std::ranges::swap(ctx_, other.ctx_);
+                    std::ranges::swap(fd_, other.fd_);
+                }
+
+                friend auto swap(io_object& lhs, io_object& rhs) noexcept -> void {
+                    lhs.swap(rhs);
+                }
+
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto get_io_scheduler() const noexcept -> scheduler {
                     COIO_ASSERT(ctx_ != nullptr);

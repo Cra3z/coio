@@ -117,12 +117,14 @@ namespace coio::detail {
 
         auto operator= (const op_queue&) -> op_queue& = delete;
 
-        COIO_ALWAYS_INLINE auto enqueue(Op& op) -> void {
+        COIO_ALWAYS_INLINE auto enqueue(Op& op) -> std::size_t {
+            std::size_t count = 0;
             {
                 std::scoped_lock _{op_queue_mtx_};
-                this->do_enqueue(op);
+                count = this->do_enqueue(op);
             }
-            event_.wakeup();
+            event_.wakeup(static_cast<std::ptrdiff_t>(count));
+            return count;
         }
 
         template<typename Ops> requires
@@ -159,11 +161,17 @@ namespace coio::detail {
         }
 
     private:
-        COIO_ALWAYS_INLINE auto do_enqueue(Op& op) -> void {
+        COIO_ALWAYS_INLINE auto do_enqueue(Op& op) -> std::size_t {
             if (auto old_tail = std::exchange(op_queue_tail_, &op)) {
                 std::invoke(NextAccessor, old_tail) = &op;
             }
+            std::size_t count = 1;
+            while (auto tail_next = std::invoke(NextAccessor, op_queue_tail_)) {
+                op_queue_tail_ = tail_next;
+                ++count;
+            }
             if (op_queue_head_ == nullptr) op_queue_head_ = &op;
+            return count;
         }
 
         template<typename Ops> requires

@@ -76,10 +76,18 @@ namespace coio {
                 ~io_object();
 
                 auto operator= (io_object other) noexcept -> io_object& {
+                    swap(other);
+                    return *this;
+                }
+
+                auto swap(io_object& other) noexcept -> void {
                     std::ranges::swap(ctx_, other.ctx_);
                     std::ranges::swap(handle_, other.handle_);
                     std::ranges::swap(offset_, other.offset_);
-                    return *this;
+                }
+
+                friend auto swap(io_object& lhs, io_object& rhs) noexcept -> void {
+                    lhs.swap(rhs);
                 }
 
                 [[nodiscard]]

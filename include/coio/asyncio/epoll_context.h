@@ -8,7 +8,6 @@
 #include <coio/execution_context.h>
 #include <coio/detail/async_result.h>
 #include <coio/detail/io_descriptions.h>
-#include <coio/detail/manual_lifetime.h>
 #include <coio/utils/atomutex.h>
 
 namespace coio {
@@ -48,7 +47,7 @@ namespace coio {
     private:
         class epoll_node;
 
-        struct epoll_data {
+        struct per_fd_data {
             atomutex fd_lock;
             std::uint32_t events{};
             epoll_node* in_op{nullptr};
@@ -58,7 +57,7 @@ namespace coio {
         class epoll_node : public node {
             friend epoll_context;
         public:
-            epoll_node(epoll_context& context, int fd, epoll_data* data) noexcept : node(context), fd(fd), data(data) {}
+            epoll_node(epoll_context& context, int fd, per_fd_data* data) noexcept : node(context), fd(fd), data(data) {}
 
         protected:
             [[nodiscard]]
@@ -69,7 +68,7 @@ namespace coio {
 
         protected:
             int fd;
-            epoll_data* data;
+            per_fd_data* data;
         };
 
     public:
@@ -93,13 +92,20 @@ namespace coio {
                 ~io_object();
 
                 auto operator= (io_object other) noexcept -> io_object& {
-                    std::ranges::swap(ctx_, other.ctx_);
-                    std::ranges::swap(fd_, other.fd_);
-                    std::ranges::swap(data_, other.data_);
+                    swap(other);
                     return *this;
                 }
 
-            public:
+                auto swap(io_object& other) noexcept -> void {
+                    std::ranges::swap(ctx_, other.ctx_);
+                    std::ranges::swap(fd_, other.fd_);
+                    std::ranges::swap(data_, other.data_);
+                }
+
+                friend auto swap(io_object& lhs, io_object& rhs) noexcept -> void {
+                    lhs.swap(rhs);
+                }
+
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto get_io_scheduler() const noexcept -> scheduler {
                     return scheduler{ctx_.get()};
@@ -117,7 +123,7 @@ namespace coio {
             private:
                 std::reference_wrapper<epoll_context> ctx_;
                 int fd_ = -1;
-                epoll_data* data_;
+                per_fd_data* data_;
             };
 
             template<std::move_constructible Sexpr>
@@ -169,7 +175,7 @@ namespace coio {
 
                 int fd;
                 epoll_context* context;
-                epoll_data* data;
+                per_fd_data* data;
                 Sexpr sexpr;
             };
 
@@ -208,9 +214,9 @@ namespace coio {
         }
 
         [[nodiscard]]
-        auto new_epoll_data() -> epoll_data*;
+        auto new_epoll_data() -> per_fd_data*;
 
-        auto reclaim_epoll_data(epoll_data* data) noexcept -> void;
+        auto reclaim_epoll_data(per_fd_data* data) noexcept -> void;
 
         auto cancel_op(int event, epoll_node* op) -> void;
 
@@ -241,7 +247,7 @@ namespace coio {
             using base1 = typename epoll_sexpr_wrapper<Sexpr>::type;
 
         public:
-            epoll_state_base_for(int fd, epoll_context& context, epoll_context::epoll_data* data, Sexpr sexpr) noexcept :
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, Sexpr sexpr) noexcept :
                 base1(std::move(sexpr)),
                 epoll_node(context, fd, data) {}
 

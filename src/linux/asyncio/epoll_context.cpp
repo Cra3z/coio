@@ -192,7 +192,7 @@ namespace coio {
                     continue;
                 }
 
-                const auto fd_data = static_cast<epoll_data*>(data.ptr);
+                const auto fd_data = static_cast<per_fd_data*>(data.ptr);
                 const auto ops = [&]{
                     std::scoped_lock _{fd_data->fd_lock};
                     return std::array{
@@ -223,11 +223,11 @@ namespace coio {
         return false;
     }
 
-    auto epoll_context::new_epoll_data() -> epoll_data* {
-        return allocator_.new_object<epoll_data>();
+    auto epoll_context::new_epoll_data() -> per_fd_data* {
+        return allocator_.new_object<per_fd_data>();
     }
 
-    auto epoll_context::reclaim_epoll_data(epoll_data* data) noexcept -> void {
+    auto epoll_context::reclaim_epoll_data(per_fd_data* data) noexcept -> void {
         if (data == nullptr) return;
         return allocator_.delete_object(data);
     }
@@ -254,7 +254,7 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
             }
-            if (buffer.empty()) {
+            if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
                 immediately_post();
                 return true;

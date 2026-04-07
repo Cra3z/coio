@@ -172,9 +172,10 @@ namespace coio {
                 close();
             }
 
-            auto operator= (const file_base&) -> file_base& = delete;
-
-            auto operator= (file_base&& other) -> file_base& = default;
+            auto operator= (file_base other) noexcept -> file_base& {
+                std::ranges::swap(impl_, other.impl_);
+                return *this;
+            }
 
             /**
              * \brief Get the io scheduler associated with the file.

@@ -285,9 +285,10 @@ namespace coio {
             close();
         }
 
-        auto operator= (const basic_socket&) -> basic_socket& = delete;
-
-        auto operator= (basic_socket&& other) -> basic_socket& = default;
+        auto operator= (basic_socket other) noexcept -> basic_socket& {
+            std::ranges::swap(impl_, other.impl_);
+            return *this;
+        }
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto get_io_scheduler() const noexcept -> scheduler_type {
