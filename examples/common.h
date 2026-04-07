@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <format>
 #include <iostream>
 #include <syncstream>

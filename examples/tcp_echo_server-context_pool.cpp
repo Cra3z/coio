@@ -69,6 +69,7 @@ private:
 
 auto handle_connection(tcp_socket socket) -> coio::task<> {
     auto remote_endpoint = socket.remote_endpoint();
+    ::debug("new connection from [{}]", remote_endpoint);
     try {
         char buffer[1024];
         while (true) {

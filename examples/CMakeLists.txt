@@ -18,3 +18,5 @@ foreach(EXAMPLE_FILE ${EXAMPLE_FILES})
 endforeach()
 
 add_subdirectory(http_server)
+
+add_subdirectory(json_rpc)
