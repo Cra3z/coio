@@ -140,7 +140,7 @@ namespace coio::detail::socket {
         return IPV6_V6ONLY;
     }
 
-    auto no_dely::name() noexcept -> int {
+    auto no_delay::name() noexcept -> int {
         return TCP_NODELAY;
     }
 

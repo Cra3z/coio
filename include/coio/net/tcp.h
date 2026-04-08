@@ -15,7 +15,7 @@ namespace coio {
         using resolver = basic_resolver<tcp, Scheduler>;
 
         // tcp socket options:
-        using no_delay = detail::socket::no_dely;
+        using no_delay = detail::socket::no_delay;
 
     private:
         explicit tcp(int family) noexcept : family_(family) {}

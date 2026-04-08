@@ -198,7 +198,7 @@ namespace coio {
         };
 
         // tcp options
-        struct no_dely : sock_option<bool, ipproto_tcp_v> {
+        struct no_delay : sock_option<bool, ipproto_tcp_v> {
             using sock_option::sock_option;
 
             [[nodiscard]]

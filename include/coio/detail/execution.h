@@ -68,16 +68,15 @@ namespace coio {
     namespace execution {
         using detail::execution_impl::get_domain_t;
         using detail::execution_impl::get_scheduler_t;
-        using detail::execution_impl::get_delegatee_scheduler_t;
+        using detail::execution_impl::get_delegation_scheduler_t;
         using detail::execution_impl::get_forward_progress_guarantee_t;
         using detail::execution_impl::get_completion_scheduler_t;
         using detail::execution_impl::get_env_t;
-        using detail::execution_impl::get_completion_signatures_t;
         using detail::execution_impl::get_await_completion_adaptor_t;
 
         using detail::execution_impl::get_domain;
         using detail::execution_impl::get_scheduler;
-        using detail::execution_impl::get_delegatee_scheduler;
+        using detail::execution_impl::get_delegation_scheduler;
         using detail::execution_impl::get_forward_progress_guarantee;
         using detail::execution_impl::get_completion_scheduler;
         using detail::execution_impl::get_env;
@@ -87,9 +86,9 @@ namespace coio {
         using detail::execution_impl::sender_t;
         using detail::execution_impl::sender;
         using detail::execution_impl::sender_in;
-        using detail::execution_impl::sender_to;
-        using detail::execution_impl::dependent_sender;
-        using detail::execution_impl::enable_sender;
+        // using detail::execution_impl::sender_to; // TODO: implement for bemanproject/execution
+        // using detail::execution_impl::dependent_sender;
+        // using detail::execution_impl::enable_sender;
         using detail::execution_impl::sends_stopped;
 
         using detail::execution_impl::receiver_t;
@@ -129,8 +128,6 @@ namespace coio {
         using detail::execution_impl::read_env;
 
         using detail::execution_impl::default_domain;
-        using detail::execution_impl::apply_sender_t;
-        using detail::execution_impl::transform_sender_t;
         using detail::execution_impl::apply_sender;
         using detail::execution_impl::transform_sender;
 
@@ -181,11 +178,11 @@ namespace coio {
         using detail::execution_impl::on;
 
         using detail::execution_impl::bulk_t;
-        using detail::execution_impl::bulk_chunked_t;
-        using detail::execution_impl::bulk_unchunked_t;
+        // using detail::execution_impl::bulk_chunked_t;  // TODO: implement for bemanproject/execution
+        // using detail::execution_impl::bulk_unchunked_t;
         using detail::execution_impl::bulk;
-        using detail::execution_impl::bulk_chunked;
-        using detail::execution_impl::bulk_unchunked;
+        // using detail::execution_impl::bulk_chunked;
+        // using detail::execution_impl::bulk_unchunked;
 
         using detail::execution_impl::with_awaitable_senders;
         using detail::execution_impl::as_awaitable_t;
