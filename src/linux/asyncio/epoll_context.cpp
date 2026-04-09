@@ -2,6 +2,7 @@
 #include <coio/detail/config.h>
 #if COIO_HAS_EPOLL
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <coio/asyncio/epoll_context.h>
@@ -14,6 +15,12 @@ namespace coio {
         }
 
         reactor_interrupter::reactor_interrupter() {
+            reader_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+            if (reader_ != -1) [[likely]] {
+                writer_ = reader_;
+                return;
+            }
+            // fallback: use pipe
             int pipedes[2];
             detail::throw_last_error(::pipe2(pipedes, O_CLOEXEC | O_NONBLOCK));
             reader_ = pipedes[0];
@@ -22,15 +29,29 @@ namespace coio {
 
         reactor_interrupter::~reactor_interrupter() {
             no_errno_here(::close(reader_));
-            no_errno_here(::close(writer_));
+            if (writer_ != reader_) [[unlikely]] {
+                no_errno_here(::close(writer_));
+            }
         }
 
         auto reactor_interrupter::interrupt() -> void {
-            std::byte byte{};
-            void(::write(writer_, &byte, 1));
+            static constexpr std::uint64_t data = 1;
+            void(::write(writer_, &data, sizeof(data)));
         }
 
         auto reactor_interrupter::reset() -> bool {
+            if (writer_ == reader_) [[likely]] {
+                while (true) {
+                    std::uint64_t data;
+                    const auto n = ::read(reader_, &data, sizeof(data));
+                    if (n < 0) [[unlikely]] {
+                        if (errno == EINTR) continue;
+                        return false;
+                    }
+                    return true;
+                }
+            }
+
             std::byte buffer[1024];
             while (true) {
                 ssize_t bytes_read = ::read(reader_, buffer, sizeof(buffer));

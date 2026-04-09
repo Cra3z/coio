@@ -1,7 +1,8 @@
 ﻿#pragma once
-#include <algorithm>
+#include <chrono>
 #include <concepts>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <ranges>
@@ -200,15 +201,22 @@ namespace coio::detail {
     };
 
 
-    template<typename Op, std::regular_invocable<const Op&> auto Proj, typename Allocator = std::allocator<void>>
+    template<typename Op, std::regular_invocable<const Op&> auto Proj, auto HeapIndexAccessor, typename Allocator = std::allocator<void>>
         requires std::three_way_comparable_with<
             std::chrono::steady_clock::time_point, std::invoke_result_t<decltype(Proj), const Op&>
-        >
+        > and std::is_nothrow_invocable_r_v<std::size_t&, decltype(HeapIndexAccessor), Op&>
     class timer_queue {
     private:
-        using value_type = std::reference_wrapper<Op>;
         using reference = Op&;
-        using allocator_type = std::allocator_traits<Allocator>::template rebind_alloc<value_type>;
+
+        struct item {
+            std::chrono::steady_clock::time_point deadline;
+            Op* op;
+        };
+
+        using allocator_type = std::allocator_traits<Allocator>::template rebind_alloc<item>;
+
+        static constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 
     public:
         timer_queue() = default;
@@ -224,47 +232,90 @@ namespace coio::detail {
         COIO_ALWAYS_INLINE auto add(reference op) -> bool {
             const auto deadline = std::invoke(Proj, op);
             std::scoped_lock _{mtx_};
-            underlying_.emplace_back(op);
-            std::ranges::push_heap(underlying_, std::ranges::greater{}, Proj);
-            return deadline <= std::invoke(Proj, underlying_.front());
+            const auto index = underlying_.size();
+            underlying_.emplace_back(deadline, &op);
+            std::invoke(HeapIndexAccessor, op) = index;
+            up_node(index);
+            return std::invoke(HeapIndexAccessor, op) == 0;
         }
 
         COIO_ALWAYS_INLINE auto remove(reference op) -> bool {
             std::scoped_lock _{mtx_};
-            const bool erased = std::erase_if(underlying_, [&op](reference i) noexcept { return &i == &op; });
-            std::ranges::make_heap(underlying_, std::ranges::greater{}, Proj);
-            return erased;
+            const auto index = std::invoke(HeapIndexAccessor, op);
+            if (index >= underlying_.size()) return false;
+            do_remove(index);
+            return true;
         }
 
         template<typename BaseOp, typename Next> requires std::derived_from<Op, BaseOp>
         COIO_ALWAYS_INLINE auto take_ready_timers(BaseOp*& head, const Next& next) -> void {
             head = nullptr;
             std::scoped_lock _{mtx_};
-            if (underlying_.empty()) {
-                return;
+            while (not underlying_.empty() and std::chrono::steady_clock::now() >= underlying_.front().deadline) {
+                Op* op = underlying_.front().op;
+                do_remove(0);
+                std::invoke(next, *op) = std::exchange(head, op);
             }
-            auto last = underlying_.end();
-            while (underlying_.begin() != last) {
-                if (std::invoke(Proj, underlying_.front()) > std::chrono::steady_clock::now()) break;
-                std::ranges::pop_heap(underlying_.begin(), last, std::ranges::greater{}, Proj);
-                --last;
-            }
-
-            for (reference op : std::ranges::subrange{last, underlying_.end()}) {
-                std::invoke(next, op) = std::exchange(head, &op);
-            }
-            underlying_.erase(last, underlying_.end());
         }
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto earliest() noexcept -> std::optional<std::chrono::steady_clock::time_point> {
             std::scoped_lock _{mtx_};
             if (underlying_.empty()) return {};
-            return std::invoke(Proj, underlying_.front());
+            return underlying_.front().deadline;
         }
 
     private:
-        std::vector<value_type, allocator_type> underlying_;
+        COIO_ALWAYS_INLINE auto up_node(std::size_t index) noexcept -> void {
+            while (index > 0) {
+                const auto parent = (index - 1) / 2;
+                if (underlying_[index].deadline >= underlying_[parent].deadline) break;
+                swap_node(index, parent);
+                index = parent;
+            }
+        }
+
+        COIO_ALWAYS_INLINE auto down_node(std::size_t index) noexcept -> void {
+            auto left_child = index * 2 + 1;
+            while (left_child < underlying_.size()) {
+                auto next = left_child;
+                const auto right_child = left_child + 1;
+                if (right_child < underlying_.size() and underlying_[right_child].deadline < underlying_[left_child].deadline) {
+                    next = right_child;
+                }
+                if (underlying_[index].deadline < underlying_[next].deadline) break;
+                swap_node(index, next);
+                index = next;
+                left_child = index * 2 + 1;
+            }
+        }
+
+        COIO_ALWAYS_INLINE auto swap_node(std::size_t i, std::size_t j) noexcept -> void {
+            std::swap(underlying_[i], underlying_[j]);
+            std::invoke(HeapIndexAccessor, *underlying_[i].op) = i;
+            std::invoke(HeapIndexAccessor, *underlying_[j].op) = j;
+        }
+
+        COIO_ALWAYS_INLINE auto do_remove(std::size_t index) noexcept -> void {
+            if (index == underlying_.size() - 1) {
+                std::invoke(HeapIndexAccessor, *underlying_[index].op) = npos;
+                underlying_.pop_back();
+            }
+            else {
+                swap_node(index, underlying_.size() - 1);
+                std::invoke(HeapIndexAccessor, *underlying_.back().op) = npos;
+                underlying_.pop_back();
+                if (index > 0 and underlying_[index].deadline < underlying_[(index - 1) / 2].deadline) {
+                    up_node(index);
+                }
+                else {
+                    down_node(index);
+                }
+            }
+        }
+
+    private:
+        std::vector<item, allocator_type> underlying_;
         atomutex mtx_;
     };
 }

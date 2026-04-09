@@ -164,8 +164,8 @@ namespace coio {
 
                 struct timer_node : node {
                     timer_node(Ctx& context, time_point_type deadline) noexcept: node(context), deadline(deadline) {}
-
                     time_point_type deadline;
+                    std::size_t heap_index = static_cast<std::size_t>(-1);
                 };
 
                 template<typename Rcvr>
@@ -286,9 +286,12 @@ namespace coio {
                 Ctx* ctx_;
             };
 
-            using timer_queue = detail::timer_queue<typename sleep_sender::timer_node, [](const typename sleep_sender::timer_node& op) noexcept {
-                return op.deadline;
-            }, std::pmr::polymorphic_allocator<>>;
+            using timer_queue = detail::timer_queue<
+                typename sleep_sender::timer_node,
+                &sleep_sender::timer_node::deadline,
+                &sleep_sender::timer_node::heap_index,
+                std::pmr::polymorphic_allocator<>
+            >;
 
             using op_queue = detail::op_queue<node, &node::next_>;
 

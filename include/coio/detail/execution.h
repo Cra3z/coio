@@ -86,9 +86,7 @@ namespace coio {
         using detail::execution_impl::sender_t;
         using detail::execution_impl::sender;
         using detail::execution_impl::sender_in;
-        // using detail::execution_impl::sender_to; // TODO: implement for bemanproject/execution
-        // using detail::execution_impl::dependent_sender;
-        // using detail::execution_impl::enable_sender;
+        using detail::execution_impl::sender_to;
         using detail::execution_impl::sends_stopped;
 
         using detail::execution_impl::receiver_t;
@@ -176,13 +174,6 @@ namespace coio {
         using detail::execution_impl::continues_on;
         using detail::execution_impl::starts_on;
         using detail::execution_impl::on;
-
-        using detail::execution_impl::bulk_t;
-        // using detail::execution_impl::bulk_chunked_t;  // TODO: implement for bemanproject/execution
-        // using detail::execution_impl::bulk_unchunked_t;
-        using detail::execution_impl::bulk;
-        // using detail::execution_impl::bulk_chunked;
-        // using detail::execution_impl::bulk_unchunked;
 
         using detail::execution_impl::with_awaitable_senders;
         using detail::execution_impl::as_awaitable_t;
