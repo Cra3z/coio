@@ -1,5 +1,24 @@
 @PACKAGE_INIT@
 
+include(CMakeFindDependencyMacro)
+
 include("${CMAKE_CURRENT_LIST_DIR}/coio-targets.cmake")
 
 check_required_components(coio)
+
+set(_coio_senders_backend "@COIO_SENDERS_BACKEND@")
+
+if(_coio_senders_backend STREQUAL "NVIDIA")
+    find_dependency(stdexec REQUIRED)
+    set_property(TARGET coio::coio APPEND PROPERTY INTERFACE_LINK_LIBRARIES STDEXEC::stdexec)
+elseif(_coio_senders_backend STREQUAL "BEMAN")
+    find_dependency(beman.execution REQUIRED)
+    set_property(TARGET coio::coio APPEND PROPERTY INTERFACE_LINK_LIBRARIES beman::execution)
+endif()
+
+if(@Liburing_FOUND@)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+    find_dependency(Liburing)
+endif()
+
+unset(_coio_senders_backend)

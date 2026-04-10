@@ -16,6 +16,10 @@ set(COIO_SENDERS_BACKEND "NVIDIA" CACHE STRING "the backend to use for std::exec
     CXX26 - use the standard library implementation"
 )
 
+include("${PROJECT_SOURCE_DIR}/cmake/CPM.cmake")
+
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+
 file(GLOB_RECURSE COIO_PUBLIC_HEADERS CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/*.h")
 add_library(
     ${PROJECT_NAME}
@@ -88,11 +92,59 @@ target_include_directories(
     $<INSTALL_INTERFACE:${PROJECT_NAME}/include>
 )
 
+find_package(Threads REQUIRED)
+
+target_link_libraries(
+    ${PROJECT_NAME}
+    PUBLIC
+    Threads::Threads
+)
+
+if (COIO_SENDERS_BACKEND STREQUAL "NVIDIA")
+    CPMFindPackage(
+        NAME stdexec
+        GITHUB_REPOSITORY NVIDIA/stdexec
+        GIT_TAG main
+        EXCLUDE_FROM_ALL YES
+        SYSTEM YES
+        OPTIONS
+        "STDEXEC_BUILD_EXAMPLES OFF"
+        "STDEXEC_BUILD_TESTS OFF"
+    )
+    target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_LOCAL_INTERFACE:STDEXEC::stdexec>)
+elseif (COIO_SENDERS_BACKEND STREQUAL "BEMAN")
+    CPMFindPackage(
+        NAME beman.execution
+        GITHUB_REPOSITORY bemanproject/execution
+        GIT_TAG main
+        EXCLUDE_FROM_ALL YES
+        SYSTEM YES
+        OPTIONS
+        "BEMAN_EXECUTION_ENABLE_TESTING OFF"
+        "BEMAN_EXECUTION_BUILD_EXAMPLES OFF"
+    )
+    target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_LOCAL_INTERFACE:beman::execution>)
+endif()
+
+if (LINUX)
+    find_package(Liburing QUIET)
+    if (Liburing_FOUND)
+        message(STATUS "found liburing: ${Liburing_LIBRARY}")
+        target_link_libraries(${PROJECT_NAME} PUBLIC Liburing::uring)
+        install(
+            FILES ${PROJECT_SOURCE_DIR}/cmake/FindLiburing.cmake
+            DESTINATION ${PROJECT_NAME}/lib/cmake/${PROJECT_NAME}
+        )
+    else()
+        message(STATUS "liburing not found, io_uring support will be unavailable")
+    endif()
+endif()
+
 install(
     TARGETS ${PROJECT_NAME}
     EXPORT ${PROJECT_NAME}-targets
-    FILE_SET coio_public_headers DESTINATION ${PROJECT_NAME}/include
     DESTINATION ${PROJECT_NAME}/lib/${CMAKE_BUILD_TYPE}
+    FILE_SET coio_public_headers DESTINATION ${PROJECT_NAME}/include
 )
 
 install(
