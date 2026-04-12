@@ -433,17 +433,17 @@ namespace coio {
                     }
 
                     template<typename... Args>
-                    COIO_ALWAYS_INLINE auto set_value(Args&&... args) const noexcept -> void {
-                        execution::set_value(std::move(d->rcvr), std::forward<Args>(args)...);
+                    COIO_ALWAYS_INLINE auto set_value(Args&&... args) && noexcept -> void {
+                        execution::set_value(std::move(std::exchange(d, nullptr)->rcvr), std::forward<Args>(args)...);
                     }
 
                     template<typename E>
-                    COIO_ALWAYS_INLINE auto set_error(E&& e) const noexcept -> void {
-                        execution::set_error(std::move(d->rcvr), std::forward<E>(e));
+                    COIO_ALWAYS_INLINE auto set_error(E&& e) && noexcept -> void {
+                        execution::set_error(std::move(std::exchange(d, nullptr)->rcvr), std::forward<E>(e));
                     }
 
-                    COIO_ALWAYS_INLINE auto set_stopped() const noexcept -> void {
-                        execution::set_stopped(std::move(d->rcvr));
+                    COIO_ALWAYS_INLINE auto set_stopped() && noexcept -> void {
+                        execution::set_stopped(std::move(std::exchange(d, nullptr)->rcvr));
                     }
 
                     data_t* d;
@@ -463,13 +463,13 @@ namespace coio {
                 inner_state_t inner_state;
             };
 
-            template<std::same_as<sender>, typename... Env>
+            template<similar_to<sender>, typename... Env>
             static consteval auto get_completion_signatures() noexcept {
                 return execution::completion_signatures_of_t<Sndr, Env...>{};
             }
 
             template<execution::receiver Rcvr>
-            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && -> state<Rcvr> {
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> state<Rcvr> {
                 return state<Rcvr>{std::move(sndr), std::move(stop_token), std::move(rcvr)};
             }
 

@@ -73,6 +73,11 @@ namespace coio {
                 return op_state<Rcvr>{*std::exchange(owner, {}), std::move(rcvr)};
             }
 
+            template<similar_to<wait_sender>, typename...>
+            static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                return completion_signatures{};
+            }
+
             signal_set* owner = nullptr;
         };
 

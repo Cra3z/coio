@@ -63,7 +63,7 @@ namespace coio {
             using stop_token_of_rcvr = stop_token_of_t<execution::env_of_t<Receiver>>;
 
         public:
-            task_operation(std::coroutine_handle<Promise> coro, Receiver rcvr) :
+            task_operation(std::coroutine_handle<Promise> coro, Receiver rcvr) noexcept :
                 base(coro),
                 rcvr_(std::move(rcvr)),
                 stop_propagator_(coio::get_stop_token(execution::get_env(rcvr_))) {}
@@ -302,7 +302,7 @@ namespace coio {
             return coro_ != nullptr;
         }
 
-        template<std::same_as<task>, typename...>
+        template<similar_to<task>, typename...>
         static consteval auto get_completion_signatures() noexcept -> completion_signatures {
             return {};
         }

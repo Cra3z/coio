@@ -342,7 +342,7 @@ namespace coio {
                 return state{std::move(rcvr), std::move(factory)};
             }
 
-            template<std::same_as<transfer_bytes_sender>, typename...>
+            template<similar_to<transfer_bytes_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                 return {};
             }
@@ -671,7 +671,7 @@ namespace coio {
                 };
             }
 
-            template<std::same_as<read_until_sender>, typename...>
+            template<similar_to<read_until_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                 return {};
             }

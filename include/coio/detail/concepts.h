@@ -40,6 +40,9 @@ namespace coio {
         concept callable_ = (std::is_void_v<T> and std::invocable<Fn>) or std::invocable<Fn, T>;
     }
 
+    template<typename T, typename U>
+    concept similar_to = std::same_as<std::remove_cvref_t<T>, std::remove_cvref_t<U>>;
+
     template<typename T>
     concept boolean_testable = detail::boolean_testable_impl<T> and requires (T&& t) {
         { not static_cast<T&&>(t) } -> detail::boolean_testable_impl;

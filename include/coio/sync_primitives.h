@@ -187,7 +187,7 @@ namespace coio {
                 return *this;
             }
 
-            template<std::same_as<lock_sender>, typename...>
+            template<similar_to<lock_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                 return {};
             }
@@ -320,7 +320,7 @@ namespace coio {
                 return state<Rcvr>{*std::exchange(sema_, nullptr), std::move(rcvr)};
             }
 
-            template<std::same_as<acquire_sender>, typename...>
+            template<similar_to<acquire_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                 return {};
             }
@@ -467,7 +467,7 @@ namespace coio {
                 return *this;
             }
 
-            template<std::same_as<wait_sender>, typename...>
+            template<similar_to<wait_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                 return {};
             }

@@ -43,7 +43,7 @@ namespace coio {
 
         class token {
         public:
-            explicit token(async_scope& scope) : scope(&scope) {}
+            explicit token(async_scope& scope) noexcept : scope(&scope) {}
 
             COIO_ALWAYS_INLINE auto try_associate() const noexcept -> association {
                 return scope->try_associate();
@@ -122,7 +122,7 @@ namespace coio {
                 return *this;
             }
 
-            template<std::same_as<join_sender>, typename...>
+            template<similar_to<join_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                 return {};
             }
@@ -200,7 +200,7 @@ namespace coio {
         }
 
         COIO_ALWAYS_INLINE auto spawn(execution::sender auto sndr) noexcept -> void {
-            execution::spawn(std::move(sndr) | execution::let_error(terminate_on_error), get_token());
+            execution::spawn(execution::upon_error(std::move(sndr), terminate_on_error), get_token());
         }
 
     private:
@@ -269,7 +269,7 @@ namespace coio {
         }
 
     private:
-        static constexpr auto terminate_on_error = [](const auto&...) noexcept -> std::invoke_result_t<execution::just_t> {
+        static constexpr auto terminate_on_error = [](const auto&...) noexcept {
             std::terminate();
         };
 

@@ -13,7 +13,7 @@ if(_coio_senders_backend STREQUAL "NVIDIA")
     set_property(TARGET coio::coio APPEND PROPERTY INTERFACE_LINK_LIBRARIES STDEXEC::stdexec)
 elseif(_coio_senders_backend STREQUAL "BEMAN")
     find_dependency(beman.execution REQUIRED)
-    set_property(TARGET coio::coio APPEND PROPERTY INTERFACE_LINK_LIBRARIES beman::execution)
+    set_property(TARGET coio::coio APPEND PROPERTY INTERFACE_LINK_LIBRARIES beman::execution_headers)
 endif()
 
 if(@Liburing_FOUND@)

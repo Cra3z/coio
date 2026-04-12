@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.26)
 
 project(coio)
 
-set(CMAKE_CXX_STANDARD 20)
-
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/permissive->")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
@@ -101,6 +99,11 @@ target_link_libraries(
 )
 
 if (COIO_SENDERS_BACKEND STREQUAL "NVIDIA")
+    target_compile_features(
+        ${PROJECT_NAME}
+        PUBLIC
+        cxx_std_20
+    )
     CPMFindPackage(
         NAME stdexec
         GITHUB_REPOSITORY NVIDIA/stdexec
@@ -113,6 +116,11 @@ if (COIO_SENDERS_BACKEND STREQUAL "NVIDIA")
     )
     target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_LOCAL_INTERFACE:STDEXEC::stdexec>)
 elseif (COIO_SENDERS_BACKEND STREQUAL "BEMAN")
+    target_compile_features(
+        ${PROJECT_NAME}
+        PUBLIC
+        cxx_std_23
+    )
     CPMFindPackage(
         NAME beman.execution
         GITHUB_REPOSITORY bemanproject/execution
@@ -122,8 +130,9 @@ elseif (COIO_SENDERS_BACKEND STREQUAL "BEMAN")
         OPTIONS
         "BEMAN_EXECUTION_ENABLE_TESTING OFF"
         "BEMAN_EXECUTION_BUILD_EXAMPLES OFF"
+        "BEMAN_USE_MODULES OFF"
     )
-    target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_LOCAL_INTERFACE:beman::execution>)
+    target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_LOCAL_INTERFACE:beman::execution_headers>)
 endif()
 
 if (LINUX)

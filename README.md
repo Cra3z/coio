@@ -63,10 +63,23 @@ cmake --install <build directory> --prefix <install directory>
 ```
 
 ### CMake Usage
-After installation, use in your CMakeLists.txt:
+If coio is already installed, you can import it as follows:
 ```cmake
 find_package(coio REQUIRED)
-target_link_libraries(your_target PRIVATE coio::coio)
+target_link_libraries(<your-target> coio::coio)
+```
+However, it is highly recommended to use [CPM](https://github.com/cpm-cmake/CPM.cmake):
+```cmake
+CPMFindPackage(
+    NAME coio
+    GITHUB_REPOSITORY Cra3z/coio
+    GIT_TAG main
+    EXCLUDE_FROM_ALL YES
+    SYSTEM YES
+    OPTIONS
+    "COIO_BUILD_EXAMPLES OFF"
+)
+target_link_libraries(<your-target> coio::coio)
 ```
 
 ### Usage & Document

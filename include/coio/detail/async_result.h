@@ -38,7 +38,7 @@ namespace coio::detail {
             result_.template emplace<0>();
         }
 
-        template<std::same_as<async_result>, typename...>
+        template<similar_to<async_result>, typename...>
         static consteval auto get_completion_signatures() noexcept -> completion_signatures {
             return {};
         }

@@ -123,7 +123,7 @@ namespace coio {
                     };
                 }
 
-                template<std::same_as<io_sender>, typename...>
+                template<similar_to<io_sender>, typename...>
                 static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                     return {};
                 }

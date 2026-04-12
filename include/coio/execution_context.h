@@ -134,7 +134,7 @@ namespace coio {
                     return env{*ctx_};
                 }
 
-                template<std::same_as<schedule_sender>, typename...>
+                template<similar_to<schedule_sender>, typename...>
                 static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                     return {};
                 }
@@ -217,7 +217,7 @@ namespace coio {
                     return env{*ctx_};
                 }
 
-                template<std::same_as<sleep_sender>, typename...>
+                template<similar_to<sleep_sender>, typename...>
                 static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                     return {};
                 }

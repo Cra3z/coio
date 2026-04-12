@@ -14,7 +14,7 @@ auto main() -> int {
     using namespace std::chrono_literals;
     coio::time_loop context;
     const auto tick = std::chrono::steady_clock::now();
-    auto [i] = std::get<1>(coio::this_thread::sync_wait_with_variant(coio::when_any(
+    auto value = coio::this_thread::sync_wait_with_variant(coio::when_any(
         job(context.get_scheduler(), "foo", 114, 2s),
         job(context.get_scheduler(), "bar", 514, 1s),
         job(context.get_scheduler(), "qux", 1919, 3s),
@@ -22,7 +22,8 @@ auto main() -> int {
             context.run();
             co_return;
         }()
-    )).value());
+    )).value();
+    auto [i] = std::get<std::tuple<int>>(value);
     const auto tock = std::chrono::steady_clock::now();
     ::println("result: i = {}", i);
     ::println("take: {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(tock - tick).count()); // take: 1000ms
