@@ -29,8 +29,36 @@ namespace coio {
                 }
             };
 
+            struct ntdll_loader {
+                using NtSetInformationFile_ = ::LONG (NTAPI*)(::HANDLE, ::ULONG_PTR*, void*, ::ULONG, ::ULONG);
+                using RtlNtStatusToDosError_ = ::ULONG (NTAPI*)(::LONG);
+
+                ntdll_loader() noexcept {
+                    if (::HMODULE ntdll = ::GetModuleHandleA("NTDLL.DLL")) {
+                        NtSetInformationFile = reinterpret_cast<NtSetInformationFile_>(::GetProcAddress(ntdll, "NtSetInformationFile"));
+                        RtlNtStatusToDosError = reinterpret_cast<RtlNtStatusToDosError_>(::GetProcAddress(ntdll, "RtlNtStatusToDosError"));
+                    }
+                }
+                NtSetInformationFile_ NtSetInformationFile{};
+                RtlNtStatusToDosError_ RtlNtStatusToDosError{};
+            };
+
             auto wsa_init_library() -> void {
                 static wsa_init_guard _{};
+            }
+
+            auto deassociate_iocp(::HANDLE handle) -> void {
+                if (handle == nullptr or handle == INVALID_HANDLE_VALUE) [[unlikely]] return;
+                static constexpr ::ULONG FileReplaceCompletionInformation = 61;
+                static ntdll_loader loader;
+                ::ULONG_PTR block[2]{};
+                void* info[2]{};
+                if (loader.NtSetInformationFile == nullptr) return;
+                const auto status = loader.NtSetInformationFile(handle, block, info, sizeof(info), FileReplaceCompletionInformation);
+                if (status) [[unlikely]] {
+                    const ::DWORD win32_err = loader.RtlNtStatusToDosError ? loader.RtlNtStatusToDosError(status) : ERROR_NOT_SUPPORTED;
+                    throw std::system_error{detail::to_error_code(win32_err), "release"};
+                }
             }
         }
     }
@@ -39,7 +67,7 @@ namespace coio {
         ::CancelIoEx(handle, this);
     }
 
-    iocp_context::scheduler::io_object::io_object(iocp_context& ctx, HANDLE handle)
+    iocp_context::scheduler::io_object::io_object(iocp_context& ctx, ::HANDLE handle)
         : ctx_(&ctx), handle_(handle) {
         // NOTE: `handle` must be opend with `FILE_FLAG_OVERLAPPED` or `WSA_FLAG_OVERLAPPED`
         if (handle != INVALID_HANDLE_VALUE and handle != nullptr) {
@@ -54,6 +82,15 @@ namespace coio {
 
     iocp_context::scheduler::io_object::~io_object() {
         cancel();
+    }
+
+    auto iocp_context::scheduler::io_object::release() -> handle_wrapper {
+        if (handle_ != INVALID_HANDLE_VALUE) {
+            cancel();
+            detail::deassociate_iocp(handle_);
+        }
+        offset_ = 0;
+        return handle_wrapper{std::exchange(handle_, INVALID_HANDLE_VALUE)};
     }
 
     auto iocp_context::scheduler::io_object::cancel() -> void {

@@ -101,11 +101,7 @@ namespace coio {
                     return handle_wrapper{handle_};
                 }
 
-                auto release() {
-                    if (handle_ != INVALID_HANDLE_VALUE) cancel();
-                    offset_ = 0;
-                    return handle_wrapper{std::exchange(handle_, INVALID_HANDLE_VALUE)};
-                }
+                auto release() -> handle_wrapper;
 
                 auto cancel() -> void;
 
