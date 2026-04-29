@@ -49,7 +49,7 @@ namespace coio {
                 using stop_token_t = stop_token_of_t<execution::env_of_t<decltype(std::declval<Base*>()->rcvr_)>>;
 
             public:
-                using operation_state_concept = execution::operation_state_t;
+                using operation_state_concept = execution::operation_state_tag;
 
             public:
                 using Base::Base;
@@ -120,7 +120,7 @@ namespace coio {
                 using state = operation_state<state_base<Rcvr>>;
 
             public:
-                using sender_concept = execution::sender_t;
+                using sender_concept = execution::sender_tag;
                 using completion_signatures = execution::completion_signatures<
                     execution::set_value_t(),
                     execution::set_error_t(std::exception_ptr),
@@ -139,7 +139,7 @@ namespace coio {
                     return {};
                 }
 
-                template<execution::receiver_of<completion_signatures> Rcvr>
+                template<execution::receiver Rcvr>
                 COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                     COIO_ASSERT(ctx_ != nullptr);
                     return state<Rcvr>{*std::exchange(ctx_, {}), std::move(rcvr)};
@@ -152,7 +152,7 @@ namespace coio {
             class sleep_sender {
                 friend Ctx;
             public:
-                using sender_concept = execution::sender_t;
+                using sender_concept = execution::sender_tag;
                 using completion_signatures = execution::completion_signatures<
                     execution::set_value_t(),
                     execution::set_error_t(std::exception_ptr),
@@ -222,7 +222,7 @@ namespace coio {
                     return {};
                 }
 
-                template<execution::receiver_of<completion_signatures> Rcvr>
+                template<execution::receiver Rcvr>
                 COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                     COIO_ASSERT(ctx_ != nullptr);
                     return state<Rcvr>{
@@ -240,7 +240,7 @@ namespace coio {
         private:
             class scheduler_base {
             public:
-                using scheduler_concept = execution::scheduler_t;
+                using scheduler_concept = execution::scheduler_tag;
 
             public:
                 explicit scheduler_base(Ctx& ctx) noexcept : ctx_(&ctx) {}

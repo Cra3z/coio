@@ -12,8 +12,8 @@ namespace coio::detail {
     template<typename... Values, typename Error>
     class async_result<execution::set_value_t(Values...), execution::set_error_t(Error)> {
     public:
-        using sender_concept = execution::sender_t;
-        using receiver_concept = execution::receiver_t;
+        using sender_concept = execution::sender_tag;
+        using receiver_concept = execution::receiver_tag;
         using completion_signatures = execution::completion_signatures<
             execution::set_value_t(Values...),
             execution::set_error_t(Error),
@@ -43,7 +43,7 @@ namespace coio::detail {
             return {};
         }
 
-        template<execution::receiver_of<completion_signatures> Rcvr>
+        template<execution::receiver Rcvr>
         COIO_ALWAYS_INLINE auto forward_to(Rcvr&& rcvr) noexcept -> void {
             switch (result_.index()) {
             case 0: {
@@ -62,10 +62,10 @@ namespace coio::detail {
             }
         }
 
-        template<execution::receiver_of<completion_signatures> Rcvr>
+        template<execution::receiver Rcvr>
         COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
             struct state {
-                using operation_state_concept = execution::operation_state_t;
+                using operation_state_concept = execution::operation_state_tag;
 
                 COIO_ALWAYS_INLINE auto start() & noexcept -> void {
                     self_.forward_to(std::move(rcvr_));

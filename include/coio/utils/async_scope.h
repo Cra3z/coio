@@ -64,7 +64,7 @@ namespace coio {
     private:
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
         struct state_base {
-            using operation_state_concept = execution::operation_state_t;
+            using operation_state_concept = execution::operation_state_tag;
             using finish_fn_t = void(*)(state_base*) noexcept;
 
             state_base(finish_fn_t finish) noexcept : finish(finish) {}
@@ -82,7 +82,7 @@ namespace coio {
         };
 
         struct join_sender {
-            using sender_concept = execution::sender_t;
+            using sender_concept = execution::sender_tag;
             using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
             // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
             template<typename Rcvr>

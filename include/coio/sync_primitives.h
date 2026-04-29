@@ -117,7 +117,7 @@ namespace coio {
             friend async_mutex;
         private:
             struct state_base {
-                using operation_state_concept = execution::operation_state_t;
+                using operation_state_concept = execution::operation_state_tag;
                 using complete_fn_t = void(*)(state_base*) noexcept;
 
                 state_base(async_mutex& mutex, complete_fn_t complete) noexcept : mtx_(mutex), complete_(complete) {}
@@ -169,7 +169,7 @@ namespace coio {
             };
 
         public:
-            using sender_concept = execution::sender_t;
+            using sender_concept = execution::sender_tag;
             using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
 
         private:
@@ -192,7 +192,7 @@ namespace coio {
                 return {};
             }
 
-            template<execution::receiver_of<completion_signatures> Rcvr>
+            template<execution::receiver Rcvr>
             COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> state<Rcvr> {
                 COIO_ASSERT(mtx_ != nullptr);
                 return {*std::exchange(mtx_, nullptr), std::move(rcvr)};
@@ -260,7 +260,7 @@ namespace coio {
 
     private:
         struct state_base {
-            using operation_state_concept = execution::operation_state_t;
+            using operation_state_concept = execution::operation_state_tag;
             using complete_fn_t = void(*)(state_base*) noexcept;
 
             state_base(async_semaphore& sema, complete_fn_t complete) noexcept : sema_(sema), complete_(complete) {}
@@ -299,7 +299,7 @@ namespace coio {
         class acquire_sender {
             friend async_semaphore;
         public:
-            using sender_concept = execution::sender_t;
+            using sender_concept = execution::sender_tag;
             using completion_signatures = execution::completion_signatures<execution::set_value_t(), execution::set_error_t(std::exception_ptr)>;
 
         public:
@@ -314,7 +314,7 @@ namespace coio {
                 return *this;
             }
 
-            template<execution::receiver_of<completion_signatures> Rcvr>
+            template<execution::receiver Rcvr>
             COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> state<Rcvr> {
                 COIO_ASSERT(sema_ != nullptr);
                 return state<Rcvr>{*std::exchange(sema_, nullptr), std::move(rcvr)};
@@ -408,7 +408,7 @@ namespace coio {
             friend class async_latch;
         private:
             struct state_base {
-                using operation_state_concept = execution::operation_state_t;
+                using operation_state_concept = execution::operation_state_tag;
                 using complete_fn_t = void(*)(state_base*) noexcept;
 
                 state_base(async_latch& latch, std::size_t n, complete_fn_t complete) noexcept : latch_(latch), n_(n), complete_(complete) {}
@@ -447,7 +447,7 @@ namespace coio {
             };
 
         public:
-            using sender_concept = execution::sender_t;
+            using sender_concept = execution::sender_tag;
             using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
 
         public:
@@ -472,7 +472,7 @@ namespace coio {
                 return {};
             }
 
-            template<execution::receiver_of<completion_signatures> Rcvr>
+            template<execution::receiver Rcvr>
             COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept -> state<Rcvr> {
                 COIO_ASSERT(latch_ != nullptr);
                 return {*std::exchange(latch_, {}), std::exchange(n_, 0), std::move(rcvr)};

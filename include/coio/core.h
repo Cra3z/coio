@@ -159,7 +159,7 @@ namespace coio {
     // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
     template<execution::receiver Receiver, typename Value, typename Error>
     struct when_any_t::receiver {
-        using receiver_concept = execution::receiver_t;
+        using receiver_concept = execution::receiver_tag;
 
         COIO_ALWAYS_INLINE auto get_env() const noexcept -> env<Receiver> {
             return {state};
@@ -195,7 +195,7 @@ namespace coio {
     // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
     template<std::size_t... I, execution::receiver Receiver, typename Value, typename Error, execution::sender... Sender>
     struct when_any_t::state<std::index_sequence<I...>, Receiver, Value, Error, Sender...> : state_value<Receiver, Value, Error> {
-        using operation_state_concept = execution::operation_state_t;
+        using operation_state_concept = execution::operation_state_tag;
         using base = state_value<Receiver, Value, Error>;
         using value_type = Value;
         using error_type = Error;
@@ -224,7 +224,7 @@ namespace coio {
 
     template<execution::sender... Sender>
     struct when_any_t::sender {
-        using sender_concept = execution::sender_t;
+        using sender_concept = execution::sender_tag;
 
         template<execution::receiver Receiver>
         COIO_ALWAYS_INLINE auto connect(Receiver&& receiver) && -> state<
@@ -261,7 +261,7 @@ namespace coio {
 
         template<typename Rcvr>
         struct state {
-            using operation_state_concept = execution::operation_state_t;
+            using operation_state_concept = execution::operation_state_tag;
 
             state(auto sndr, Rcvr rcvr) : state_(execution::connect(std::move(sndr), std::move(rcvr))) {}
 
@@ -279,7 +279,7 @@ namespace coio {
         };
 
     public:
-        using sender_concept = execution::sender_t;
+        using sender_concept = execution::sender_tag;
 
     public:
         template<typename Expr> requires different_from<std::decay_t<Expr>, variant_sender> and std::convertible_to<Expr, variant_t>

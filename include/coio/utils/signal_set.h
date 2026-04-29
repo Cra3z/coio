@@ -17,7 +17,7 @@ namespace coio {
             friend signal_set;
             friend detail::signal_state;
         public:
-            using operation_state_concept = execution::operation_state_t;
+            using operation_state_concept = execution::operation_state_tag;
             using finish_fn_t = void(*)(node*, int) noexcept;
 
         public:
@@ -60,14 +60,14 @@ namespace coio {
 
     public:
         struct wait_sender {
-            using sender_concept = execution::sender_t;
+            using sender_concept = execution::sender_tag;
             using completion_signatures = execution::completion_signatures<
                 execution::set_value_t(int),
                 execution::set_error_t(std::error_code),
                 execution::set_stopped_t()
             >;
 
-            template<execution::receiver_of<completion_signatures> Rcvr>
+            template<execution::receiver Rcvr>
             COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                 COIO_ASSERT(owner != nullptr);
                 return op_state<Rcvr>{*std::exchange(owner, {}), std::move(rcvr)};

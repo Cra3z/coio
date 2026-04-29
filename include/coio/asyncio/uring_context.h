@@ -35,7 +35,7 @@ namespace coio {
         class scheduler : public scheduler_base {
             friend uring_context;
         public:
-            using scheduler_concept = detail::io_scheduler_t;
+            using scheduler_concept = detail::io_scheduler_tag;
 
             class io_object {
                 friend scheduler;
@@ -88,7 +88,7 @@ namespace coio {
 
             template<std::move_constructible Sexpr>
             struct io_sender {
-                using sender_concept = execution::sender_t;
+                using sender_concept = execution::sender_tag;
                 using completion_signatures = execution::completion_signatures<
                     typename Sexpr::value_signature,
                     execution::set_error_t(std::error_code),
@@ -112,7 +112,7 @@ namespace coio {
                 template<typename Rcvr>
                 using state = operation_state<state_base<Rcvr>>;
 
-                template<execution::receiver_of<completion_signatures> Rcvr>
+                template<execution::receiver Rcvr>
                 COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                     COIO_ASSERT(context != nullptr);
                     return state<Rcvr>{

@@ -21,7 +21,7 @@ namespace coio {
             using result_t = std::variant<std::monostate, value_t, std::exception_ptr>;
 
         public:
-            using operation_state_concept = execution::operation_state_t;
+            using operation_state_concept = execution::operation_state_tag;
 
         public:
             task_state_base(std::coroutine_handle<> coro) noexcept : coro_(coro) {
@@ -270,7 +270,7 @@ namespace coio {
 
     public:
         using promise_type = detail::task_promise<task, T, Alloc>;
-        using sender_concept = execution::sender_t;
+        using sender_concept = execution::sender_tag;
         using completion_signatures =execution::completion_signatures<
             detail::set_value_t<T>,
             execution::set_error_t(std::exception_ptr),
@@ -315,7 +315,7 @@ namespace coio {
             };
         }
 
-        template<execution::receiver_of<completion_signatures> Receiver>
+        template<execution::receiver Receiver>
         COIO_ALWAYS_INLINE auto connect(Receiver receiver) && noexcept {
             return detail::task_operation<T, promise_type, Receiver>{
                 std::exchange(coro_, {}),

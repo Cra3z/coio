@@ -394,11 +394,11 @@ namespace coio {
     struct stop_when_t {
         template<execution::sender Sndr, stoppable_token StopToken>
         struct sender {
-            using sender_concept = execution::sender_t;
+            using sender_concept = execution::sender_tag;
 
             template<execution::receiver Rcvr>
             struct state {
-                using operation_state_concept = execution::operation_state_t;
+                using operation_state_concept = execution::operation_state_tag;
                 using stop_token_t = stop_combiner<StopToken, stop_token_of_t<execution::env_of_t<Rcvr>>>;
 
                 struct data_t {
@@ -426,7 +426,7 @@ namespace coio {
                 };
 
                 struct receiver {
-                    using receiver_concept = execution::receiver_t;
+                    using receiver_concept = execution::receiver_tag;
 
                     COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                         return env{d};

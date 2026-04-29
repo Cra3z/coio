@@ -260,11 +260,11 @@ namespace coio {
 
         template<typename Rcvr>
         struct transfer_bytes_state_base {
-            using operation_state_concept = execution::operation_state_t;
+            using operation_state_concept = execution::operation_state_tag;
             using restart_fn_t = void(*)(transfer_bytes_state_base*) noexcept;
 
             struct receiver {
-                using receiver_concept = execution::receiver_t;
+                using receiver_concept = execution::receiver_tag;
 
                 COIO_ALWAYS_INLINE auto get_env() const noexcept {
                     return detail::fwd_env(execution::get_env(state_->rcvr));
@@ -300,7 +300,7 @@ namespace coio {
         struct transfer_bytes_sender {
             static_assert(std::invocable<Factory&> and execution::sender<std::invoke_result_t<Factory&>>);
 
-            using sender_concept = execution::sender_t;
+            using sender_concept = execution::sender_tag;
 
             using completion_signatures = execution::completion_signatures<
                 execution::set_value_t(std::error_code, std::size_t)
@@ -337,7 +337,7 @@ namespace coio {
                 std::optional<execution::connect_result_t<std::invoke_result_t<Factory&>, receiver>> inner_state;
             };
 
-            template<execution::receiver_of<completion_signatures> Rcvr>
+            template<execution::receiver Rcvr>
             COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                 return state{std::move(rcvr), std::move(factory)};
             }
@@ -541,11 +541,11 @@ namespace coio {
 
         template<typename Rcvr>
         struct read_until_state_base {
-            using operation_state_concept = execution::operation_state_t;
+            using operation_state_concept = execution::operation_state_tag;
             using on_read_fn_t = void(*)(read_until_state_base*, std::size_t) noexcept;
 
             struct receiver {
-                using receiver_concept = execution::receiver_t;
+                using receiver_concept = execution::receiver_tag;
 
                 COIO_ALWAYS_INLINE auto get_env() const noexcept {
                     return detail::fwd_env(execution::get_env(state_->rcvr));
@@ -658,13 +658,13 @@ namespace coio {
 
         template<typename Device, typename Buffer, typename Delim>
         struct read_until_sender {
-            using sender_concept = execution::sender_t;
+            using sender_concept = execution::sender_tag;
 
             using completion_signatures = execution::completion_signatures<
                 execution::set_value_t(std::error_code, std::size_t)
             >;
 
-            template<execution::receiver_of<completion_signatures> Rcvr>
+            template<execution::receiver Rcvr>
             COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
                 return read_until_state<Rcvr, Device, Buffer, Delim>{
                     std::move(rcvr), device, buffer, std::move(delim)

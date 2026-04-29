@@ -83,20 +83,19 @@ namespace coio {
         using detail::execution_impl::get_completion_signatures;
         using detail::execution_impl::get_await_completion_adaptor;
 
-        using detail::execution_impl::sender_t;
+        using detail::execution_impl::sender_tag;
         using detail::execution_impl::sender;
         using detail::execution_impl::sender_in;
-        using detail::execution_impl::sender_to;
+        using detail::execution_impl::dependent_sender;
         using detail::execution_impl::sends_stopped;
 
-        using detail::execution_impl::receiver_t;
+        using detail::execution_impl::receiver_tag;
         using detail::execution_impl::receiver;
-        using detail::execution_impl::receiver_of;
 
-        using detail::execution_impl::operation_state_t;
+        using detail::execution_impl::operation_state_tag;
         using detail::execution_impl::operation_state;
 
-        using detail::execution_impl::scheduler_t;
+        using detail::execution_impl::scheduler_tag;
         using detail::execution_impl::schedule_result_t;
         using detail::execution_impl::scheduler;
 
@@ -195,7 +194,7 @@ namespace coio {
     }
 
     namespace detail {
-        struct io_scheduler_t : execution::scheduler_t {};
+        struct io_scheduler_tag : execution::scheduler_tag {};
 
         template<typename>
         struct is_set_value : std::false_type {};
@@ -277,6 +276,6 @@ namespace coio {
 
     template<typename Scheduler>
     concept io_scheduler = execution::scheduler<Scheduler> and
-        std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_t>;
+        std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_tag>;
 
 }
