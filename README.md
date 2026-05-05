@@ -84,5 +84,7 @@ target_link_libraries(<your-target> coio::coio)
 
 ### Usage & Document
 
-- [API Reference](docs/reference.md)
+- [Documentation](docs/index.md) — view locally with `mkdocs serve`
+- [API Reference](docs/reference/index.md)
+- [Guides](docs/guides/index.md)
 - [Examples](examples/)

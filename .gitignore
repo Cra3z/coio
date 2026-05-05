@@ -8,6 +8,7 @@
 /bin/
 /build/
 /out/
+/site/
 
 # unrelated files
 CMakeSettings.json

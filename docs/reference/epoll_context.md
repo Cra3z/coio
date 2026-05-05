@@ -1,0 +1,102 @@
+# coio::epoll_context (Linux)
+
+**Header:** `<coio/asyncio/epoll_context.h>`
+
+**Platform:** Linux only.
+
+An execution context backed by **epoll**. Includes all `time_loop` APIs plus epoll-based asynchronous I/O.
+
+## Base Class
+
+Inherits from `detail::loop_base<epoll_context>`, which provides the same event loop interface as `time_loop`.
+
+## Member Types
+
+| Type | Description |
+|------|-------------|
+| `scheduler` | The associated I/O scheduler. Models `io_scheduler`. |
+
+## Member Functions
+
+### Lifecycle
+
+| Name | Description |
+|------|-------------|
+| `epoll_context()` | Default constructor. Uses `std::pmr::get_default_resource()`. |
+| `explicit epoll_context(std::pmr::memory_resource&) noexcept` | Constructs with a custom memory resource. |
+| `~epoll_context()` | Destructor. |
+
+### Context Operations (inherited)
+
+| Name | Description |
+|------|-------------|
+| `get_scheduler() noexcept` | Returns the associated `scheduler`. Thread-safe. |
+| `get_allocator() const noexcept` | Returns a `std::pmr::polymorphic_allocator<>`. |
+| `request_stop()` | Signals stop. Thread-safe. |
+| `poll_one() -> bool` | Non-blocking, process one item. |
+| `poll() -> std::size_t` | Non-blocking, process all ready items. |
+| `run_one() -> bool` | Blocking, process one item. |
+| `run() -> std::size_t` | Blocking, process until idle or stopped. |
+
+## `epoll_context::scheduler`
+
+### Scheduler Operations (inherited from `time_loop::scheduler`)
+
+| Name | Description |
+|------|-------------|
+| `schedule()` | Returns a sender completing on this context. |
+| `schedule_after(duration)` | Returns a sender completing after duration. |
+| `schedule_at(time_point)` | Returns a sender completing at time point. |
+| `static now() noexcept` | Current time. |
+
+### I/O Operations
+
+| Name | Description |
+|------|-------------|
+| `make_io_object(int fd)` | Creates an `io_object` wrapping a native file descriptor. |
+| `schedule_io(io_object&, Sexpr)` | Returns a sender that performs the I/O operation described by `Sexpr`. Wrapped with `stop_when` for cancellation. |
+
+### `scheduler::io_object`
+
+A move-only wrapper around a file descriptor registered with epoll.
+
+| Name | Description |
+|------|-------------|
+| `io_object(epoll_context&, int fd)` | Constructor. Registers `fd` with epoll. |
+| *(move-only)* | Move constructible and move assignable. |
+| `get_io_scheduler()` | Returns the associated `scheduler`. |
+| `native_handle() -> int` | Returns the raw file descriptor. |
+| `release() -> int` | Releases ownership, returns the fd. Deregisters from epoll. |
+| `cancel()` | Cancels pending I/O. |
+
+## Example
+
+```cpp
+#include <coio/asyncio/epoll_context.h>
+#include <coio/net/tcp.h>
+#include <coio/net/socket.h>
+
+int main() {
+    coio::epoll_context context;
+    auto sched = context.get_scheduler();
+
+    coio::tcp::acceptor acceptor{sched,
+        coio::endpoint{coio::ipv4_address::any(), 8080}};
+
+    coio::async_scope scope;
+    scope.spawn([](auto sched, auto& acceptor, auto& scope) -> coio::task<> {
+        while (true) {
+            auto client = co_await acceptor.async_accept();
+            scope.spawn([](auto sock) -> coio::task<> {
+                char buf[1024];
+                auto n = co_await sock.async_read_some(
+                    coio::as_writable_bytes(buf));
+                co_await coio::async_write(sock, coio::as_bytes(buf, n));
+            }(std::move(client)));
+        }
+    }(sched, acceptor, scope));
+
+    context.run();
+    coio::this_thread::sync_wait(scope.join());
+}
+```

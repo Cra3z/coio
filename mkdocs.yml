@@ -1,0 +1,91 @@
+docs_dir: docs
+site_name: coio
+site_description: Modern C++20 async programming library built on std::execution (P2300)
+repo_url: https://github.com/Cra3z/coio
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      use_pygments: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting_started.md
+  - Reference:
+      - reference/index.md
+      - Core Types:
+          - task: reference/task.md
+          - generator: reference/generator.md
+      - Execution Contexts:
+          - reference/execution_contexts.md
+          - epoll_context: reference/epoll_context.md
+          - uring_context: reference/uring_context.md
+          - iocp_context: reference/iocp_context.md
+      - Synchronization:
+          - reference/sync_primitives/index.md
+          - async_mutex: reference/sync_primitives/async_mutex.md
+          - async_semaphore: reference/sync_primitives/async_semaphore.md
+          - async_latch: reference/sync_primitives/async_latch.md
+      - Networking:
+          - reference/net/index.md
+          - Address & Endpoint: reference/net/address.md
+          - TCP: reference/net/tcp.md
+          - UDP: reference/net/udp.md
+          - Sockets: reference/net/socket.md
+          - Resolver: reference/net/resolver.md
+      - Async I/O:
+          - reference/asyncio/index.md
+          - I/O Algorithms: reference/asyncio/io.md
+          - File I/O: reference/asyncio/file.md
+          - Pipe: reference/asyncio/pipe.md
+      - Core Algorithms:
+          - reference/core/index.md
+          - when_any: reference/core/when_any.md
+      - Utilities:
+          - reference/utils/index.md
+          - timer: reference/utils/timer.md
+          - async_scope: reference/utils/async_scope.md
+          - Stop Tokens: reference/utils/stop_tokens.md
+          - signal_set: reference/utils/signal_set.md
+          - Conqueue: reference/utils/conqueue.md
+          - Buffers: reference/utils/buffers.md
+          - Containers: reference/utils/containers.md
+          - Memory: reference/utils/memory.md
+          - Misc: reference/utils/misc.md
+      - Error Handling: reference/error.md
+  - Guides:
+      - guides/index.md
+      - Coroutines: guides/coroutines.md
+      - Execution Contexts: guides/execution_contexts.md
+      - Networking: guides/networking.md
+      - File I/O: guides/file_io.md
+      - Synchronization: guides/synchronization.md
+      - Cancellation: guides/cancellation.md
+      - Composing Senders: guides/compose_senders.md
+      - Allocators: guides/allocators.md
