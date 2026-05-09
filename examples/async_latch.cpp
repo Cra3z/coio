@@ -8,7 +8,7 @@ struct Job {
     std::string product;
 };
 
-auto work(Job& job, coio::async_latch& work_done, coio::async_latch& start_clean_up) -> coio::task<> {
+auto work(Job& job, coio::async_latch<>& work_done, coio::async_latch<>& start_clean_up) -> coio::task<> {
     job.product = job.name + " worked";
     work_done.count_down();
     co_await start_clean_up.wait();
@@ -17,8 +17,8 @@ auto work(Job& job, coio::async_latch& work_done, coio::async_latch& start_clean
 
 auto main() -> int {
     Job jobs[]{{"Annika"}, {"Buru"}, {"Chuck"}};
-    coio::async_latch work_done{std::ranges::size(jobs)};
-    coio::async_latch start_clean_up{1};
+    coio::async_latch<> work_done{std::ranges::size(jobs)};
+    coio::async_latch<> start_clean_up{1};
 
     coio::async_scope scope;
     ::print("Work is starting... ");

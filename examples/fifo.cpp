@@ -1,7 +1,7 @@
 #include <thread>
 #include <coio/core.h>
 #include <coio/execution_context.h>
-#include <coio/utils/conqueue.h>
+#include <coio/utils/fifo.h>
 #include "common.h"
 
 namespace {
@@ -32,17 +32,17 @@ namespace {
 
 auto main() -> int {
     worker workers[6]{1, 2, 3, 4, 5, 6};
-    coio::conqueue<std::string> channel;
+    coio::fifo<std::string> channel;
     auto writer = [&](coio::scheduler auto sched, std::string_view name, std::initializer_list<std::string_view> datum) -> coio::task<> {
         for (auto str : datum) {
             ::debug("{} writes {}", name, str);
-            co_await coio::continues_on(channel.emplace(str), sched);
+            co_await coio::continues_on(channel.async_emplace(str), sched);
         }
     };
 
     auto reader = [&](coio::scheduler auto sched, std::string_view name) -> coio::task<> {
         while (true) {
-            auto str = co_await coio::continues_on(channel.pop(), sched);
+            auto str = co_await coio::continues_on(channel.async_pop(), sched);
             ::debug("{} reads {}", name, str);
             if (str == "bye") break;
         }

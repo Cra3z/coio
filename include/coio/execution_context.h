@@ -10,7 +10,6 @@
 #include <queue>
 #include <semaphore>
 #include <utility>
-#include <vector>
 #include <coio/detail/execution.h>
 #include <coio/detail/op_queue.h>
 #include <coio/utils/stop_token.h>

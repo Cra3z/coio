@@ -3,9 +3,12 @@
 #include <bit>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <utility>
 #include <coio/detail/execution.h>
 #include <coio/detail/intrusive_stack.h>
+#include <coio/utils/atomutex.h>
+#include <coio/utils/stop_token.h>
 
 namespace coio {
     template<typename Mutex>
@@ -253,10 +256,13 @@ namespace coio {
     };
 
 
-    template<std::atomic_signed_lock_free::value_type LeastMaxValue = std::numeric_limits<std::atomic_signed_lock_free::value_type>::max()>
+    template<
+        std::integral CountType = std::atomic_unsigned_lock_free::value_type,
+        CountType LeastMaxValue = std::numeric_limits<CountType>::max()
+    >
     class async_semaphore {
     public:
-        using count_type = std::atomic_signed_lock_free::value_type;
+        using count_type = CountType;
 
     private:
         struct state_base {
@@ -271,21 +277,37 @@ namespace coio {
 
             async_semaphore& sema_;
             const complete_fn_t complete_;
+            state_base* prev_ = nullptr;
             state_base* next_ = nullptr;
         };
 
         template<typename Rcvr>
         struct state : state_base {
+            using stop_token_t = stop_token_of_t<execution::env_of_t<Rcvr>>;
+
             state(async_semaphore& sema, Rcvr rcvr) noexcept : state_base(sema, &complete), rcvr_(std::move(rcvr)) {}
 
             COIO_ALWAYS_INLINE auto start() & noexcept -> void {
+                auto stop_token = coio::get_stop_token(execution::get_env(rcvr_));
+                if (stop_token.stop_requested()) {
+                    execution::set_stopped(std::move(rcvr_));
+                    return;
+                }
+
+                stop_cb_.emplace(stop_token, std::bind_front(&state::on_stop_requested, this));
+
+                std::unique_lock guard{this->sema_.mtx_};
                 if (this->sema_.try_acquire()) {
-                    this->sema_.mtx_.unlock();
+                    guard.unlock();
                     execution::set_value(std::move(rcvr_));
                     return;
                 }
+
+                this->prev_ = nullptr;
                 this->next_ = std::exchange(this->sema_.waiting_list_head_, this);
-                this->sema_.mtx_.unlock();
+                if (this->next_ != nullptr) {
+                    this->next_->prev_ = this;
+                }
             }
 
             static auto complete(state_base* self) noexcept -> void {
@@ -293,14 +315,26 @@ namespace coio {
                 execution::set_value(std::move(this_->rcvr_));
             }
 
+            auto on_stop_requested() noexcept -> void {
+                if (this->sema_.unregister_(this)) {
+                    execution::set_stopped(std::move(rcvr_));
+                }
+            }
+
+            using stop_cb_t = decltype(std::bind_front(&state::on_stop_requested, std::declval<state*>()));
             Rcvr rcvr_;
+            std::optional<stop_callback_for_t<stop_token_t, stop_cb_t>> stop_cb_;
         };
 
         class acquire_sender {
             friend async_semaphore;
         public:
             using sender_concept = execution::sender_tag;
-            using completion_signatures = execution::completion_signatures<execution::set_value_t(), execution::set_error_t(std::exception_ptr)>;
+            using completion_signatures = execution::completion_signatures<
+                execution::set_value_t(),
+                execution::set_error_t(std::exception_ptr),
+                execution::set_stopped_t()
+            >;
 
         public:
             explicit acquire_sender(async_semaphore& sema) noexcept : sema_(&sema) {}
@@ -345,9 +379,7 @@ namespace coio {
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto acquire() noexcept {
-            return mtx_.lock() | execution::let_value([this]() noexcept {
-                return acquire_sender{*this};
-            });
+            return acquire_sender{*this};
         }
 
         [[nodiscard]]
@@ -363,26 +395,29 @@ namespace coio {
             return true;
         }
 
-        [[nodiscard]]
-        COIO_ALWAYS_INLINE auto release() noexcept {
-            return mtx_.lock_guard() | execution::then([this](auto lock_guard) {
-                if (waiting_list_head_) {
-                    auto head = std::exchange(waiting_list_head_, waiting_list_head_->next_);
-                    lock_guard.unlock();
-                    head->complete_(head);
+        auto release() noexcept -> void {
+            state_base* head = nullptr;
+            std::unique_lock guard{mtx_};
+            if (waiting_list_head_ != nullptr) {
+                head = std::exchange(waiting_list_head_, waiting_list_head_->next_);
+                if (waiting_list_head_ != nullptr) {
+                    waiting_list_head_->prev_ = nullptr;
                 }
-                else {
-                    lock_guard.unlock();
-                    auto current = counter_.load(std::memory_order_acquire);
-                    do {
-                        if (current == max()) std::terminate();
-                    }
-                    while (not counter_.compare_exchange_weak(
-                        current, current + 1,
-                        std::memory_order_acq_rel, std::memory_order_acquire
-                    ));
+                head->prev_ = nullptr;
+                head->next_ = nullptr;
+            }
+            else {
+                auto current = counter_.load(std::memory_order_acquire);
+                do {
+                    if (current == async_semaphore::max()) std::terminate();
                 }
-            });
+                while (not counter_.compare_exchange_weak(
+                    current, current + 1,
+                    std::memory_order_acq_rel, std::memory_order_acquire
+                ));
+            }
+            guard.unlock();
+            if (head != nullptr) head->complete_(head);
         }
 
         [[nodiscard]]
@@ -391,21 +426,45 @@ namespace coio {
         }
 
     private:
-        std::atomic_signed_lock_free counter_;
-        async_mutex mtx_;
+        auto unregister_(state_base* waiter) noexcept -> bool {
+            std::scoped_lock _{waiter->sema_.mtx_};
+            if (waiter->prev_ != nullptr) {
+                waiter->prev_->next_ = waiter->next_;
+            }
+            else if (waiting_list_head_ == waiter) {
+                waiting_list_head_ = waiter->next_;
+            }
+            else {
+                return false;
+            }
+
+            if (waiter->next_ != nullptr) {
+                waiter->next_->prev_ = waiter->prev_;
+            }
+
+            waiter->prev_ = nullptr;
+            waiter->next_ = nullptr;
+            return true;
+        }
+
+    private:
+        std::atomic<count_type> counter_;
+        atomutex mtx_;
         state_base* waiting_list_head_ = nullptr;
     };
 
-    using async_binary_semaphore = async_semaphore<1>;
+    template<typename CountType = std::atomic_unsigned_lock_free::value_type>
+    using async_binary_semaphore = async_semaphore<CountType, 1>;
 
 
+    template<typename CountType = std::atomic_unsigned_lock_free::value_type>
     class async_latch {
     public:
-        using count_type = std::atomic_unsigned_lock_free::value_type;
+        using count_type = CountType;
 
     private:
         class wait_sender {
-            friend class async_latch;
+            friend class async_latch<count_type>;
         private:
             struct state_base {
                 using operation_state_concept = execution::operation_state_tag;
@@ -429,11 +488,11 @@ namespace coio {
                 state(async_latch& latch, count_type n, Rcvr rcvr) noexcept : state_base(latch, n, &complete), rcvr_(std::move(rcvr)) {}
 
                 COIO_ALWAYS_INLINE auto start() & noexcept -> void {
-                    if (latch_.count_down(n_) == 0) {
+                    if (this->latch_.count_down(this->n_) == 0) {
                         execution::set_value(std::move(rcvr_));
                         return;
                     }
-                    latch_.waiting_list_.push(*this);
+                    this->latch_.waiting_list_.push(*this);
                 }
 
             private:
@@ -530,7 +589,7 @@ namespace coio {
         }
 
     private:
-        std::atomic_unsigned_lock_free counter_;
-        detail::intrusive_stack<wait_sender::state_base> waiting_list_{&wait_sender::state_base::next_};
+        std::atomic<count_type> counter_;
+        detail::intrusive_stack<typename wait_sender::state_base> waiting_list_{&wait_sender::state_base::next_};
     };
 }
