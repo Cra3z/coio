@@ -5,6 +5,7 @@
 #include <WS2tcpip.h>
 #include <MSWSock.h>
 #include <Windows.h>
+#include <limits>
 #include <coio/asyncio/iocp_context.h>
 #include <coio/asyncio/file.h>
 #include "../common.h"
@@ -108,7 +109,7 @@ namespace coio {
         if (handle_ == INVALID_HANDLE_VALUE) {
             throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor), "seek"};
         }
-        if (offset > LONG_LONG_MAX) {
+        if (offset > static_cast<std::size_t>(std::numeric_limits<::LONGLONG>::max())) {
             throw std::system_error{std::make_error_code(std::errc::value_too_large), "seek"};
         }
 

@@ -7,8 +7,12 @@
 
 #ifdef __SANITIZE_THREAD__
 #define COIO_BUILD_WITH_TSAN 1
-#elif defined(__has_feature) and __has_feature(thread_sanitizer)
+#elif defined(__clang__)
+#if __has_feature(thread_sanitizer)
 #define COIO_BUILD_WITH_TSAN 1
+#else
+#define COIO_BUILD_WITH_TSAN 0
+#endif
 #else
 #define COIO_BUILD_WITH_TSAN 0
 #endif

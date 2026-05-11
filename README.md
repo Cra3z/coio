@@ -35,6 +35,7 @@
 
 ### Build Options
 - `COIO_BUILD_EXAMPLES` (ON/OFF, default OFF) - Build example programs
+- `COIO_BUILD_TESTS` (ON/OFF, default OFF) - Build doctest-based tests
 - `COIO_SENDERS_BACKEND` (NVIDIA/BEMAN/CXX26, default NVIDIA) - Which std::execution implementation to use:
   - `NVIDIA` - NVIDIA/stdexec implementation
   - `BEMAN` - bemanproject/execution implementation  
@@ -55,6 +56,13 @@ cmake --build <build directory>
 ```shell
 cmake -S . -B <build directory> -DCOIO_BUILD_EXAMPLES=ON
 cmake --build <build directory>
+```
+
+### Build and Run Tests
+```shell
+cmake -S . -B <build directory> -DCOIO_BUILD_TESTS=ON
+cmake --build <build directory>
+ctest --test-dir <build directory>
 ```
 
 ### Install

@@ -1,9 +1,9 @@
 // ReSharper disable CppMemberFunctionMayBeConst
 #include <coio/detail/config.h>
 #if COIO_HAS_EPOLL
+#include <fcntl.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
-#include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <coio/asyncio/epoll_context.h>
 #include "../common.h"

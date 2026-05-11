@@ -37,6 +37,11 @@ namespace coio {
             execution::spawn(execution::upon_error(std::move(sndr), terminate_on_error), get_token());
         }
 
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto spawn_future(execution::sender auto sndr) noexcept {
+            execution::spawn_future(execution::upon_error(std::move(sndr), terminate_on_error), get_token());
+        }
+
     public:
         static constexpr std::size_t max_associations = execution::counting_scope::max_associations;
 

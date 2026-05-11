@@ -1,4 +1,4 @@
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <coio/asyncio/pipe.h>
 #include "../common.h"
 

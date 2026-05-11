@@ -2,11 +2,8 @@ cmake_minimum_required(VERSION 3.26)
 
 project(coio)
 
-add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
-add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/permissive->")
-add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>")
-
 option(COIO_BUILD_EXAMPLES "whether to build examples" OFF)
+option(COIO_BUILD_TESTS "whether to build tests" OFF)
 set(COIO_SENDERS_BACKEND "NVIDIA" CACHE STRING "the backend to use for std::execution support.
     available options are: NVIDIA, BEMAN, CXX26.
     NVIDIA - use NVIDIA/stdexec implementation,
@@ -22,6 +19,14 @@ file(GLOB_RECURSE COIO_PUBLIC_HEADERS CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/i
 add_library(
     ${PROJECT_NAME}
     ${COIO_PUBLIC_HEADERS}
+)
+
+target_compile_options(
+    ${PROJECT_NAME}
+    PUBLIC
+    "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>"
+    "$<$<CXX_COMPILER_ID:MSVC>:/permissive->"
+    "$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>"
 )
 
 add_library(
@@ -138,7 +143,7 @@ endif()
 if (LINUX)
     find_package(Liburing QUIET)
     if (Liburing_FOUND)
-        message(STATUS "found liburing: ${Liburing_LIBRARY}")
+        message(STATUS "Found liburing: ${Liburing_LIBRARY}")
         target_link_libraries(${PROJECT_NAME} PUBLIC Liburing::uring)
         install(
             FILES ${PROJECT_SOURCE_DIR}/cmake/FindLiburing.cmake
@@ -184,4 +189,9 @@ install(
 
 if (COIO_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if (COIO_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

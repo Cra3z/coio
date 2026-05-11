@@ -6,7 +6,8 @@
 #include <system_error>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <coio/detail/error.h>
+#include <unistd.h> // IWYU pragma: keep
+#include <coio/detail/error.h> // IWYU pragma: keep
 
 namespace coio {
     class endpoint;
