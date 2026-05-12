@@ -6,6 +6,7 @@
 #include <thread>
 #include <unordered_set>
 #include <coio/utils/signal_set.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 #include "../common.h"
 
 namespace coio {
@@ -191,3 +192,5 @@ namespace coio {
         }
     }
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

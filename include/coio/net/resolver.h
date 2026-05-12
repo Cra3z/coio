@@ -21,6 +21,8 @@ namespace coio {
         auto ai_addrconfig_v() noexcept -> int;
 
         struct resolve_query_t {
+COIO_CLANG_SUPPRESS_PUSH()
+COIO_CLANG_IGNORE("-Wglobal-constructors")
             inline static const int canonical_name = ai_canonname_v();
             inline static const int passive = ai_passive_v();
             inline static const int numeric_host = ai_numerichost_v();
@@ -28,6 +30,7 @@ namespace coio {
             inline static const int v4_mapped = ai_v4mapped_v();
             inline static const int all_matching = ai_all_v();
             inline static const int address_configured = ai_addrconfig_v();
+COIO_CLANG_SUPPRESS_POP()
 
             std::string host_name;
             std::string service_name;

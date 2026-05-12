@@ -1,5 +1,6 @@
 #include <coio/asyncio/file.h>
 #include <coio/utils/scope_exit.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 #include "../common.h"
 
 namespace coio::detail {
@@ -49,7 +50,7 @@ namespace coio::detail {
             ::DWORD n = 0;
 
             do {
-                if (not ::ReadFile(handle, buffer.data(), std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu), &n, &overlapped)) {
+                if (not ::ReadFile(handle, buffer.data(), static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)), &n, &overlapped)) {
                     ::DWORD err = ::GetLastError();
                     if (err == ERROR_IO_PENDING) {
                         if (not ::GetOverlappedResult(handle, &overlapped, &n, TRUE)) {
@@ -94,7 +95,7 @@ namespace coio::detail {
             ::DWORD n = 0;
 
             do {
-                if (not ::WriteFile(handle, buffer.data(), std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu), &n, &overlapped)) {
+                if (not ::WriteFile(handle, buffer.data(), static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)), &n, &overlapped)) {
                     ::DWORD err = ::GetLastError();
                     if (err == ERROR_IO_PENDING) {
                         if (not ::GetOverlappedResult(handle, &overlapped, &n, TRUE)) {
@@ -195,3 +196,5 @@ namespace coio::detail {
         file_sync_all(handle);
     }
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

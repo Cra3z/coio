@@ -20,7 +20,7 @@ namespace coio::detail {
         using const_reference = T&;
 
     public:
-        explicit intrusive_stack(pointer (T::* next)) noexcept : head_(this), next_(next) {}
+        explicit intrusive_stack(pointer T::* next) noexcept : head_(this), next_(next) {}
 
         /// return the list status before pushing
         auto push(reference object) noexcept -> stack_status {
@@ -60,6 +60,6 @@ namespace coio::detail {
 
     private:
         std::atomic<void*> head_;
-        pointer (T::* next_);
+        pointer T::* next_;
     };
 }

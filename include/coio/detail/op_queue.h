@@ -11,6 +11,7 @@
 #include <vector>
 #include <coio/detail/config.h>
 #include <coio/utils/atomutex.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio::detail {
     class queue_event {
@@ -319,3 +320,5 @@ namespace coio::detail {
         atomutex mtx_;
     };
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

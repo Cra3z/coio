@@ -1,9 +1,10 @@
 ﻿#pragma once
-#include <cstdint>
+#include <cstdint> // IWYU pragma: keep
 #include <cstring>
 #include <memory>
 #include <utility>
 #include <coio/detail/config.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio::detail {
     struct default_align_t {
@@ -83,10 +84,10 @@ namespace coio::detail {
     template<>
     struct co_memory<void> {
         template<typename Alloc>
-        static auto allocate(Alloc alloc_, std::size_t n) -> void* {
+        static auto allocate(Alloc alloc, std::size_t n) -> void* {
             using alloc_t = typename std::allocator_traits<Alloc>::template rebind_alloc<default_align_t>;
             using alloc_traits = std::allocator_traits<alloc_t>;
-            alloc_t allocator_(std::move(alloc_));
+            alloc_t allocator_(std::move(alloc));
             if constexpr (std::default_initializable<Alloc> and alloc_traits::is_always_equal::value) { // for stateless-allocator
                 /*
                  * layout:
@@ -101,8 +102,8 @@ namespace coio::detail {
                 void* result = alloc_traits::allocate(allocator_, ceiling_division(n, sizeof(default_align_t)));
                 dealloc_fn_t dealloc_fn = +[](default_align_t* ptr, std::size_t co_state_size) noexcept {
                     auto length = co_state_size + sizeof(dealloc_fn_t);
-                    alloc_t allocator_(Alloc{});
-                    alloc_traits::deallocate(allocator_, ptr, ceiling_division(length, alignof(default_align_t)));
+                    alloc_t alloc_(Alloc{});
+                    alloc_traits::deallocate(alloc_, ptr, ceiling_division(length, alignof(default_align_t)));
                 };
                 std::memcpy(static_cast<std::byte*>(result) + offset_of_dealloc_fn, &dealloc_fn, sizeof(dealloc_fn_t));
                 return result;
@@ -123,9 +124,9 @@ namespace coio::detail {
                 dealloc_fn_t dealloc_fn = +[](default_align_t* ptr, std::size_t co_state_size) noexcept {
                     auto length = co_state_size + sizeof(dealloc_fn_t);
                     auto alloc_ptr_ = std::launder(static_cast<alloc_t*>(align_address(ptr, alignof(alloc_t), length)));
-                    alloc_t allocator_ = std::move(*alloc_ptr_);
+                    alloc_t alloc_ = std::move(*alloc_ptr_);
                     std::destroy_at(alloc_ptr_);
-                    alloc_traits::deallocate(allocator_, ptr, (length + sizeof(alloc_t) + max_alignment - 1) / alignof(default_align_t));
+                    alloc_traits::deallocate(alloc_, ptr, (length + sizeof(alloc_t) + max_alignment - 1) / alignof(default_align_t));
                 };
                 std::memcpy(static_cast<std::byte*>(result) + offset_of_dealloc_fn, &dealloc_fn, sizeof(dealloc_fn_t));
                 void(std::construct_at(static_cast<alloc_t*>(align_address(result, alignof(alloc_t), n)), std::move(allocator_)));
@@ -161,3 +162,5 @@ namespace coio::detail {
         }
     };
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <coio/detail/error.h>
 #include <coio/net/basic.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     ipv4_address::ipv4_address(std::uint32_t host_u32) noexcept : net_u32_(::htonl(host_u32)) {}
@@ -96,3 +97,5 @@ namespace coio {
         }
     }
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

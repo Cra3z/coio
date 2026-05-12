@@ -13,6 +13,7 @@
 #include <coio/detail/execution.h>
 #include <coio/detail/op_queue.h>
 #include <coio/utils/stop_token.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     namespace detail {
@@ -200,7 +201,7 @@ namespace coio {
 
                 sleep_sender(const sleep_sender&) = delete;
 
-                sleep_sender(sleep_sender&& other) noexcept : ctx_(std::exchange(other.ctx_, {})), deadline_(std::exchange(other.deadline_, {})) {};
+                sleep_sender(sleep_sender&& other) noexcept : ctx_(std::exchange(other.ctx_, {})), deadline_(std::exchange(other.deadline_, {})) {}
 
                 ~sleep_sender() = default;
 
@@ -473,3 +474,5 @@ namespace coio {
         std::counting_semaphore<> sema_{0};
     };
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

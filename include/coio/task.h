@@ -10,6 +10,7 @@
 #include <coio/utils/allocator_resource.h>
 #include <coio/utils/stop_token.h>
 #include <coio/utils/utility.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     namespace detail {
@@ -127,6 +128,7 @@ namespace coio {
 
             COIO_ALWAYS_INLINE auto await_suspend(std::coroutine_handle<RcvrPromise> continuation) noexcept -> std::coroutine_handle<> {
                 COIO_ASSERT(continuation_ == continuation);
+                static_cast<void>(continuation);
                 const auto coro = std::coroutine_handle<Promise>::from_address(this->coro_.address());
                 coro.promise().state_ = this;
                 return coro;
@@ -221,6 +223,22 @@ namespace coio {
 
         template<typename TaskType, typename T, typename Alloc>
         struct task_promise : task_promise_return<T>, promise_alloc_control<Alloc> {
+            struct env {
+                auto query(get_allocator_t) const noexcept {
+                    return promise->alloc_adaptor_.get_allocator();
+                }
+
+                auto query(get_stop_token_t) const noexcept {
+                    return promise->state_->get_stop_token();
+                }
+
+                auto query(execution::get_scheduler_t) const noexcept {
+                    return execution::inline_scheduler{};
+                }
+
+                const task_promise* promise;
+            };
+
             task_promise() = default;
 
             task_promise(std::allocator_arg_t, auto alloc, const auto&...) noexcept : alloc_adaptor_(std::move(alloc)) {}
@@ -240,12 +258,8 @@ namespace coio {
                 return execution::as_awaitable(std::forward<Sender>(sender), *this);
             }
 
-            COIO_ALWAYS_INLINE auto get_env() const noexcept {
-                return execution::env{
-                    execution::prop{get_allocator, alloc_adaptor_.get_allocator()},
-                    execution::prop{get_stop_token, this->state_->get_stop_token()},
-                    execution::prop{execution::get_scheduler, execution::inline_scheduler{}}
-                };
+            COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
+                return env{this};
             }
 
             COIO_NO_UNIQUE_ADDRESS allocator_adaptor<Alloc> alloc_adaptor_;
@@ -275,7 +289,7 @@ namespace coio {
             detail::set_value_t<T>,
             execution::set_error_t(std::exception_ptr),
             execution::set_stopped_t()
-        >;;
+        >;
 
     private:
         task(std::coroutine_handle<promise_type> coro) noexcept : coro_{coro} {}
@@ -334,4 +348,7 @@ namespace coio {
     private:
         std::coroutine_handle<promise_type> coro_;
     };
+
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

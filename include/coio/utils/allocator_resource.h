@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <coio/utils/utility.h>
 #include <coio/detail/concepts.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     class allocator_resource : public std::pmr::memory_resource {
@@ -30,7 +31,7 @@ namespace coio {
 
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
         template<typename Alloc>
-        struct proxied : proxied_base {
+        struct proxied final : proxied_base {
             explicit proxied(Alloc alloc) noexcept : alloc_(std::move(alloc)) {}
 
             proxied(const proxied&) = delete;
@@ -55,7 +56,7 @@ namespace coio {
                 traits_t::deallocate(alloc, static_cast<placeholder<N>*>(p), count);
             }
 
-            auto do_allocate(std::size_t bytes, std::size_t alignment) -> void* override {
+            auto do_allocate(std::size_t bytes, std::size_t alignment) -> void* final {
                 switch (alignment) {
                     case 1:   return alloc_impl<1>(bytes);
                     case 2:   return alloc_impl<2>(bytes);
@@ -70,7 +71,7 @@ namespace coio {
                 }
             }
 
-            auto do_deallocate(void* p, std::size_t bytes, std::size_t alignment) -> void override {
+            auto do_deallocate(void* p, std::size_t bytes, std::size_t alignment) -> void final {
                 if (p == nullptr) return;
                 switch (alignment) {
                     case 1:   return dealloc_impl<1>(p, bytes);
@@ -86,14 +87,14 @@ namespace coio {
                 }
             }
 
-            auto do_is_equal(const proxied_base& other) const noexcept -> bool override {
+            auto do_is_equal(const proxied_base& other) const noexcept -> bool final {
                 if (auto other_ = dynamic_cast<const proxied*>(&other)) {
                     return alloc_ == other_->alloc_;
                 }
                 return false;
             }
 
-            auto destroy() noexcept -> void override {
+            auto destroy() noexcept -> void final {
                 if constexpr (is_small_object<proxied>) { // this object allocated at `allocator_resource::storage_`
                     std::destroy_at(this);
                 }
@@ -204,3 +205,5 @@ namespace coio {
         std::pmr::memory_resource* resource;
     };
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

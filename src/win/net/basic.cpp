@@ -2,6 +2,7 @@
 #include <variant>
 #include <coio/net/basic.h>
 #include <coio/detail/error.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 #include "../common.h"
 
 namespace coio {
@@ -93,3 +94,5 @@ namespace coio {
         }
     }
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

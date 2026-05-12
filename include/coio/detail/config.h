@@ -17,7 +17,7 @@
 #define COIO_BUILD_WITH_TSAN 0
 #endif
 
-#if COIO_BUILD_WITH_TSAN
+#if COIO_BUILD_WITH_TSAN and __has_include(<sanitizer/tsan_interface.h>)
 #include <sanitizer/tsan_interface.h>
 #define COIO_TSAN_ACQUIRE(addr) __tsan_acquire(addr)
 #define COIO_TSAN_RELEASE(addr) __tsan_release(addr)
@@ -139,4 +139,43 @@
 #else
 #define COIO_HAS_IO_URING 0
 #endif
+#endif
+
+#define COIO_STRINGIZE_IMPL(...) #__VA_ARGS__
+#define COIO_STRINGIZE(...) COIO_STRINGIZE_IMPL(__VA_ARGS__)
+
+#if COIO_CXX_COMPILER_MSVC
+#define COIO_PRAGMA(ARG) __pragma(ARG)
+#else
+#define COIO_PRAGMA(ARG) _Pragma(COIO_STRINGIZE(ARG))
+#endif
+
+#if COIO_CXX_COMPILER_CLANG
+#define COIO_CLANG_SUPPRESS_PUSH() COIO_PRAGMA(clang diagnostic push)
+#define COIO_CLANG_IGNORE(...) COIO_PRAGMA(clang diagnostic ignored __VA_ARGS__)
+#define COIO_CLANG_SUPPRESS_POP() COIO_PRAGMA(clang diagnostic pop)
+#else
+#define COIO_CLANG_SUPPRESS_PUSH()
+#define COIO_CLANG_IGNORE(...)
+#define COIO_CLANG_SUPPRESS_POP()
+#endif
+
+#if COIO_CXX_COMPILER_GCC
+#define COIO_GCC_SUPPRESS_PUSH() COIO_PRAGMA(gcc diagnostic push)
+#define COIO_GCC_IGNORE(...) COIO_PRAGMA(gcc diagnostic ignored __VA_ARGS__)
+#define COIO_GCC_SUPPRESS_POP() COIO_PRAGMA(gcc diagnostic pop)
+#else
+#define COIO_GCC_SUPPRESS_PUSH()
+#define COIO_GCC_IGNORE(...)
+#define COIO_GCC_SUPPRESS_POP()
+#endif
+
+#if COIO_CXX_COMPILER_MSVC
+#define COIO_MSVC_SUPPRESS_PUSH() COIO_PRAGMA(warning(push))
+#define COIO_MSVC_IGNORE(...) COIO_PRAGMA(warning(disable : __VA_ARGS__))
+#define COIO_MSVC_SUPPRESS_POP() COIO_PRAGMA(warning(pop))
+#else
+#define COIO_MSVC_SUPPRESS_PUSH()
+#define COIO_MSVC_IGNORE(...)
+#define COIO_MSVC_SUPPRESS_POP()
 #endif

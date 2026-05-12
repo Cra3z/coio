@@ -4,6 +4,7 @@
 #include <variant>
 #include <coio/detail/execution.h>
 #include <coio/utils/utility.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio::detail {
     template<typename, typename>
@@ -81,3 +82,5 @@ namespace coio::detail {
         std::variant<std::monostate, std::tuple<Values...>, Error> result_;
     };
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

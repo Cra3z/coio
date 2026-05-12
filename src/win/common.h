@@ -15,7 +15,8 @@ namespace coio {
 }
 
 namespace coio::detail {
-    COIO_ALWAYS_INLINE auto to_error_code(::DWORD err) noexcept -> std::error_code {
+    template<std::integral T>
+    COIO_ALWAYS_INLINE auto to_error_code(T err) noexcept -> std::error_code {
         return {static_cast<int>(err), std::system_category()};
     }
 

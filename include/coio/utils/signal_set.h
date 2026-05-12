@@ -4,6 +4,7 @@
 #include <utility>
 #include <coio/detail/execution.h>
 #include <coio/detail/intrusive_stack.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     namespace detail {
@@ -21,7 +22,7 @@ namespace coio {
             using finish_fn_t = void(*)(node*, int) noexcept;
 
         public:
-            explicit node(signal_set& owner, finish_fn_t finish) noexcept : owner_(owner), finish_(finish) {};
+            explicit node(signal_set& owner, finish_fn_t finish) noexcept : owner_(owner), finish_(finish) {}
 
             node(const node&) = delete;
 
@@ -115,3 +116,5 @@ namespace coio {
     [[nodiscard]]
     auto strsignal(int signum) noexcept -> std::string_view;
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

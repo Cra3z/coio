@@ -8,6 +8,7 @@
 #include <limits>
 #include <coio/asyncio/iocp_context.h>
 #include <coio/asyncio/file.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 #include "../common.h"
 
 namespace coio {
@@ -36,8 +37,16 @@ namespace coio {
 
                 ntdll_loader() noexcept {
                     if (::HMODULE ntdll = ::GetModuleHandleA("NTDLL.DLL")) {
+#if COIO_CXX_COMPILER_CLANG
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+#pragma clang diagnostic ignored "-Wcast-function-type-strict"
+#endif
                         NtSetInformationFile = reinterpret_cast<NtSetInformationFile_>(::GetProcAddress(ntdll, "NtSetInformationFile"));
                         RtlNtStatusToDosError = reinterpret_cast<RtlNtStatusToDosError_>(::GetProcAddress(ntdll, "RtlNtStatusToDosError"));
+#if COIO_CXX_COMPILER_CLANG
+#pragma clang diagnostic pop
+#endif
                     }
                 }
                 NtSetInformationFile_ NtSetInformationFile{};
@@ -126,13 +135,12 @@ namespace coio {
         case detail::seek_whence::seek_end:
             method = FILE_END;
             break;
-        default:
-            throw std::system_error{std::make_error_code(std::errc::invalid_argument), "seek"};
+        default: unreachable();
         }
 
         ::LARGE_INTEGER new_offset{};
         detail::throw_win_error(::SetFilePointerEx(handle_, {.QuadPart = ::LONGLONG(offset)}, &new_offset, method), "seek");
-        return offset_ = new_offset.QuadPart;
+        return offset_ = static_cast<std::size_t>(new_offset.QuadPart);
     }
 
     auto iocp_context::scheduler::io_object::file_read(std::span<std::byte> buffer) -> std::size_t {
@@ -190,7 +198,7 @@ namespace coio {
             ::OVERLAPPED* overlapped = nullptr;
             ::ULONG_PTR key = 0;
             ::DWORD bytes = 0;
-            const ::BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, timeout);
+            const ::BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, static_cast<::DWORD>(timeout));
             const ::DWORD err = success ? 0 : ::GetLastError();
 
             node* ready_time_ops = nullptr;
@@ -256,7 +264,7 @@ namespace coio {
             const ::BOOL ok = ::ReadFile(
                 handle,
                 buffer.data(),
-                std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu),
+                static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)),
                 &bytes_read,
                 this
             );
@@ -307,7 +315,7 @@ namespace coio {
             const ::BOOL ok = ::WriteFile(
                 handle,
                 buffer.data(),
-                std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu),
+                static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)),
                 &bytes_written,
                 this
             );
@@ -350,7 +358,7 @@ namespace coio {
             const ::BOOL ok = ::ReadFile(
                 handle,
                 buffer.data(),
-                std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu),
+                static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), std::size_t{0xff'ff'ff'ffu})),
                 &bytes_read,
                 this
             );
@@ -397,7 +405,7 @@ namespace coio {
             const ::BOOL ok = ::WriteFile(
                 handle,
                 buffer.data(),
-                std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu),
+                static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)),
                 &bytes_written,
                 this
             );
@@ -449,7 +457,7 @@ namespace coio {
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                complete(0, err);
+                complete(0, static_cast<::DWORD>(err));
                 return false;
             }
             return true;
@@ -498,7 +506,7 @@ namespace coio {
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                complete(0, err);
+                complete(0, static_cast<::DWORD>(err));
                 return false;
             }
             return true;
@@ -547,7 +555,7 @@ namespace coio {
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                complete(0, err);
+                complete(0, static_cast<::DWORD>(err));
                 return false;
             }
             return true;
@@ -595,7 +603,7 @@ namespace coio {
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                complete(0, err);
+                complete(0, static_cast<::DWORD>(err));
                 return false;
             }
             return true;
@@ -661,7 +669,7 @@ namespace coio {
             if (not ok) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                complete(0, err);
+                complete(0, static_cast<::DWORD>(err));
                 return false;
             }
             return true;
@@ -725,7 +733,7 @@ namespace coio {
                         .sin_addr = in4addr_any
                     };
                     if (::bind(sock, reinterpret_cast<::sockaddr*>(&addr4), sizeof(addr4)) == SOCKET_ERROR) {
-                        err = ::WSAGetLastError();
+                        err = static_cast<::DWORD>(::WSAGetLastError());
                     }
                 }
                 else if (info.iAddressFamily == AF_INET6) {
@@ -735,7 +743,7 @@ namespace coio {
                         .sin6_addr = in6addr_any
                     };
                     if (::bind(sock, reinterpret_cast<::sockaddr*>(&addr6), sizeof(addr6)) == SOCKET_ERROR) {
-                        err = ::WSAGetLastError();
+                        err = static_cast<::DWORD>(::WSAGetLastError());
                     }
                 }
                 else {
@@ -761,7 +769,7 @@ namespace coio {
             if (not ok) {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return true;
-                complete(0, err);
+                complete(0, static_cast<::DWORD>(err));
                 return false;
             }
             return true;
@@ -786,3 +794,5 @@ namespace coio {
     }
 }
 #endif
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

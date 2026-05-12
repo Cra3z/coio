@@ -11,6 +11,7 @@
 #include <coio/utils/type_traits.h>
 #include <coio/detail/elide.h>
 #include <coio/detail/execution.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     namespace detail {
@@ -495,3 +496,5 @@ namespace coio {
 
     inline constexpr stop_when_t stop_when{};
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

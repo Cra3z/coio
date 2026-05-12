@@ -1,6 +1,6 @@
-#include <memory>
 #include <coio/net/socket.h>
 #include <coio/utils/utility.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 #include "../common.h"
 
 namespace coio::detail::socket {
@@ -62,7 +62,7 @@ namespace coio::detail::socket {
     auto set_sockopt(socket_native_handle_type handle, int level, int option_name, std::span<const std::byte> value) -> void {
         check_handle(handle);
         throw_wsa_error(
-           ::setsockopt(handle, level, option_name, reinterpret_cast<const char*>(value.data()), value.size()),
+           ::setsockopt(handle, level, option_name, reinterpret_cast<const char*>(value.data()), static_cast<int>(value.size())),
             "basic_socket::set_option"
         );
     }
@@ -74,7 +74,7 @@ namespace coio::detail::socket {
             ::getsockopt(handle, level, option_name, reinterpret_cast<char*>(value.data()), &n),
             "basic_socket::get_option"
         );
-        COIO_ASSERT(n == value.size());
+        COIO_ASSERT(n == static_cast<int>(value.size()));
     }
 
     auto sol_socket_v() noexcept -> int {
@@ -151,8 +151,8 @@ namespace coio::detail::socket {
 
     auto open(int family, int type, int protocol_id) -> socket_native_handle_type {
         const ::SOCKET handle = ::WSASocketW(family, type, protocol_id, nullptr, 0, WSA_FLAG_OVERLAPPED);
-        if (handle == SOCKET_ERROR) [[unlikely]] {
-            throw std::system_error{to_error_code(::WSAGetLastError()), "open"};
+        if (handle == static_cast<::SOCKET>(SOCKET_ERROR)) [[unlikely]] {
+            throw std::system_error{to_error_code(static_cast<::DWORD>(::WSAGetLastError())), "open"};
         }
         return handle;
     }
@@ -182,7 +182,7 @@ namespace coio::detail::socket {
     auto accept(socket_native_handle_type handle) -> socket_native_handle_type {
         check_handle(handle);
         const ::SOCKET accepted = ::accept(handle, nullptr, nullptr);
-        if (accepted == SOCKET_ERROR) [[unlikely]] {
+        if (accepted == static_cast<::SOCKET>(SOCKET_ERROR)) [[unlikely]] {
             throw std::system_error{to_error_code(::WSAGetLastError()), "accept"};
         }
         return accepted;
@@ -236,3 +236,5 @@ namespace coio::detail::socket {
         return static_cast<std::size_t>(n);
     }
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

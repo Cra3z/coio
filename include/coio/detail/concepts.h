@@ -76,16 +76,19 @@ namespace coio {
 
     namespace detail {
         template<typename Promise, typename Expr> requires awaiter<decltype(operator co_await(std::declval<Expr>())), Promise>
+        [[maybe_unused]]
         static decltype(auto) get_awaiter_impl(Expr&& expr) noexcept(noexcept(operator co_await(std::declval<Expr>()))) {
             return operator co_await(std::forward<Expr>(expr));
         }
 
         template<typename Promise, typename Expr> requires awaiter<decltype(std::declval<Expr>().operator co_await()), Promise>
+        [[maybe_unused]]
         static decltype(auto) get_awaiter_impl(Expr&& expr) noexcept(noexcept(std::declval<Expr>().operator co_await())) {
             return std::forward<Expr>(expr).operator co_await();
         }
 
         template<typename Promise, awaiter<Promise> Expr>
+        [[maybe_unused]]
         static decltype(auto) get_awaiter_impl(Expr&& expr) noexcept {
             return std::forward<Expr>(expr);
         }
@@ -146,7 +149,7 @@ namespace coio {
         using await_result_t = typename awaitable_traits<T, Promise>::result_type;
     }
 
-    inline constexpr detail::get_awaiter_fn get_awaiter{};
+    [[maybe_unused]] inline constexpr detail::get_awaiter_fn get_awaiter{};
 
     template<typename Awaitable, typename PromiseType = void>
     concept awaitable = awaiter<typename detail::awaitable_traits<Awaitable>::awaiter_type, PromiseType>;

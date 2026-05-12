@@ -6,11 +6,12 @@
 #error "IOCP is not available"
 #endif
 
-#include <BaseTsd.h>
+#include <basetsd.h>
 #include <WinSock2.h>
 #include <coio/execution_context.h>
 #include <coio/detail/async_result.h>
 #include <coio/detail/io_descriptions.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     namespace detail {
@@ -272,8 +273,8 @@ namespace coio {
             using native_type = typename iocp_sexpr_wrapper<Sexpr>::type;
 
         public:
-            iocp_state_base_for(HANDLE handle, iocp_context& ctx, Sexpr sexpr) noexcept
-                : native_type(std::move(sexpr)), iocp_node(ctx, handle) {}
+            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, Sexpr sexpr) noexcept
+                : native_type(std::move(sexpr)), iocp_node(ctx, handle_) {}
 
         protected:
             auto do_start() noexcept -> bool {
@@ -360,3 +361,5 @@ namespace coio {
         auto iocp_state_base_for<async_connect_t>::complete(::DWORD, ::DWORD) noexcept -> void;
     }
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

@@ -1,6 +1,7 @@
+#include <netdb.h>
 #include <coio/net/resolver.h>
 #include <coio/utils/scope_exit.h>
-#include <netdb.h>
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 #include "../common.h"
 
 namespace coio {
@@ -78,3 +79,5 @@ namespace coio {
         }
     }
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

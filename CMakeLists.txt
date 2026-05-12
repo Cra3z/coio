@@ -21,12 +21,25 @@ add_library(
     ${COIO_PUBLIC_HEADERS}
 )
 
+if (MSVC)
+    set(COIO_COMPILER_WARNING_FLAG "/W4")
+else()
+    set(
+        COIO_COMPILER_WARNING_FLAG
+        "-Wall"
+        "-Wextra"
+        "-Wpedantic"
+    )
+endif()
+
 target_compile_options(
     ${PROJECT_NAME}
     PUBLIC
     "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>"
     "$<$<CXX_COMPILER_ID:MSVC>:/permissive->"
     "$<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>"
+    PRIVATE
+    "${COIO_COMPILER_WARNING_FLAG}"
 )
 
 add_library(

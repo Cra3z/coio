@@ -9,8 +9,9 @@
 #include <coio/detail/config.h>
 #include <coio/utils/format.h>
 #if COIO_OS_WINDOWS
-#include <BaseTsd.h>
+#include <basetsd.h>
 #endif
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     namespace detail {
@@ -270,3 +271,5 @@ struct std::formatter<coio::endpoint> : coio::no_specification_formatter {
 };
 
 #endif
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep

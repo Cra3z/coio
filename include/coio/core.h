@@ -5,6 +5,7 @@
 #include <coio/detail/execution.h>
 #include <coio/detail/intrusive_stack.h>
 #include <coio/utils/async_scope.h> // IWYU pragma: keep
+#include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     using execution::scheduler;
@@ -328,3 +329,5 @@ namespace coio {
     inline constexpr when_any_t when_any{};
     inline constexpr when_any_with_variant_t when_any_with_variant{};
 }
+
+#include <coio/detail/suppress_pop.h> // IWYU pragma: keep
