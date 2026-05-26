@@ -8,8 +8,8 @@
     #pragma GCC diagnostic pop
 #endif
 
-#ifdef COIO_SUPPRESS_PUSH
-#undef COIO_SUPPRESS_PUSH
+#ifdef COIO_DETAIL_SUPPRESS_PUSH_INCLUDED
+#undef COIO_DETAIL_SUPPRESS_PUSH_INCLUDED
 #else
 #error "<coio/detail/suppress_pop.h> shall be included before <coio/detail/suppress_push.h> is included again"
 #endif

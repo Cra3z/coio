@@ -11,6 +11,20 @@
 #include <coio/utils/stop_token.h>
 
 namespace coio {
+    namespace detail {
+        template<typename Rcvr>
+        COIO_ALWAYS_INLINE auto affined_sched(const Rcvr& rcvr) noexcept {
+            return detail::query_or(
+                execution::get_start_scheduler,
+                execution::get_env(rcvr),
+                execution::inline_scheduler{}
+            );
+        }
+
+        template<typename Rcvr>
+        using affined_sched_t = decltype(detail::affined_sched(std::declval<Rcvr>()));
+    }
+
     template<typename Mutex>
     concept basic_async_lockable = requires (Mutex&& mtx) {
         { mtx.lock() } -> execution::sender;
@@ -137,8 +151,14 @@ namespace coio {
             template<typename Rcvr>
             class state : public state_base {
                 friend async_mutex;
+            private:
+                using sub_state_t = execution::connect_result_t<execution::schedule_result_t<detail::affined_sched_t<Rcvr>>, Rcvr>;
+
             public:
-                state(async_mutex& mtx, Rcvr rcvr) noexcept : state_base(mtx, &complete), rcvr_(std::move(rcvr)) {}
+                state(async_mutex& mtx, Rcvr rcvr) noexcept : state_base(mtx, &complete), sub_state_(execution::connect(
+                    execution::schedule(detail::affined_sched(rcvr)),
+                    std::move(rcvr)
+                )) {}
 
                 state(const state&) = delete;
 
@@ -149,7 +169,7 @@ namespace coio {
                         std::uintptr_t old_state = not_locked;
                         // we guess that the current state is `not_locked`. if we are right, set state `lock_but_no_waiter` and then resume.
                         if (mtx_.state_.compare_exchange_strong(old_state, locked_but_no_waiter)) {
-                            execution::set_value(std::move(rcvr_));
+                            execution::start(sub_state_);
                             return;
                         }
                         // we are wrong, it's not `not_locked`, instead of the address of some one lock_operation or null.
@@ -164,11 +184,11 @@ namespace coio {
             private:
                 static auto complete(state_base* self) noexcept -> void {
                     auto this_ = static_cast<state*>(self);
-                    execution::set_value(std::move(this_->rcvr_));
+                    execution::start(this_->sub_state_);
                 }
 
             private:
-                Rcvr rcvr_;
+                sub_state_t sub_state_;
             };
 
         public:
@@ -285,6 +305,31 @@ namespace coio {
         struct state : state_base {
             using stop_token_t = stop_token_of_t<execution::env_of_t<Rcvr>>;
 
+            struct rcvr_ref {
+                using receiver_concept = execution::receiver_tag;
+
+                auto set_value() && noexcept -> void {
+                    execution::set_value(::std::move(rcvr));
+                }
+
+                template <typename E>
+                auto set_error(E&& e) && noexcept -> void {
+                    execution::set_error(::std::move(rcvr), ::std::forward<E>(e));
+                }
+
+                auto set_stopped() && noexcept -> void {
+                    execution::set_stopped(::std::move(rcvr));
+                }
+
+                auto get_env() const noexcept {
+                    return execution::get_env(rcvr);
+                }
+
+                Rcvr& rcvr;
+            };
+
+            using sub_state_t = execution::connect_result_t<execution::schedule_result_t<detail::affined_sched_t<Rcvr>>, rcvr_ref>;
+
             state(async_semaphore& sema, Rcvr rcvr) noexcept : state_base(sema, &complete), rcvr_(std::move(rcvr)) {}
 
             COIO_ALWAYS_INLINE auto start() & noexcept -> void {
@@ -294,12 +339,16 @@ namespace coio {
                     return;
                 }
 
-                stop_cb_.emplace(stop_token, std::bind_front(&state::on_stop_requested, this));
+                sub_state_.emplace(detail::elide{
+                    execution::connect,
+                    execution::schedule(detail::affined_sched(rcvr_)),
+                    rcvr_ref{rcvr_}
+                });
 
                 std::unique_lock guard{this->sema_.mtx_};
                 if (this->sema_.try_acquire()) {
                     guard.unlock();
-                    execution::set_value(std::move(rcvr_));
+                    execution::start(*sub_state_);
                     return;
                 }
 
@@ -308,11 +357,14 @@ namespace coio {
                 if (this->next_ != nullptr) {
                     this->next_->prev_ = this;
                 }
+                guard.unlock();
+
+                stop_cb_.emplace(stop_token, std::bind_front(&state::on_stop_requested, this));
             }
 
             static auto complete(state_base* self) noexcept -> void {
                 auto this_ = static_cast<state*>(self);
-                execution::set_value(std::move(this_->rcvr_));
+                execution::start(*this_->sub_state_);
             }
 
             auto on_stop_requested() noexcept -> void {
@@ -323,6 +375,7 @@ namespace coio {
 
             using stop_cb_t = decltype(std::bind_front(&state::on_stop_requested, std::declval<state*>()));
             Rcvr rcvr_;
+            std::optional<sub_state_t> sub_state_;
             std::optional<stop_callback_for_t<stop_token_t, stop_cb_t>> stop_cb_;
         };
 
@@ -485,11 +538,17 @@ namespace coio {
             template<typename Rcvr>
             class state : public state_base {
             public:
-                state(async_latch& latch, count_type n, Rcvr rcvr) noexcept : state_base(latch, n, &complete), rcvr_(std::move(rcvr)) {}
+                using sched_t = detail::affined_sched_t<Rcvr>;
+
+                using sub_state_t = execution::connect_result_t<execution::schedule_result_t<sched_t>, Rcvr>;
+
+                state(async_latch& latch, count_type n, Rcvr rcvr) noexcept :
+                    state_base(latch, n, &complete),
+                    sub_state_(execution::connect(execution::schedule(detail::affined_sched(rcvr)), std::move(rcvr))) {}
 
                 COIO_ALWAYS_INLINE auto start() & noexcept -> void {
                     if (this->latch_.count_down(this->n_) == 0) {
-                        execution::set_value(std::move(rcvr_));
+                        execution::start(sub_state_);
                         return;
                     }
                     this->latch_.waiting_list_.push(*this);
@@ -498,11 +557,11 @@ namespace coio {
             private:
                 static auto complete(state_base* self) noexcept -> void {
                     auto this_ = static_cast<state*>(self);
-                    execution::set_value(std::move(this_->rcvr_));
+                    execution::start(this_->sub_state_);
                 }
 
             private:
-                Rcvr rcvr_;
+                sub_state_t sub_state_;
             };
 
         public:

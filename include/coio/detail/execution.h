@@ -67,20 +67,21 @@ namespace coio {
 
     namespace execution {
         using detail::execution_impl::get_domain_t;
+        using detail::execution_impl::get_completion_domain_t;
         using detail::execution_impl::get_scheduler_t;
+        using detail::execution_impl::get_start_scheduler_t;
+        using detail::execution_impl::get_completion_scheduler_t;
         using detail::execution_impl::get_delegation_scheduler_t;
         using detail::execution_impl::get_forward_progress_guarantee_t;
-        using detail::execution_impl::get_completion_scheduler_t;
-        using detail::execution_impl::get_env_t;
         using detail::execution_impl::get_await_completion_adaptor_t;
 
         using detail::execution_impl::get_domain;
+        using detail::execution_impl::get_completion_domain;
         using detail::execution_impl::get_scheduler;
+        using detail::execution_impl::get_start_scheduler;
+        using detail::execution_impl::get_completion_scheduler;
         using detail::execution_impl::get_delegation_scheduler;
         using detail::execution_impl::get_forward_progress_guarantee;
-        using detail::execution_impl::get_completion_scheduler;
-        using detail::execution_impl::get_env;
-        using detail::execution_impl::get_completion_signatures;
         using detail::execution_impl::get_await_completion_adaptor;
 
         using detail::execution_impl::sender_tag;
@@ -112,19 +113,26 @@ namespace coio {
         using detail::execution_impl::set_error;
         using detail::execution_impl::set_stopped;
 
-        using detail::execution_impl::env;
         using detail::execution_impl::completion_signatures;
-        using detail::execution_impl::forward_progress_guarantee;
-        using detail::execution_impl::prop;
-        using detail::execution_impl::env_of_t;
         using detail::execution_impl::completion_signatures_of_t;
         using detail::execution_impl::value_types_of_t;
         using detail::execution_impl::error_types_of_t;
+        using detail::execution_impl::get_completion_signatures;
+
+        using detail::execution_impl::forward_progress_guarantee;
+
         using detail::execution_impl::tag_of_t;
+
+        using detail::execution_impl::env;
+        using detail::execution_impl::prop;
+        using detail::execution_impl::env_of_t;
+        using detail::execution_impl::get_env_t;
+        using detail::execution_impl::get_env;
         using detail::execution_impl::write_env;
         using detail::execution_impl::read_env;
 
         using detail::execution_impl::default_domain;
+        using detail::execution_impl::indeterminate_domain;
         using detail::execution_impl::apply_sender;
         using detail::execution_impl::transform_sender;
 
@@ -164,11 +172,13 @@ namespace coio {
         using detail::execution_impl::stopped_as_optional;
 
         using detail::execution_impl::schedule_t;
+        using detail::execution_impl::affine_t;
         using detail::execution_impl::schedule_from_t;
         using detail::execution_impl::continues_on_t;
         using detail::execution_impl::starts_on_t;
         using detail::execution_impl::on_t;
         using detail::execution_impl::schedule;
+        using detail::execution_impl::affine;
         using detail::execution_impl::schedule_from;
         using detail::execution_impl::continues_on;
         using detail::execution_impl::starts_on;

@@ -232,8 +232,12 @@ namespace coio {
                     return promise->state_->get_stop_token();
                 }
 
-                auto query(execution::get_scheduler_t) const noexcept {
+                auto query(execution::get_start_scheduler_t) const noexcept { // TODO: implement task scheduler affinity
                     return execution::inline_scheduler{};
+                }
+
+                auto query(execution::get_scheduler_t) const noexcept {
+                    return query(execution::get_start_scheduler);
                 }
 
                 const task_promise* promise;

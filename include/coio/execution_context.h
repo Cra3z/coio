@@ -276,7 +276,7 @@ namespace coio {
                 }
 
                 [[nodiscard]]
-                COIO_ALWAYS_INLINE static auto query(execution::get_forward_progress_guarantee_t) noexcept -> execution::forward_progress_guarantee {
+                COIO_ALWAYS_INLINE static constexpr auto query(execution::get_forward_progress_guarantee_t) noexcept {
                     return execution::forward_progress_guarantee::parallel;
                 }
 

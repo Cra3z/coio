@@ -793,6 +793,7 @@ namespace coio {
         }
     }
 }
-#endif
 
 #include <coio/detail/suppress_pop.h> // IWYU pragma: keep
+
+#endif

@@ -1,9 +1,9 @@
 // ReSharper disable once CppMissingIncludeGuard
 
-#ifdef COIO_SUPPRESS_PUSH
+#ifdef COIO_DETAIL_SUPPRESS_PUSH_INCLUDED
 #error "<coio/detail/suppress_pop.h> shall be included before <coio/detail/suppress_push.h> is included again"
 #else
-#define COIO_SUPPRESS_PUSH
+#define COIO_DETAIL_SUPPRESS_PUSH_INCLUDED
 #endif
 
 #if defined(_MSC_VER) and not defined(__clang__)
