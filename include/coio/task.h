@@ -8,12 +8,31 @@
 #include <coio/detail/co_memory.h>
 #include <coio/detail/execution.h>
 #include <coio/utils/allocator_resource.h>
+#include <coio/utils/polymorphic_scheduler.h>
 #include <coio/utils/stop_token.h>
 #include <coio/utils/utility.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
     namespace detail {
+        template<typename Sched, typename Env>
+        COIO_ALWAYS_INLINE auto make_task_scheduler(const Env& env) -> Sched {
+            return std::make_obj_using_allocator<Sched>(
+                (get_suitable_allocator)(env),
+                (get_suitable_start_scheduler)(env)
+            );
+        }
+
+        template<typename Sndr>
+        COIO_ALWAYS_INLINE auto affined_sndr(Sndr&& sndr) noexcept {
+            if constexpr (requires { std::declval<Sndr>().affine(); }) {
+                return std::forward<Sndr>(sndr).affine();
+            }
+            else {
+                return execution::affine(std::forward<Sndr>(sndr));
+            }
+        }
+
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
         template<typename T>
         class task_state_base {
@@ -67,7 +86,9 @@ namespace coio {
             task_operation(std::coroutine_handle<Promise> coro, Receiver rcvr) noexcept :
                 base(coro),
                 rcvr_(std::move(rcvr)),
-                stop_propagator_(coio::get_stop_token(execution::get_env(rcvr_))) {}
+                stop_propagator_(coio::get_stop_token(execution::get_env(rcvr_))) {
+                coro.promise().sched_.emplace((make_task_scheduler<typename Promise::scheduler_type>)(execution::get_env(rcvr_)));
+            }
 
             COIO_ALWAYS_INLINE auto start() & noexcept -> void {
                 const auto coro = std::coroutine_handle<Promise>::from_address(this->coro_.address());
@@ -119,8 +140,9 @@ namespace coio {
             task_awaiter(std::coroutine_handle<Promise> coro, RcvrPromise& receiver) noexcept :
                 base(coro),
                 continuation_(std::coroutine_handle<RcvrPromise>::from_promise(receiver)),
-                stop_propagator_(coio::get_stop_token(execution::get_env(receiver)))
-            {}
+                stop_propagator_(coio::get_stop_token(execution::get_env(receiver))) {
+                coro.promise().sched_.emplace((make_task_scheduler<typename Promise::scheduler_type>)(execution::get_env(receiver)));
+            }
 
             COIO_ALWAYS_INLINE static auto await_ready() noexcept -> bool {
                 return false;
@@ -163,7 +185,7 @@ namespace coio {
             stop_propagator<inplace_stop_source, stop_token_of_rcvr> stop_propagator_;
         };
 
-        template<typename TaskType, typename T, typename Alloc>
+        template<typename TaskType, typename T, typename Alloc, typename Sched>
         struct task_promise;
 
         struct task_final_awaiter {
@@ -171,8 +193,8 @@ namespace coio {
                 return false;
             }
 
-            template<typename TaskType, typename T, typename Alloc>
-            COIO_ALWAYS_INLINE auto await_suspend(std::coroutine_handle<task_promise<TaskType, T, Alloc>> this_coro) const noexcept -> std::coroutine_handle<> {
+            template<typename... Args>
+            COIO_ALWAYS_INLINE auto await_suspend(std::coroutine_handle<task_promise<Args...>> this_coro) const noexcept -> std::coroutine_handle<> {
                 return this_coro.promise().state_->complete();
             }
 
@@ -221,8 +243,11 @@ namespace coio {
         };
 
 
-        template<typename TaskType, typename T, typename Alloc>
+        template<typename TaskType, typename T, typename Alloc, typename Sched>
         struct task_promise : task_promise_return<T>, promise_alloc_control<Alloc> {
+            using value_type = T;
+            using allocator_type = Alloc;
+            using scheduler_type = Sched;
             struct env {
                 auto query(get_allocator_t) const noexcept {
                     return promise->alloc_adaptor_.get_allocator();
@@ -232,8 +257,8 @@ namespace coio {
                     return promise->state_->get_stop_token();
                 }
 
-                auto query(execution::get_start_scheduler_t) const noexcept { // TODO: implement task scheduler affinity
-                    return execution::inline_scheduler{};
+                auto query(execution::get_start_scheduler_t) const noexcept {
+                    return *promise->sched_;
                 }
 
                 auto query(execution::get_scheduler_t) const noexcept {
@@ -253,13 +278,9 @@ namespace coio {
                 return std::coroutine_handle<task_promise>::from_promise(*this);
             }
 
-            template<typename Sender> requires requires {
-                execution::as_awaitable(std::declval<Sender>(), std::declval<task_promise&>());
-            }
-            COIO_ALWAYS_INLINE decltype(auto) await_transform(Sender&& sender) noexcept(
-                noexcept(execution::as_awaitable(std::declval<Sender>(), std::declval<task_promise&>()))
-            ) {
-                return execution::as_awaitable(std::forward<Sender>(sender), *this);
+            template<execution::sender Sndr>
+            COIO_ALWAYS_INLINE decltype(auto) await_transform(Sndr&& sndr) noexcept {
+                return execution::as_awaitable(detail::affined_sndr(std::forward<Sndr>(sndr)), *this);
             }
 
             COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
@@ -267,10 +288,11 @@ namespace coio {
             }
 
             COIO_NO_UNIQUE_ADDRESS allocator_adaptor<Alloc> alloc_adaptor_;
+            std::optional<Sched> sched_;
         };
     }
 
-    template<typename T = void, typename Alloc = void>
+    template<typename T = void, typename Alloc = void, typename Sched = polymorphic_scheduler>
     class task {
         static_assert(
             std::same_as<T, void> or
@@ -284,10 +306,15 @@ namespace coio {
             "type `Alloc` shall be `void` or an allocator-type whose `typename std::allocator_traits<Alloc>::pointer` is a pointer-type."
         );
 
-        friend detail::task_promise<task, T, Alloc>;
+        static_assert(detail::infallible_scheduler<Sched, execution::env<>>);
+
+        friend detail::task_promise<task, T, Alloc, Sched>;
 
     public:
-        using promise_type = detail::task_promise<task, T, Alloc>;
+        using value_type = T;
+        using allocator_type = Alloc;
+        using scheduler_type = Sched;
+        using promise_type = detail::task_promise<task, T, Alloc, Sched>;
         using sender_concept = execution::sender_tag;
         using completion_signatures =execution::completion_signatures<
             detail::set_value_t<T>,
@@ -323,6 +350,10 @@ namespace coio {
         template<similar_to<task>, typename...>
         static consteval auto get_completion_signatures() noexcept -> completion_signatures {
             return {};
+        }
+
+        COIO_ALWAYS_INLINE auto affine() && noexcept -> task {
+            return std::move(*this);
         }
 
         template<stoppable_promise ReceiverPromise>

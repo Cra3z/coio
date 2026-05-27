@@ -15,9 +15,9 @@ auto main() -> int {
     coio::time_loop context;
     const auto tick = std::chrono::steady_clock::now();
     auto value = coio::this_thread::sync_wait_with_variant(coio::when_any(
-        job(context.get_scheduler(), "foo", 114, 2s),
-        job(context.get_scheduler(), "bar", 514, 1s),
-        job(context.get_scheduler(), "qux", 1919, 3s),
+        coio::starts_on(context.get_scheduler(), job(context.get_scheduler(), "foo", 114, 2s)),
+        coio::starts_on(context.get_scheduler(), job(context.get_scheduler(), "bar", 514, 1s)),
+        coio::starts_on(context.get_scheduler(), job(context.get_scheduler(), "qux", 1919, 3s)),
         [&context]() -> coio::task<> {
             context.run();
             co_return;

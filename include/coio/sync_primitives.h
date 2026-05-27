@@ -334,9 +334,11 @@ namespace coio {
 
             COIO_ALWAYS_INLINE auto start() & noexcept -> void {
                 auto stop_token = coio::get_stop_token(execution::get_env(rcvr_));
-                if (stop_token.stop_requested()) {
-                    execution::set_stopped(std::move(rcvr_));
-                    return;
+                if constexpr (not unstoppable_token<stop_token_t>) {
+                    if (stop_token.stop_requested()) {
+                        execution::set_stopped(std::move(rcvr_));
+                        return;
+                    }
                 }
 
                 sub_state_.emplace(detail::elide{
@@ -359,7 +361,9 @@ namespace coio {
                 }
                 guard.unlock();
 
-                stop_cb_.emplace(stop_token, std::bind_front(&state::on_stop_requested, this));
+                if constexpr (not unstoppable_token<stop_token_t>) {
+                    stop_cb_.emplace(stop_token, std::bind_front(&state::on_stop_requested, this));
+                }
             }
 
             static auto complete(state_base* self) noexcept -> void {
@@ -368,8 +372,10 @@ namespace coio {
             }
 
             auto on_stop_requested() noexcept -> void {
-                if (this->sema_.unregister_(this)) {
-                    execution::set_stopped(std::move(rcvr_));
+                if constexpr (not unstoppable_token<stop_token_t>) {
+                    if (this->sema_.unregister_(this)) {
+                        execution::set_stopped(std::move(rcvr_));
+                    }
                 }
             }
 

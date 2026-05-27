@@ -37,7 +37,7 @@ This document describes the public API of **coio**. It is intended to be a stabl
 ### Senders, awaitables, and composition
 
 - Many coio operations are **senders** (P2300). They can be composed with `std::execution` algorithms.
-- `coio::task<T, Alloc>` is both a coroutine type and a sender.
+- `coio::task<T, Allocator, Scheduler>` is both a coroutine type and a sender.
 - Inside a `coio::task`, you can `co_await` a sender (coio wires sender-to-awaitable via `await_transform`).
 
 ### Stop tokens and cancellation
@@ -75,7 +75,7 @@ This document describes the public API of **coio**. It is intended to be a stabl
 
 Header: `#include <coio/task.h>`
 
-`coio::task<T, Alloc>` is a **lazily-started, move-only coroutine type** that also models a **sender**.
+`coio::task<T, Allocator, Scheduler>` is a **lazily-started, move-only coroutine type** that also models a **sender**.
 
 **Properties**
 
@@ -104,7 +104,7 @@ auto r = coio::this_thread::sync_wait(foo());
 
 Header: `#include <coio/generator.h>`
 
-`coio::generator<Ref, Val, Alloc>` is a **synchronous generator** with lazy `co_yield`.
+`coio::generator<Ref, Val, Allocator>` is a **synchronous generator** with lazy `co_yield`.
 It is same as [P2502 - std::generator](https://wg21.link/p2502) in C++23, but works in C++20.
 
 **Properties**

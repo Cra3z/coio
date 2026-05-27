@@ -36,13 +36,13 @@ auto main() -> int {
     auto writer = [&](coio::scheduler auto sched, std::string_view name, std::initializer_list<std::string_view> datum) -> coio::task<> {
         for (auto str : datum) {
             ::debug("{} writes {}", name, str);
-            co_await coio::continues_on(channel.async_emplace(str), sched);
+            co_await channel.async_emplace(str);
         }
     };
 
     auto reader = [&](coio::scheduler auto sched, std::string_view name) -> coio::task<> {
         while (true) {
-            auto str = co_await coio::continues_on(channel.async_pop(), sched);
+            auto str = co_await channel.async_pop();
             ::debug("{} reads {}", name, str);
             if (str == "bye") break;
         }

@@ -254,6 +254,22 @@ namespace coio {
             }
         }
 
+        COIO_ALWAYS_INLINE auto get_suitable_start_scheduler(const auto& env) noexcept {
+            if constexpr (requires { execution::get_start_scheduler(env); }) {
+                return execution::get_start_scheduler(env);
+            }
+            else if constexpr (requires { execution::get_scheduler(env); }) {
+                return execution::get_scheduler(env);
+            }
+            else {
+                return execution::inline_scheduler{};
+            }
+        }
+
+        COIO_ALWAYS_INLINE auto get_suitable_allocator(const auto& env) noexcept {
+            return detail::query_or(get_allocator, env, std::allocator<void>{});
+        }
+
         template<typename Env>
         struct fwd_env_t {
             template<typename Prop, typename... Args>

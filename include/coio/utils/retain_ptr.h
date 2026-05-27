@@ -5,10 +5,9 @@
 #include <type_traits>
 #include <typeindex>
 #include <concepts>
-#include <coio/detail/config.h>
+#include <coio/detail/concepts.h>
 
 namespace coio {
-
     template<typename T>
     concept simple_retainable = requires (T* p) {
         p->retain();
@@ -40,7 +39,8 @@ namespace coio {
             if (ptr_) ptr_->retain();
         }
 
-        constexpr retain_ptr(const retain_ptr& other) : retain_ptr(other.ptr_) {}
+        constexpr retain_ptr(const retain_ptr& other) noexcept(std::is_nothrow_constructible_v<retain_ptr, pointer>) :
+            retain_ptr(other.ptr_) {}
 
         constexpr retain_ptr(retain_ptr&& other) noexcept : ptr_(std::exchange(other.ptr_, {})) {}
 
@@ -125,17 +125,10 @@ namespace coio {
         pointer ptr_ = nullptr;
     };
 
-    template<simple_retainable T, typename... Args> requires std::constructible_from<T, Args...>
-    [[nodiscard]]
-    constexpr auto make_retain(Args&&... args) ->retain_ptr<T> {
-        return retain_ptr<T>(new T(std::forward<Args>(args)...));
-    }
-
     template<typename Derived>
     class retain_base {
         friend Derived;
     private:
-
         retain_base() = default;
 
         explicit retain_base(std::size_t initial_count) noexcept : ref_count_(initial_count) {}

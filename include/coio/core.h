@@ -238,7 +238,9 @@ namespace coio {
             return {std::forward<Receiver>(receiver), std::move(senders)};
         }
 
-        template<similar_to<sender>, typename... Env>
+        template<similar_to<sender>, typename... Env> requires requires {
+            typename std::void_t<execution::completion_signatures_of_t<Sender, Env...>...>;
+        }
         static consteval auto get_completion_signatures() noexcept {
             return detail::merge_completion_signatures_t<execution::completion_signatures_of_t<Sender, Env...>...>{};
         }

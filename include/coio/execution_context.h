@@ -56,16 +56,18 @@ namespace coio {
 
                 auto start() & noexcept -> void {
                     this->context_.work_started();
-                    auto stop_token = coio::get_stop_token(execution::get_env(this->rcvr_));
-                    if (stop_token.stop_requested()) {
-                        this->context_.work_finished();
-                        execution::set_stopped(std::move(this->rcvr_));
-                        return;
+                    if constexpr (not unstoppable_token<stop_token_t>) {
+                        auto stop_token = coio::get_stop_token(execution::get_env(this->rcvr_));
+                        if (stop_token.stop_requested()) {
+                            this->context_.work_finished();
+                            execution::set_stopped(std::move(this->rcvr_));
+                            return;
+                        }
+                        stop_cb_.emplace(
+                            std::move(stop_token),
+                            std::bind_front(&operation_state::do_cancel, this)
+                        );
                     }
-                    stop_cb_.emplace(
-                        std::move(stop_token),
-                        std::bind_front(&operation_state::do_cancel, this)
-                    );
                     if (not this->do_start()) {
                         finish();
                     }
@@ -106,9 +108,8 @@ namespace coio {
                         return true;
                     }
 
-                    COIO_ALWAYS_INLINE auto do_finish(bool canceled) noexcept -> void {
-                        if (canceled) execution::set_stopped(std::move(rcvr_));
-                        else execution::set_value(std::move(rcvr_));
+                    COIO_ALWAYS_INLINE auto do_finish(bool) noexcept -> void {
+                        execution::set_value(std::move(rcvr_));
                     }
 
                     COIO_ALWAYS_INLINE static auto do_cancel(state_base*) noexcept -> void {}
@@ -121,11 +122,7 @@ namespace coio {
 
             public:
                 using sender_concept = execution::sender_tag;
-                using completion_signatures = execution::completion_signatures<
-                    execution::set_value_t(),
-                    execution::set_error_t(std::exception_ptr),
-                    execution::set_stopped_t()
-                >;
+                using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
 
             public:
                 explicit schedule_sender(Ctx& context) noexcept : ctx_(&context) {}
@@ -155,7 +152,6 @@ namespace coio {
                 using sender_concept = execution::sender_tag;
                 using completion_signatures = execution::completion_signatures<
                     execution::set_value_t(),
-                    execution::set_error_t(std::exception_ptr),
                     execution::set_stopped_t()
                 >;
                 using clock_type = std::chrono::steady_clock;
