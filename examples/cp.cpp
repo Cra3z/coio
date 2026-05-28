@@ -15,15 +15,16 @@ using random_access_file = coio::random_access_file<io_context::scheduler>;
 
 constexpr std::size_t block_size = 1024;
 
-auto async_copy_file(io_context& context, coio::zstring_view src, coio::zstring_view dst) -> coio::task<> {
+auto async_copy_file(coio::zstring_view src, coio::zstring_view dst) -> coio::task<void, void, io_context::scheduler> {
+    auto scheduler = co_await coio::execution::read_env(coio::execution::get_scheduler);
     random_access_file src_file{
-        context.get_scheduler(),
+        scheduler,
         src,
         random_access_file::read_only
     };
 
     random_access_file dst_file{
-        context.get_scheduler(),
+        scheduler,
         dst,
         random_access_file::write_only | random_access_file::create | random_access_file::truncate
     };
@@ -55,7 +56,7 @@ auto main(int argc, char** argv) -> int try {
 
     io_context context;
     coio::this_thread::sync_wait(coio::when_all(
-        async_copy_file(context, argv[1], argv[2]),
+        coio::starts_on(context.get_scheduler(), async_copy_file(argv[1], argv[2])),
         [&]() -> coio::task<> {
             context.run();
             co_return;

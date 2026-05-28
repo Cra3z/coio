@@ -24,7 +24,7 @@ auto handle_connection(tcp_socket socket) -> coio::task<> {
         while (true) {
             const auto length = co_await socket.async_read_some(coio::as_writable_bytes(buffer));
             ::debug("{}", std::string_view{buffer, length});
-            co_await coio::async_write(socket, coio::as_bytes(buffer, length));
+            co_await (coio::async_write(socket, coio::as_bytes(buffer, length)) | as_throwing);
         }
     }
     catch (const std::system_error& e) {

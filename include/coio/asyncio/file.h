@@ -2,7 +2,7 @@
 #include <filesystem>
 #include <utility>
 #include <coio/core.h>
-#include <coio/detail/async_result.h>
+#include <coio/utils/async_result.h>
 #include <coio/detail/error.h>
 #include <coio/detail/io_descriptions.h>
 #include <coio/utils/zstring_view.h>

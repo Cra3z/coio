@@ -118,7 +118,7 @@ auto handle_connection(json_rpc::tcp_socket socket) -> coio::task<> {
     try {
         coio::flat_buffer buffer;
         while (true) {
-            const auto n = co_await coio::async_read_until(socket, buffer, '\n');
+            const auto n = co_await (coio::async_read_until(socket, buffer, '\n') | as_throwing);
             const auto data = buffer.data();
             const std::string_view line{reinterpret_cast<const char*>(data.data()), n};
             json_rpc::value response = json_rpc::object{
@@ -150,7 +150,7 @@ auto handle_connection(json_rpc::tcp_socket socket) -> coio::task<> {
             }
             catch (json_rpc::bad_json& e) {}
             auto response_data = json_rpc::dump(response) + '\n';
-            co_await coio::async_write(socket, coio::as_bytes(response_data));
+            co_await (coio::async_write(socket, coio::as_bytes(response_data)) | as_throwing);
             if (not has_continuation) co_return;
         }
     }

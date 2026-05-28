@@ -46,7 +46,7 @@ auto main() -> int {
           "\n"
         };
         for (std::string_view message : messages) {
-            co_await coio::async_write(w, coio::as_bytes(message));
+            co_await (coio::async_write(w, coio::as_bytes(message)) | as_throwing);
         }
     }(std::move(writer)));
 

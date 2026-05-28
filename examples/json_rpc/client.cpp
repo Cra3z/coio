@@ -10,9 +10,9 @@ auto generate_id() noexcept -> int {
 auto call(json_rpc::tcp_socket& socket, const json_rpc::value& request) -> coio::task<json_rpc::value> {
     coio::flat_buffer buffer;
     const std::string line = json_rpc::dump(request) + '\n';
-    co_await coio::async_write(socket, coio::as_bytes(line));
+    co_await (coio::async_write(socket, coio::as_bytes(line)) | as_throwing);
 
-    const auto n = co_await coio::async_read_until(socket, buffer, '\n');
+    const auto n = co_await (coio::async_read_until(socket, buffer, '\n') | as_throwing);
     const auto data = buffer.data();
     auto value = json_rpc::parse(std::string_view{reinterpret_cast<const char*>(data.data()), n});
     buffer.consume(n);

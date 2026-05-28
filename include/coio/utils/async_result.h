@@ -6,7 +6,7 @@
 #include <coio/utils/utility.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
-namespace coio::detail {
+namespace coio {
     template<typename, typename>
     class async_result;
 
@@ -76,6 +76,10 @@ namespace coio::detail {
                 Rcvr rcvr_;
             };
             return state{std::move(*this), std::move(rcvr)};
+        }
+
+        COIO_ALWAYS_INLINE auto affine() && noexcept -> async_result {
+            return std::move(*this);
         }
 
     private:

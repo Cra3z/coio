@@ -7,7 +7,7 @@
 #include <liburing.h>
 #include <netinet/in.h>
 #include <coio/execution_context.h>
-#include <coio/detail/async_result.h>
+#include <coio/utils/async_result.h>
 #include <coio/detail/io_descriptions.h>
 
 namespace coio {

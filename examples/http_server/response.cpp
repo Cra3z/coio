@@ -1,6 +1,7 @@
 #include <string>
 #include <coio/asyncio/io.h>
 #include "response.h"
+#include "../common.h"
 
 namespace http {
     static auto status_string(response::status_type status) -> std::string_view {
@@ -50,9 +51,9 @@ namespace http {
         }
 
         line_and_headers += "\r\n";
-        co_await coio::async_write(socket, coio::as_bytes(line_and_headers));
+        co_await (coio::async_write(socket, coio::as_bytes(line_and_headers)) | as_throwing);
 
-        co_await coio::async_write(socket, content);
+        co_await (coio::async_write(socket, content) | as_throwing);
     }
 
 

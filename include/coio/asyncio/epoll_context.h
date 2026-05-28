@@ -6,7 +6,7 @@
 #endif
 #include <sys/socket.h>
 #include <coio/execution_context.h>
-#include <coio/detail/async_result.h>
+#include <coio/utils/async_result.h>
 #include <coio/detail/io_descriptions.h>
 #include <coio/utils/atomutex.h>
 

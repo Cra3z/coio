@@ -2,9 +2,9 @@
 #pragma once
 #include <span>
 #include <coio/core.h>
-#include <coio/detail/async_result.h>
 #include <coio/detail/error.h>
 #include <coio/detail/io_descriptions.h>
+#include <coio/utils/async_result.h>
 
 struct linger;
 
@@ -637,7 +637,7 @@ namespace coio {
                     detail::async_receive_t{buffer}
                 ),
                 [total = buffer.size()](std::size_t bytes_transferred) noexcept {
-                    detail::async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
+                    async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                     if (bytes_transferred == 0 and total > 0) [[unlikely]] {
                         result.set_error(error::eof);
                     }

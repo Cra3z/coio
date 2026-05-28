@@ -9,7 +9,7 @@
 #include <basetsd.h>
 #include <WinSock2.h>
 #include <coio/execution_context.h>
-#include <coio/detail/async_result.h>
+#include <coio/utils/async_result.h>
 #include <coio/detail/io_descriptions.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 

@@ -4,7 +4,7 @@
 #include <span>
 #include <stop_token>  // IWYU pragma: keep
 #include <string_view>
-#include <coio/detail/async_result.h>
+#include <coio/utils/async_result.h>
 #include <coio/core.h>
 #include <coio/detail/error.h> //  IWYU pragma: keep
 
@@ -347,21 +347,6 @@ namespace coio {
                 return {};
             }
 
-            COIO_ALWAYS_INLINE static auto get_env() noexcept {
-                return execution::env{execution::prop{
-                    execution::get_await_completion_adaptor,
-                    execution::let_value([](std::error_code ec, std::size_t bytes_transferred) noexcept {
-                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
-                        if (ec) {
-                            if (ec == std::errc::operation_canceled) result.set_stopped();
-                            else result.set_error(ec);
-                        }
-                        else result.set_value(bytes_transferred);
-                        return result;
-                    }
-                )}};
-            }
-
             Factory factory;
         };
 
@@ -674,21 +659,6 @@ namespace coio {
             template<similar_to<read_until_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                 return {};
-            }
-
-            COIO_ALWAYS_INLINE static auto get_env() noexcept {
-                return execution::env{execution::prop{
-                    execution::get_await_completion_adaptor,
-                    execution::let_value([](std::error_code ec, std::size_t bytes_transferred) noexcept {
-                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
-                        if (ec) {
-                            if (ec == std::errc::operation_canceled) result.set_stopped();
-                            else result.set_error(ec);
-                        }
-                        else result.set_value(bytes_transferred);
-                        return result;
-                    }
-                )}};
             }
 
             Device* device;
