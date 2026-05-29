@@ -152,6 +152,9 @@ namespace coio {
             }
         };
 
+        template<typename T = void, typename Alloc = void>
+        using task = coio::task<T, Alloc, scheduler>;
+
     public:
         explicit uring_context(std::size_t entries, std::pmr::memory_resource& memory_resource = *std::pmr::get_default_resource());
 

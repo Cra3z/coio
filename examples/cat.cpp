@@ -12,7 +12,7 @@ using io_context = coio::iocp_context;
 #endif
 using stream_file = coio::stream_file<io_context::scheduler>;
 
-auto cat(coio::zstring_view path) -> coio::task<void, void, io_context::scheduler> {
+auto cat(coio::zstring_view path) -> io_context::task<> {
     try {
         stream_file file{co_await coio::execution::read_env(coio::execution::get_scheduler), path, stream_file::read_only};
         ::println("this file has {} byte(s)", file.size());

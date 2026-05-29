@@ -75,7 +75,9 @@ namespace coio {
             struct state_proxy : state_proxy_base {
                 using allocator_t = decltype(detail::get_suitable_allocator(std::declval<execution::env_of_t<Sndr>>()));
 
-                state_proxy(Sndr sndr, receiver rcvr) : inner(execution::connect(std::move(sndr), rcvr)) {}
+                state_proxy(Sndr sndr, receiver rcvr) :
+                    alloc(detail::get_suitable_allocator(execution::get_env(sndr))),
+                    inner(execution::connect(std::move(sndr), rcvr)) {}
 
                 auto do_start() noexcept -> void override {
                     execution::start(inner);
@@ -88,7 +90,7 @@ namespace coio {
                     std::allocator_traits<alloc_t>::deallocate(al, this, 1);
                 }
 
-                COIO_NO_UNIQUE_ADDRESS allocator_t alloc;
+                allocator_t alloc;
                 execution::connect_result_t<Sndr, receiver> inner;
             };
 
@@ -210,6 +212,14 @@ namespace coio {
             using sender_concept = execution::sender_tag;
             using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
 
+            struct env {
+                auto query(execution::get_completion_scheduler_t<execution::set_value_t>) const noexcept -> polymorphic_scheduler {
+                    return polymorphic_scheduler(backend_);
+                }
+
+                retain_ptr<backend> backend_;
+            };
+
         public:
             template<similar_to<schedule_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept {
@@ -229,13 +239,16 @@ namespace coio {
 
             schedule_sender(const schedule_sender&) = delete;
 
-            schedule_sender(schedule_sender&& other) noexcept : proxy_(std::exchange(other.proxy_, {})) {}
+            schedule_sender(schedule_sender&& other) noexcept :
+                backend_(std::move(other.backend_)),
+                proxy_(std::exchange(other.proxy_, {})) {}
 
             ~schedule_sender() {
                 if (proxy_) proxy_->delete_self();
             }
 
             auto operator= (schedule_sender other) noexcept -> schedule_sender& {
+                std::ranges::swap(backend_, other.backend_);
                 std::swap(proxy_, other.proxy_);
                 return *this;
             }
@@ -257,12 +270,9 @@ namespace coio {
                 return state<Rcvr>{std::move(rcvr), proxy_};
             }
 
-            COIO_ALWAYS_INLINE auto get_env() const noexcept {
+            COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
                 COIO_ASSERT(proxy_ != nullptr);
-                return execution::prop{
-                    execution::get_completion_scheduler<execution::set_value_t>,
-                    polymorphic_scheduler(backend_)
-                };
+                return env{backend_};
             }
 
         private:

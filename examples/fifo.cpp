@@ -33,14 +33,14 @@ namespace {
 auto main() -> int {
     worker workers[6]{1, 2, 3, 4, 5, 6};
     coio::fifo<std::string> channel;
-    auto writer = [&](coio::scheduler auto sched, std::string_view name, std::initializer_list<std::string_view> datum) -> coio::task<> {
+    auto writer = [&](std::string_view name, std::initializer_list<std::string_view> datum) -> coio::task<> {
         for (auto str : datum) {
             ::debug("{} writes {}", name, str);
             co_await channel.async_emplace(str);
         }
     };
 
-    auto reader = [&](coio::scheduler auto sched, std::string_view name) -> coio::task<> {
+    auto reader = [&](std::string_view name) -> coio::task<> {
         while (true) {
             auto str = co_await channel.async_pop();
             ::debug("{} reads {}", name, str);
@@ -49,11 +49,11 @@ auto main() -> int {
     };
 
     auto start_writer = [&writer](coio::scheduler auto sched, std::string_view name, std::initializer_list<std::string_view> datum) {
-        return coio::starts_on(sched, writer(sched, name, datum));
+        return coio::starts_on(sched, writer(name, datum));
     };
 
     auto start_reader = [&reader](coio::scheduler auto sched, std::string_view name) {
-        return coio::starts_on(sched, reader(sched, name));
+        return coio::starts_on(sched, reader(name));
     };
 
     coio::this_thread::sync_wait(coio::when_all(

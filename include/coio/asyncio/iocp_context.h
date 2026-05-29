@@ -220,6 +220,9 @@ namespace coio {
             friend auto operator== (const scheduler& lhs, const scheduler& rhs) -> bool = default;
         };
 
+        template<typename T = void, typename Alloc = void>
+        using task = coio::task<T, Alloc, scheduler>;
+
     public:
         explicit iocp_context(std::pmr::memory_resource& memory_resource = *std::pmr::get_default_resource());
 

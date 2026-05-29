@@ -37,9 +37,26 @@ namespace coio {
             execution::spawn(execution::upon_error(std::move(sndr), terminate_on_error), get_token());
         }
 
+        COIO_ALWAYS_INLINE auto spawn_on(execution::scheduler auto sched, execution::sender auto sndr) noexcept -> void {
+            execution::spawn(
+                execution::starts_on(sched, execution::upon_error(std::move(sndr), terminate_on_error)),
+                get_token(),
+                execution::prop{get_allocator, detail::get_suitable_allocator(sched)}
+            );
+        }
+
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto spawn_future(execution::sender auto sndr) noexcept {
-            execution::spawn_future(execution::upon_error(std::move(sndr), terminate_on_error), get_token());
+            return execution::spawn_future(execution::upon_error(std::move(sndr), terminate_on_error), get_token());
+        }
+
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto spawn_future_on(execution::scheduler auto sched, execution::sender auto sndr) noexcept {
+            return execution::spawn_future(
+                execution::starts_on(sched, execution::upon_error(std::move(sndr), terminate_on_error)),
+                get_token(),
+                execution::prop{get_allocator, detail::get_suitable_allocator(sched)}
+            );
         }
 
     public:

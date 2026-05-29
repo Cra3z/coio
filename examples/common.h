@@ -13,7 +13,7 @@ auto print(std::ostream& out, std::format_string<Args...> fmt, Args&&... args) -
 
 template<typename... Args>
 auto print(std::format_string<Args...> fmt, Args&&... args) ->void {
-    ::print(std::cout, fmt, std::forward<Args>(args)...);
+    ::print(std::clog, fmt, std::forward<Args>(args)...);
 }
 
 template<typename... Args>

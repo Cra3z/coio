@@ -16,32 +16,94 @@ on:
 
 jobs:
   build:
+    name: ${{ matrix.os }} / ${{ matrix.c_compiler }} / ${{ matrix.build_type }} / ${{ matrix.sanitizer }}
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
 
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        build_type: [Debug, Release]
-        c_compiler: [gcc, clang, cl]
         include:
           - os: windows-latest
+            build_type: Debug
             c_compiler: cl
             cpp_compiler: cl
+            asan: "OFF"
+            ubsan: "OFF"
+            tsan: "OFF"
+            sanitizer: none
+          - os: windows-latest
+            build_type: Release
+            c_compiler: cl
+            cpp_compiler: cl
+            asan: "OFF"
+            ubsan: "OFF"
+            tsan: "OFF"
+            sanitizer: none
           - os: ubuntu-latest
+            build_type: Debug
             c_compiler: gcc
             cpp_compiler: g++
+            asan: "OFF"
+            ubsan: "OFF"
+            tsan: "OFF"
+            sanitizer: none
           - os: ubuntu-latest
+            build_type: Release
+            c_compiler: gcc
+            cpp_compiler: g++
+            asan: "OFF"
+            ubsan: "OFF"
+            tsan: "OFF"
+            sanitizer: none
+          - os: ubuntu-latest
+            build_type: Debug
             c_compiler: clang
             cpp_compiler: clang++
-        exclude:
-          - os: windows-latest
-            c_compiler: gcc
-          - os: windows-latest
-            c_compiler: clang
+            asan: "OFF"
+            ubsan: "OFF"
+            tsan: "OFF"
+            sanitizer: none
           - os: ubuntu-latest
-            c_compiler: cl
+            build_type: Release
+            c_compiler: clang
+            cpp_compiler: clang++
+            asan: "OFF"
+            ubsan: "OFF"
+            tsan: "OFF"
+            sanitizer: none
+          - os: ubuntu-latest
+            build_type: Debug
+            c_compiler: gcc
+            cpp_compiler: g++
+            asan: "ON"
+            ubsan: "OFF"
+            tsan: "OFF"
+            sanitizer: asan
+          - os: ubuntu-latest
+            build_type: Debug
+            c_compiler: gcc
+            cpp_compiler: g++
+            asan: "OFF"
+            ubsan: "OFF"
+            tsan: "ON"
+            sanitizer: tsan
+          - os: ubuntu-latest
+            build_type: Debug
+            c_compiler: clang
+            cpp_compiler: clang++
+            asan: "ON"
+            ubsan: "ON"
+            tsan: "OFF"
+            sanitizer: asan+ubsan
+          - os: ubuntu-latest
+            build_type: Debug
+            c_compiler: clang
+            cpp_compiler: clang++
+            asan: "OFF"
+            ubsan: "OFF"
+            tsan: "ON"
+            sanitizer: tsan
 
     steps:
       - uses: actions/checkout@v4
@@ -61,10 +123,13 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCOIO_BUILD_TESTS=ON
           -DCOIO_BUILD_EXAMPLES=OFF
+          -DCOIO_BUILD_WITH_ASAN=${{ matrix.asan }}
+          -DCOIO_BUILD_WITH_UBSAN=${{ matrix.ubsan }}
+          -DCOIO_BUILD_WITH_TSAN=${{ matrix.tsan }}
 
       - name: Build
         run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
       - name: Test
         working-directory: ${{ steps.strings.outputs.build-output-dir }}
-        run: ctest --build-config ${{ matrix.build_type }}
+        run: ctest --output-on-failure --build-config ${{ matrix.build_type }}

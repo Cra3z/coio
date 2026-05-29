@@ -40,7 +40,7 @@ namespace coio {
             ~signal_state() {
                 worker.request_stop();
                 constexpr int dummy_signal = -1; // -1 isn't a valid signal number, just to wake up the watchdog
-                ::write(notifier, &dummy_signal, sizeof(dummy_signal));
+                static_cast<void>(::write(notifier, &dummy_signal, sizeof(dummy_signal)));
                 worker.join();
                 no_errno_here(::close(watcher));
                 no_errno_here(::close(notifier));
@@ -82,7 +82,7 @@ namespace coio {
 
             static auto signal_handler(int signal_number) -> void {
                 const int prev_errno = errno;
-                ::write(instance->notifier, &signal_number, sizeof(signal_number));
+                static_cast<void>(::write(instance->notifier, &signal_number, sizeof(signal_number)));
                 errno = prev_errno;
             }
 

@@ -16,6 +16,9 @@
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio {
+    template<typename T, typename Alloc, typename Sched>
+    class task;
+
     namespace detail {
         template<typename Ctx>
         class loop_base {
@@ -276,6 +279,12 @@ namespace coio {
                     return execution::forward_progress_guarantee::parallel;
                 }
 
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto query(get_allocator_t) const noexcept {
+                    COIO_ASSERT(ctx_ != nullptr);
+                    return ctx_->get_allocator();
+                }
+
                 friend auto operator== (const scheduler_base& lhs, const scheduler_base& rhs) -> bool = default;
 
             protected:
@@ -415,6 +424,9 @@ namespace coio {
         struct scheduler : scheduler_base {
             using scheduler_base::scheduler_base;
         };
+
+        template<typename T = void, typename Alloc = void>
+        using task = coio::task<T, Alloc, scheduler>;
 
     public:
         using loop_base::loop_base;

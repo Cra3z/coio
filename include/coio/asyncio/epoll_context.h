@@ -179,6 +179,9 @@ namespace coio {
                 Sexpr sexpr;
             };
 
+            template<typename T = void, typename Alloc = void>
+            using task = coio::task<T, Alloc, scheduler>;
+
         public:
             using scheduler_base::scheduler_base;
 

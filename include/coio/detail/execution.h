@@ -267,7 +267,7 @@ namespace coio {
         }
 
         COIO_ALWAYS_INLINE auto get_suitable_allocator(const auto& env) noexcept {
-            return detail::query_or(get_allocator, env, std::allocator<void>{});
+            return detail::query_or(get_allocator, env, std::allocator<std::byte>{});
         }
 
         template<typename Env>
@@ -291,6 +291,12 @@ namespace coio {
         COIO_ALWAYS_INLINE auto fwd_env(Env env) noexcept -> fwd_env_t<Env> {
             return fwd_env_t<Env>{std::move(env)};
         }
+
+        template<typename Sched1, typename Sched2>
+        concept compatible_with_impl = requires (const Sched1& sched1, const Sched2& sched2) {
+            { sched1 == sched2 } noexcept -> boolean_testable;
+            { sched1 != sched2 } noexcept -> boolean_testable;
+        };
     }
 
     template<typename Scheduler>
@@ -304,4 +310,10 @@ namespace coio {
     concept io_scheduler = execution::scheduler<Scheduler> and
         std::derived_from<typename std::remove_cvref_t<Scheduler>::scheduler_concept, detail::io_scheduler_tag>;
 
+    template<typename Sched1, typename Sched2>
+    concept compatible_scheduler =
+        execution::scheduler<Sched1> and
+        execution::scheduler<Sched2> and
+        detail::compatible_with_impl<Sched1, Sched2> and
+        detail::compatible_with_impl<Sched2, Sched1>;
 }

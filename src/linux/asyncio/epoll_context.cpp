@@ -36,7 +36,7 @@ namespace coio {
 
         auto reactor_interrupter::interrupt() -> void {
             static constexpr std::uint64_t data = 1;
-            void(::write(writer_, &data, sizeof(data)));
+            static_cast<void>(::write(writer_, &data, sizeof(data)));
         }
 
         auto reactor_interrupter::reset() -> bool {

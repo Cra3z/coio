@@ -28,3 +28,8 @@ TEST_CASE("polymorphic_scheduler forward-progress-guarantee") {
     coio::polymorphic_scheduler sched2(coio::execution::inline_scheduler{});
     CHECK(coio::execution::get_forward_progress_guarantee(sched2) == coio::execution::forward_progress_guarantee::weakly_parallel);
 }
+
+TEST_CASE("polymorphic_scheduler schedules inline scheduler") {
+    coio::polymorphic_scheduler sched(coio::execution::inline_scheduler{});
+    coio::this_thread::sync_wait(coio::execution::schedule(sched));
+}

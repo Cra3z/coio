@@ -4,6 +4,9 @@ project(coio)
 
 option(COIO_BUILD_EXAMPLES "whether to build examples" OFF)
 option(COIO_BUILD_TESTS "whether to build tests" OFF)
+option(COIO_BUILD_WITH_ASAN "whether to enable AddressSanitizer" OFF)
+option(COIO_BUILD_WITH_TSAN "whether to enable ThreadSanitizer" OFF)
+option(COIO_BUILD_WITH_UBSAN "whether to enable UndefinedBehaviorSanitizer" OFF)
 set(COIO_SENDERS_BACKEND "NVIDIA" CACHE STRING "the backend to use for std::execution support.
     available options are: NVIDIA, BEMAN, CXX26.
     NVIDIA - use NVIDIA/stdexec implementation,
@@ -115,6 +118,42 @@ target_link_libraries(
     PUBLIC
     Threads::Threads
 )
+
+set(COIO_SANITIZERS)
+if (COIO_BUILD_WITH_ASAN)
+    list(APPEND COIO_SANITIZERS address)
+endif()
+if (COIO_BUILD_WITH_TSAN)
+    list(APPEND COIO_SANITIZERS thread)
+endif()
+if (COIO_BUILD_WITH_UBSAN)
+    list(APPEND COIO_SANITIZERS undefined)
+endif()
+
+if (COIO_SANITIZERS)
+    list(JOIN COIO_SANITIZERS "," COIO_SANITIZER_FLAG)
+
+    if (MSVC)
+        target_compile_options(
+            ${PROJECT_NAME}
+            PUBLIC
+            "/fsanitize=${COIO_SANITIZER_FLAG}"
+        )
+    else()
+        target_compile_options(
+            ${PROJECT_NAME}
+            PUBLIC
+            "-fsanitize=${COIO_SANITIZER_FLAG}"
+            "-fno-omit-frame-pointer"
+        )
+
+        target_link_options(
+            ${PROJECT_NAME}
+            PUBLIC
+            "-fsanitize=${COIO_SANITIZER_FLAG}"
+        )
+    endif()
+endif()
 
 if (COIO_SENDERS_BACKEND STREQUAL "NVIDIA")
     target_compile_features(
