@@ -47,7 +47,7 @@ namespace coio {
         struct receiver {
             using receiver_concept = execution::receiver_tag;
 
-            void set_value() && noexcept {
+            auto set_value() && noexcept -> void {
                 COIO_ASSERT(state_ != nullptr);
                 auto state = std::exchange(state_, nullptr);
                 state->complete_(state);
@@ -77,7 +77,7 @@ namespace coio {
 
                 state_proxy(Sndr sndr, receiver rcvr) :
                     alloc(detail::get_suitable_allocator(execution::get_env(sndr))),
-                    inner(execution::connect(std::move(sndr), rcvr)) {}
+                    inner(execution::connect(std::move(sndr), std::move(rcvr))) {}
 
                 auto do_start() noexcept -> void override {
                     execution::start(inner);

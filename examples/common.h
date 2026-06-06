@@ -52,4 +52,4 @@ COIO_ALWAYS_INLINE auto dispatch_result(std::error_code ec, std::size_t bytes_tr
     return result;
 }
 
-inline constexpr auto as_throwing = coio::execution::let_value(dispatch_result);
+inline const auto as_throwing = coio::execution::let_value(dispatch_result);
