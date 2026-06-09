@@ -19,7 +19,7 @@ TEST_CASE("async_latch waits until the counter reaches zero") {
         order.emplace_back("#1");
     }));
 
-    CHECK(latch.count() == 1);
+    CHECK_EQ(latch.count(), 1);
     CHECK_FALSE(latch.try_wait());
     latch.count_down();
 

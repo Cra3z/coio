@@ -6,7 +6,7 @@
 [![Language](https://img.shields.io/badge/language-C++-blue.svg)](https://isocpp.org/)
 [![Standard](https://img.shields.io/badge/c%2B%2B-20-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B20)
 
-**coio** is a modern C++20 library that provides asynchronous programming facilities built on **std::execution** (sender/receiver model, [P2300](https://wg21.link/P2300)) and C++20 coroutines.
+A C++ **asynchronous I/O** library based on [sender/receiver model](https://wg21.link/P2300)
 
 <details>
 <summary> what's sender/receiver? </summary>
@@ -30,15 +30,18 @@
 ## Build and Install
 
 ### Requirements
-- C++20 compatible compiler
+- **C++20**/**C++23** compatible compiler
 - CMake 3.26+
 
 ### Build Options
-- `COIO_BUILD_EXAMPLES` (ON/OFF, default OFF) - Build example programs
-- `COIO_BUILD_TESTS` (ON/OFF, default OFF) - Build doctest-based tests
-- `COIO_SENDERS_BACKEND` (NVIDIA/BEMAN/CXX26, default NVIDIA) - Which std::execution implementation to use:
-  - `NVIDIA` - NVIDIA/stdexec implementation
-  - `BEMAN` - bemanproject/execution implementation  
+- `COIO_BUILD_EXAMPLES` (`ON`/`OFF`, default `OFF`) - Build example programs
+- `COIO_BUILD_TESTS` (`ON/OFF`, default `OFF`) - Build **doctest**-based tests
+- `COIO_BUILD_WITH_ASAN` (`ON`/`OFF`, default `OFF`) - Whether to enable **AddressSanitizer**
+- `COIO_BUILD_WITH_TSAN` (`ON`/`OFF`, default `OFF`) - Whether to enable **ThreadSanitizer**
+- `COIO_BUILD_WITH_UBSAN` (`ON`/`OFF`, default `OFF`) - Whether to enable **UndefinedBehaviorSanitizer**
+- `COIO_SENDERS_BACKEND` (`NVIDIA`/`BEMAN`/`CXX26`, default `NVIDIA`) - Which **std::execution** implementation to use:
+  - `NVIDIA` - [NVIDIA/stdexec](https://github.com/NVIDIA/stdexec) implementation
+  - `BEMAN` - [bemanproject/execution](https://github.com/bemanproject/execution) implementation  
   - `CXX26` - Standard library implementation
 
 ### Dependencies

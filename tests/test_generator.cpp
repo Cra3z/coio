@@ -40,7 +40,7 @@ TEST_CASE("generator yields a simple sequence") {
         actual.push_back(value);
     }
 
-    CHECK(actual == std::vector<int>{0, 1, 2, 3, 4});
+    CHECK_EQ(actual, std::vector<int>{0, 1, 2, 3, 4});
 }
 
 TEST_CASE("generator flattens nested ranges") {
@@ -49,7 +49,7 @@ TEST_CASE("generator flattens nested ranges") {
         actual.push_back(value);
     }
 
-    CHECK(actual == std::vector<int>{1, 2, 3, 4, 5});
+    CHECK_EQ(actual, std::vector<int>{1, 2, 3, 4, 5});
 }
 
 TEST_CASE("generator can expose mutable references") {
@@ -59,5 +59,5 @@ TEST_CASE("generator can expose mutable references") {
         value *= 10;
     }
 
-    CHECK(values == std::vector<int>{10, 20, 30});
+    CHECK_EQ(values, std::vector<int>{10, 20, 30});
 }

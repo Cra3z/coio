@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+#include <optional>
 #include <coio/detail/concepts.h>
 #include <coio/detail/execution.h>
 #include <coio/utils/retain_ptr.h>
@@ -163,11 +164,11 @@ namespace coio {
             virtual auto equals(const backend*) const noexcept -> bool = 0;
 
             template<execution::scheduler Sched>
-            auto hold_scheduler(const Sched& sched) const noexcept -> bool {
+            auto try_get_scheduler() const noexcept -> std::optional<Sched> {
                 if (auto self = dynamic_cast<const backend_sched<Sched>*>(this)) {
-                    return self->sched == sched;
+                    return self->sched;
                 }
-                return false;
+                return std::nullopt;
             }
         };
 
@@ -343,12 +344,13 @@ namespace coio {
         template<simple_allocator Alloc>
         explicit polymorphic_scheduler(polymorphic_scheduler sched, const Alloc&) noexcept : polymorphic_scheduler(std::move(sched)) {}
 
-        auto schedule() const -> schedule_sender {
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto schedule() const -> schedule_sender {
             COIO_ASSERT(backend_ != nullptr);
             return backend_->schedule();
         }
 
-        auto query(execution::get_forward_progress_guarantee_t) const noexcept -> execution::forward_progress_guarantee {
+        COIO_ALWAYS_INLINE auto query(execution::get_forward_progress_guarantee_t) const noexcept -> execution::forward_progress_guarantee {
             COIO_ASSERT(backend_ != nullptr);
             return backend_->get_forward_progress_guarantee();
         }
@@ -363,15 +365,24 @@ namespace coio {
 
         template<different_from<polymorphic_scheduler> Sched> requires execution::scheduler<Sched>
         auto operator== (const Sched& sched) const noexcept -> bool {
-            return backend_ ? backend_->hold_scheduler(sched) : false;
+            if (std::optional<Sched> inner_sched = this->target<Sched>()) {
+                return *inner_sched == sched;
+            }
+            return false;
         }
 
-        auto swap(polymorphic_scheduler& other) noexcept -> void {
+        COIO_ALWAYS_INLINE auto swap(polymorphic_scheduler& other) noexcept -> void {
             std::ranges::swap(backend_, other.backend_);
         }
 
-        friend auto swap(polymorphic_scheduler& lhs, polymorphic_scheduler& rhs) noexcept -> void {
+        COIO_ALWAYS_INLINE friend auto swap(polymorphic_scheduler& lhs, polymorphic_scheduler& rhs) noexcept -> void {
             lhs.swap(rhs);
+        }
+
+        template<different_from<polymorphic_scheduler> Sched> requires execution::scheduler<Sched> and unqualified_object<Sched>
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE auto target() const noexcept -> std::optional<Sched> {
+            return backend_ ? backend_->try_get_scheduler<Sched>() : std::nullopt;
         }
 
     private:

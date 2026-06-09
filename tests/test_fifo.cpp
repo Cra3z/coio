@@ -10,15 +10,15 @@ TEST_CASE("fifo preserves order with try operations") {
     CHECK(queue.empty());
     CHECK(queue.try_push("one"));
     CHECK(queue.try_push("two"));
-    CHECK(queue.size() == 2);
+    CHECK_EQ(queue.size(), 2);
 
     auto first = queue.try_pop();
     REQUIRE(first.has_value());
-    CHECK(*first == "one");
+    CHECK_EQ(*first, "one");
 
     auto second = queue.try_pop();
     REQUIRE(second.has_value());
-    CHECK(*second == "two");
+    CHECK_EQ(*second, "two");
 
     CHECK_FALSE(queue.try_pop().has_value());
 }

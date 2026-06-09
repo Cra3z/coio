@@ -8,9 +8,9 @@ TEST_CASE("async_semaphore releases permits immediately when available") {
     coio::async_semaphore<> sema{0};
     CHECK_FALSE(sema.try_acquire());
     sema.release();
-    CHECK(sema.count() == 1);
+    CHECK_EQ(sema.count(), 1);
     CHECK(sema.try_acquire());
-    CHECK(sema.count() == 0);
+    CHECK_EQ(sema.count(), 0);
 }
 
 TEST_CASE("async_semaphore resumes waiting tasks after release") {
@@ -36,8 +36,8 @@ TEST_CASE("async_semaphore resumes waiting tasks after release") {
 
     coio::this_thread::sync_wait(scope.join());
 
-    CHECK(sema1.count() == 0);
-    CHECK(sema2.count() == 0);
+    CHECK_EQ(sema1.count(), 0);
+    CHECK_EQ(sema2.count(), 0);
 
     CHECK_EQ(order, std::vector{"#0"sv, "#1"sv, "#2"sv});
 }

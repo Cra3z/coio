@@ -23,7 +23,7 @@ namespace {
 
     auto check_scheduler(auto expected) -> coio::task<> {
         auto this_scheduler = co_await coio::execution::read_env(coio::execution::get_scheduler);
-        CHECK(this_scheduler == expected);
+        CHECK_EQ(this_scheduler, expected);
     }
 }
 
@@ -32,13 +32,13 @@ TEST_CASE("task returns values and composes with co_await") {
     REQUIRE(result.has_value());
 
     auto [value] = result.value();
-    CHECK(value == 12);
+    CHECK_EQ(value, 12);
 }
 
 TEST_CASE("task<void> completes normally") {
     std::string marker;
     coio::this_thread::sync_wait(write_marker(marker));
-    CHECK(marker == "task<void>");
+    CHECK_EQ(marker, "task<void>");
 }
 
 TEST_CASE("task propagates exceptions") {
@@ -57,7 +57,7 @@ TEST_CASE("task scheduler") {
         coio::this_thread::sync_wait(coio::starts_on(loop_scheduler, [&]() -> coio::task<void, void, loop_scheduler_t> {
             auto this_scheduler = co_await coio::execution::read_env(coio::execution::get_scheduler);
             static_assert(std::same_as<loop_scheduler_t, decltype(this_scheduler)>);
-            CHECK(loop_scheduler == this_scheduler);
+            CHECK_EQ(loop_scheduler, this_scheduler);
         }()));
         loop.finish();
     }
