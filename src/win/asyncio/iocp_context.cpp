@@ -144,14 +144,14 @@ namespace coio {
     }
 
     auto iocp_context::scheduler::io_object::file_read(std::span<std::byte> buffer) -> std::size_t {
-        const auto n = detail::file_read(handle_, buffer);
-        offset_ += buffer.size();
+        const auto n = detail::file_read_at(handle_, offset_, buffer);
+        offset_ += n;
         return n;
     }
 
     auto iocp_context::scheduler::io_object::file_write(std::span<const std::byte> buffer) -> std::size_t {
-        const auto n = detail::file_write(handle_, buffer);
-        offset_ += buffer.size();
+        const auto n = detail::file_write_at(handle_, offset_, buffer);
+        offset_ += n;
         return n;
     }
 
@@ -271,7 +271,6 @@ namespace coio {
             if (not ok) {
                 const ::DWORD err = ::GetLastError();
                 if (err == ERROR_IO_PENDING) return true;
-                if (err == ERROR_HANDLE_EOF) {}
                 else {
                     complete(0, err);
                     return false;
@@ -365,7 +364,6 @@ namespace coio {
             if (not ok) {
                 const ::DWORD err = ::GetLastError();
                 if (err == ERROR_IO_PENDING) return true;
-                if (err == ERROR_HANDLE_EOF) {}
                 else {
                     complete(0, err);
                     return false;

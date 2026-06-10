@@ -79,6 +79,9 @@ namespace coio {
 
             class io_object {
                 friend scheduler;
+            private:
+                io_object(std::nullptr_t, epoll_context& ctx, int fd);
+
             public:
                 io_object(epoll_context& ctx, int fd);
 

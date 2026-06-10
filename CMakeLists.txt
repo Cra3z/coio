@@ -180,7 +180,7 @@ elseif (COIO_SENDERS_BACKEND STREQUAL "BEMAN")
     )
     CPMFindPackage(
         NAME beman.execution
-        GITHUB_REPOSITORY Cra3z/execution
+        GITHUB_REPOSITORY bemanproject/execution
         GIT_TAG main
         EXCLUDE_FROM_ALL YES
         SYSTEM YES

@@ -62,12 +62,12 @@ namespace coio {
         }
 
         template<typename U> requires std::derived_from<U, T> and std::convertible_to<U*, T*> and different_from<U, T>
-        constexpr auto operator= (retain_ptr<U> other) noexcept ->retain_ptr& {
+        constexpr auto operator= (retain_ptr<U> other) noexcept -> retain_ptr& {
             retain_ptr(std::move(other)).swap(*this);
             return *this;
         }
 
-        constexpr friend auto operator== (const retain_ptr& lhs, std::nullptr_t) noexcept ->bool {
+        constexpr friend auto operator== (const retain_ptr& lhs, std::nullptr_t) noexcept -> bool {
             return lhs.ptr_ == nullptr;
         }
 
@@ -75,7 +75,7 @@ namespace coio {
             return std::compare_three_way{}(lhs.ptr_, nullptr);
         }
 
-        constexpr friend auto operator== (const retain_ptr& lhs, const retain_ptr& rhs) noexcept ->bool = default;
+        constexpr friend auto operator== (const retain_ptr& lhs, const retain_ptr& rhs) noexcept -> bool = default;
 
         constexpr friend auto operator<=> (const retain_ptr& lhs, const retain_ptr& rhs) noexcept {
             return std::compare_three_way{}(lhs.ptr_, rhs.ptr_);
@@ -95,7 +95,7 @@ namespace coio {
         }
 
         [[nodiscard]]
-        constexpr auto get() const noexcept ->pointer {
+        constexpr auto get() const noexcept -> pointer {
             return ptr_;
         }
 
@@ -105,15 +105,15 @@ namespace coio {
             return ptr_->use_count();
         }
 
-        constexpr auto reset() noexcept ->void {
+        constexpr auto reset() noexcept -> void {
             retain_ptr{}.swap(*this);
         }
 
-        constexpr auto reset(pointer new_ptr) noexcept(noexcept(new_ptr->retain())) ->void {
+        constexpr auto reset(pointer new_ptr) noexcept(noexcept(new_ptr->retain())) -> void {
             retain_ptr(new_ptr).swap(*this);
         }
 
-        constexpr auto swap(retain_ptr& other) noexcept ->void {
+        constexpr auto swap(retain_ptr& other) noexcept -> void {
             std::swap(ptr_, other.ptr_);
         }
 
@@ -139,7 +139,7 @@ namespace coio {
 
         auto operator= (const retain_base& other) -> retain_base& = delete;
 
-        auto retain() noexcept ->void {
+        auto retain() noexcept -> void {
             ref_count_.fetch_add(1, std::memory_order_relaxed);
         }
 

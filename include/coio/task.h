@@ -306,10 +306,7 @@ namespace coio {
             "type `Alloc` shall be `void` or an allocator-type whose `typename std::allocator_traits<Alloc>::pointer` is a pointer-type."
         );
 
-        static_assert(detail::infallible_scheduler<Sched, execution::env<>>);
-
         friend detail::task_promise<task, T, Alloc, Sched>;
-
     public:
         using value_type = T;
         using allocator_type = Alloc;
@@ -358,6 +355,7 @@ namespace coio {
 
         template<stoppable_promise ReceiverPromise>
         COIO_ALWAYS_INLINE auto as_awaitable(ReceiverPromise& receiver) && noexcept {
+            static_assert(infallible_scheduler<Sched, execution::env_of_t<ReceiverPromise>>);
             return detail::task_awaiter<T, promise_type, ReceiverPromise>{
                 std::exchange(coro_, {}),
                 receiver
@@ -366,6 +364,7 @@ namespace coio {
 
         template<execution::receiver Receiver>
         COIO_ALWAYS_INLINE auto connect(Receiver receiver) && noexcept {
+            static_assert(infallible_scheduler<Sched, execution::env_of_t<Receiver>>);
             return detail::task_operation<T, promise_type, Receiver>{
                 std::exchange(coro_, {}),
                 std::move(receiver)

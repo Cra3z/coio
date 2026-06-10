@@ -1,5 +1,5 @@
 #include <filesystem>
-#include <coio/utils/signal_set.h>
+#include <coio/utils/signal_wait.h>
 #include "connection.h"
 #include "io_context_pool.h"
 #include "router.h"
@@ -13,8 +13,7 @@
 constexpr std::uint16_t port = 8080;
 
 auto signal_watchdog(http::io_context_pool& pool) -> coio::task<> {
-    coio::signal_set signals{SIGINT, SIGTERM};
-    const int signum = co_await signals.async_wait();
+    const int signum = co_await coio::signal_wait(SIGINT, SIGTERM);
     ::println("server stop with signal: ({}){}", signum, coio::strsignal(signum));
     pool.stop();
 }

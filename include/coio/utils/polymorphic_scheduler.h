@@ -8,27 +8,6 @@
 #include <coio/utils/stop_token.h>
 
 namespace coio {
-    namespace detail {
-        template<typename Sched, typename Env>
-        concept infallible_scheduler =
-            execution::scheduler<Sched> and
-            (std::same_as<
-                    execution::completion_signatures<execution::set_value_t()>,
-                    execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>> or
-                (not unstoppable_token<stop_token_of_t<Env>> and
-                    (std::same_as<
-                            execution::completion_signatures<execution::set_value_t(),
-                                                             execution::set_stopped_t()>,
-                            execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>> or
-                        std::same_as<
-                            execution::completion_signatures<execution::set_stopped_t(),
-                                                             execution::set_value_t()>,
-                            execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>>)));
-
-
-    }
-
-
     class polymorphic_scheduler {
     private:
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
@@ -338,7 +317,7 @@ namespace coio {
 
     public:
         template<different_from<polymorphic_scheduler> Sched, simple_allocator Alloc = std::allocator<void>>
-            requires execution::scheduler<Sched> and detail::infallible_scheduler<Sched, execution::env<>>
+            requires execution::scheduler<Sched> and infallible_scheduler<Sched, execution::env<>>
         explicit polymorphic_scheduler(Sched sched, Alloc alloc = Alloc()) : backend_(polymorphic_scheduler::create_backend(sched, alloc)) {}
 
         template<simple_allocator Alloc>

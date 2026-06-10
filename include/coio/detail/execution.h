@@ -2,6 +2,7 @@
 #pragma once
 #include <coio/detail/config.h>
 #include <coio/detail/concepts.h>
+#include <coio/utils/type_traits.h>
 #ifdef COIO_EXECUTION_USE_NVIDIA
 #if __has_include(<stdexec/execution.hpp>) // https://github.com/NVIDIA/stdexec
 #include <stdexec/execution.hpp>
@@ -168,6 +169,7 @@ namespace coio {
         using detail::execution_impl::stopped_as_error_t;
         using detail::execution_impl::stopped_as_optional_t;
         using detail::execution_impl::into_variant;
+        using detail::execution_impl::unstoppable;
         using detail::execution_impl::stopped_as_error;
         using detail::execution_impl::stopped_as_optional;
 
@@ -292,11 +294,66 @@ namespace coio {
             return fwd_env_t<Env>{std::move(env)};
         }
 
+        template<typename Env1, typename Env2>
+        class join_env_t {
+        public:
+            join_env_t(Env1 env1, Env2 env2) noexcept : env1(std::move(env1)), env2(std::move(env2)) {}
+
+            template<typename Q, typename... Args>
+                requires requires(const Env1& env1, const Q& q, Args&&... args) {
+                    env1.query(q, ::std::forward<Args>(args)...);
+                }
+            auto query(const Q& query, Args&&... args) const noexcept -> decltype(auto) {
+                return env1.query(query, ::std::forward<Args>(args)...);
+            }
+
+            template<typename Q, typename... Args>
+                requires(
+                    not requires(const Env1& env1, const Q& q, Args&&... args) {
+                        env1.query(q, ::std::forward<Args>(args)...);
+                    } and
+                    requires(const Env2& env2, const Q& query, Args&&... args) {
+                        env2.query(query, ::std::forward<Args>(args)...);
+                    })
+            auto query(const Q& query, Args&&... args) const noexcept -> decltype(auto) {
+                return env2.query(query, ::std::forward<Args>(args)...);
+            }
+
+        private:
+            Env1 env1;
+            Env2 env2;
+        };
+
         template<typename Sched1, typename Sched2>
         concept compatible_with_impl = requires (const Sched1& sched1, const Sched2& sched2) {
             { sched1 == sched2 } noexcept -> boolean_testable;
             { sched1 != sched2 } noexcept -> boolean_testable;
         };
+
+        template<typename, typename...>
+        struct completion_signature_helper;
+
+        template<typename... PrevSigs, typename... Sigs, typename... Rest>
+        struct completion_signature_helper<type_list<PrevSigs...>, execution::completion_signatures<Sigs...>, Rest...> :
+            completion_signature_helper<typename type_list<PrevSigs..., Sigs...>::unique, Rest...> {};
+
+        template<typename... Sigs>
+        struct completion_signature_helper<type_list<Sigs...>> {
+            using types = type_list<Sigs...>;
+            using set_value_types = types::template filter<is_set_value>;
+            using set_error_types = types::template filter<is_set_error>;
+            using set_stopped_types = types::template filter<is_set_stopped>;
+            using merged_signatures = execution::completion_signatures<Sigs...>;
+        };
+
+        template<typename... CompletionSigs>
+        using merge_completion_signatures_t = typename completion_signature_helper<type_list<>, CompletionSigs...>::merged_signatures;
+
+        template<typename Sndr, typename Env>
+        using completion_signature_traits_of_t = completion_signature_helper<
+            type_list<>,
+            execution::completion_signatures_of_t<Sndr, Env>
+        >;
     }
 
     template<typename Scheduler>
@@ -316,4 +373,67 @@ namespace coio {
         execution::scheduler<Sched2> and
         detail::compatible_with_impl<Sched1, Sched2> and
         detail::compatible_with_impl<Sched2, Sched1>;
+
+    struct append_fallback_env_t {
+        template<typename Rcvr, typename FallbackEnv>
+        struct receiver {
+            using receiver_concept = execution::receiver_tag;
+
+            template<typename... Args>
+            COIO_ALWAYS_INLINE auto set_value(Args&&... args) && noexcept -> void {
+                execution::set_value(std::move(rcvr), std::forward<Args>(args)...);
+            }
+
+            template<typename E>
+            COIO_ALWAYS_INLINE auto set_error(E&& e) && noexcept -> void {
+                execution::set_error(std::move(rcvr), std::forward<E>(e));
+            }
+
+            COIO_ALWAYS_INLINE auto set_stopped() && noexcept -> void {
+                execution::set_stopped(std::move(rcvr));
+            }
+
+            COIO_ALWAYS_INLINE auto get_env() const noexcept {
+                return detail::join_env_t{execution::get_env(rcvr), fallback_env};
+            }
+
+            Rcvr rcvr;
+            FallbackEnv fallback_env;
+        };
+
+        template<typename Child, typename FallbackEnv>
+        struct sender {
+            using sender_concept = execution::sender_tag;
+
+            template<typename Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
+                return execution::connect(std::move(child), receiver<Rcvr, FallbackEnv>{std::move(rcvr), std::move(fallback_env)});
+            }
+
+            template<similar_to<sender>> requires (not execution::dependent_sender<Child>)
+            static consteval auto get_completion_signatures() {
+                return execution::get_completion_signatures<Child>();
+            }
+
+            template<similar_to<sender>, typename Env>
+            static consteval auto get_completion_signatures() {
+                return execution::get_completion_signatures<Child, detail::join_env_t<Env, FallbackEnv>>();
+            }
+
+            COIO_ALWAYS_INLINE auto get_env() const noexcept {
+                return execution::get_env(child);
+            }
+
+            Child child;
+            FallbackEnv fallback_env;
+        };
+
+        template<typename Sndr, typename Env>
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (Sndr sndr, Env env) COIO_STATIC_CALL_OP_CONST noexcept {
+            return sender<Sndr, Env>{std::move(sndr), std::move(env)};
+        }
+    };
+
+    inline constexpr append_fallback_env_t append_fallback_env{};
 }

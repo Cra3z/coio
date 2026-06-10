@@ -63,6 +63,22 @@ namespace coio {
     template<typename Env>
     using stop_token_of_t = std::decay_t<std::invoke_result_t<get_stop_token_t, Env>>;
 
+    template<typename Sched, typename Env>
+    concept infallible_scheduler =
+        execution::scheduler<Sched> and
+        (std::same_as<
+                execution::completion_signatures<execution::set_value_t()>,
+                execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>> or
+            (not unstoppable_token<stop_token_of_t<Env>> and
+                (std::same_as<
+                        execution::completion_signatures<execution::set_value_t(),
+                                                         execution::set_stopped_t()>,
+                        execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>> or
+                    std::same_as<
+                        execution::completion_signatures<execution::set_stopped_t(),
+                                                         execution::set_value_t()>,
+                        execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>>)));
+
     class never_stop_token {
     private:
         struct ignored {

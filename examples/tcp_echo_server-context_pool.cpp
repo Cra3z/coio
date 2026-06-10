@@ -2,7 +2,7 @@
 #include <coio/asyncio/io.h>
 #include <coio/net/socket.h>
 #include <coio/net/tcp.h>
-#include <coio/utils/signal_set.h>
+#include <coio/utils/signal_wait.h>
 #include "common.h"
 
 #if COIO_OS_LINUX
@@ -94,8 +94,7 @@ catch (const std::system_error& e) {
 }
 
 auto signal_watchdog(io_context_pool& pool) -> coio::task<> {
-    coio::signal_set signals{SIGINT, SIGTERM};
-    const int signum = co_await signals.async_wait();
+    const int signum = co_await coio::signal_wait(SIGINT, SIGTERM);
     ::debug("server stop with signal: ({}){}", signum, coio::strsignal(signum));
     pool.stop();
 }

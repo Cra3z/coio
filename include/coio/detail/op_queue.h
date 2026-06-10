@@ -251,11 +251,14 @@ namespace coio::detail {
         template<typename BaseOp, typename Next> requires std::derived_from<Op, BaseOp>
         COIO_ALWAYS_INLINE auto take_ready_timers(BaseOp*& head, const Next& next) -> void {
             head = nullptr;
+            BaseOp* tail = nullptr;
             std::scoped_lock _{mtx_};
             while (not underlying_.empty() and std::chrono::steady_clock::now() >= underlying_.front().deadline) {
                 Op* op = underlying_.front().op;
                 do_remove(0);
-                std::invoke(next, *op) = std::exchange(head, op);
+                if (head == nullptr) head = op;
+                if (tail) std::invoke(next, *tail) = op;
+                tail = op;
             }
         }
 

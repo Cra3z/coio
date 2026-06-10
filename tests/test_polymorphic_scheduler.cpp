@@ -5,7 +5,7 @@
 
 TEST_CASE("scheduler concepts") {
     static_assert(coio::execution::scheduler<coio::polymorphic_scheduler>);
-    static_assert(coio::detail::infallible_scheduler<coio::polymorphic_scheduler, coio::execution::env<>>);
+    static_assert(coio::infallible_scheduler<coio::polymorphic_scheduler, coio::execution::env<>>);
 }
 
 TEST_CASE("polymorphic_scheduler equality") {

@@ -1,3 +1,4 @@
+#include <bit>
 #include <coio/asyncio/file.h>
 #include <coio/utils/scope_exit.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
@@ -45,7 +46,7 @@ namespace coio::detail {
             ::OVERLAPPED overlapped{
                 .Offset = static_cast<::DWORD>(offset & 0xff'ff'ff'ffu),
                 .OffsetHigh = static_cast<::DWORD>(offset >> 32u),
-                .hEvent = reset_event // for GetOverlappedResult
+                .hEvent = std::bit_cast<::HANDLE>(std::bit_cast<::ULONG_PTR>(reset_event) | 1u) // for GetOverlappedResult
             };
             ::DWORD n = 0;
 
@@ -90,7 +91,7 @@ namespace coio::detail {
             ::OVERLAPPED overlapped{
                 .Offset = static_cast<::DWORD>(offset & 0xff'ff'ff'ffu),
                 .OffsetHigh = static_cast<::DWORD>(offset >> 32u),
-                .hEvent = reset_event // for GetOverlappedResult
+                .hEvent = std::bit_cast<::HANDLE>(std::bit_cast<::ULONG_PTR>(reset_event) | 1u) // for GetOverlappedResult
             };
             ::DWORD n = 0;
 
@@ -135,10 +136,7 @@ namespace coio::detail {
             if (bool(mode & open_mode::append)) {
                 ::LARGE_INTEGER distance_to_move{.QuadPart = 0};
                 ::LARGE_INTEGER new_file_pointer{};
-                if (::SetFilePointerEx(handle, distance_to_move, &new_file_pointer, FILE_END)) {
-                    // impl.offset_ = static_cast<uint64_t>(new_file_pointer.QuadPart);
-                }
-                else {
+                if (not ::SetFilePointerEx(handle, distance_to_move, &new_file_pointer, FILE_END)) {
                     const ::DWORD err = ::GetLastError();
                     ::CloseHandle(handle);
                     throw std::system_error{to_error_code(err), "open"};

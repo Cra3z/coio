@@ -20,13 +20,19 @@ namespace coio {
                 throw std::system_error{-ec, std::system_category()};
             }
         }
+
+        [[noreturn]]
+        auto sqe_exhuasted() -> void {
+            // TODO: more proper handle
+            std::terminate();
+        }
     }
 
     auto uring_context::uring_node::do_cancel() -> void {
         std::scoped_lock _{context_.uring_mtx_};
         auto sqe = context_.allocate_sqe();
-        if (sqe == nullptr) {
-            throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
+        if (sqe == nullptr) [[unlikely]] {
+            sqe_exhuasted();
         }
         ::io_uring_prep_cancel(sqe, this, 0);
         ::io_uring_sqe_set_data(sqe, nullptr);
@@ -42,8 +48,8 @@ namespace coio {
         if (fd_ == -1) return;
         std::scoped_lock _{ctx_->uring_mtx_};
         auto sqe = ctx_->allocate_sqe();
-        if (sqe == nullptr) {
-            throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
+        if (sqe == nullptr) [[unlikely]] {
+            sqe_exhuasted();
         }
         ::io_uring_prep_cancel_fd(sqe, fd_, IORING_ASYNC_CANCEL_ALL);
         ::io_uring_sqe_set_data(sqe, nullptr);
@@ -159,7 +165,7 @@ namespace coio {
 
     auto uring_context::allocate_sqe() noexcept -> io_uring_sqe* {
         ::io_uring_sqe* sqe = ::io_uring_get_sqe(&uring_);
-        if (sqe == nullptr) {
+        for (std::size_t retry = 3u; sqe == nullptr and retry-- > 0;) {
             submit_sqes();
             sqe = ::io_uring_get_sqe(&uring_);
         }
@@ -189,8 +195,8 @@ namespace coio {
     auto uring_context::interrupt() -> void {
         std::scoped_lock _{uring_mtx_};
         auto sqe = allocate_sqe();
-        if (sqe == nullptr) {
-            throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
+        if (sqe == nullptr) [[unlikely]] {
+            sqe_exhuasted();
         }
         ::io_uring_prep_nop(sqe);
         ::io_uring_sqe_set_data(sqe, this);
