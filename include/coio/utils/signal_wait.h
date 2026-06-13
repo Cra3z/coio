@@ -149,13 +149,19 @@ namespace coio {
 
     [[nodiscard]]
     COIO_ALWAYS_INLINE auto signal_wait(int signal_number) noexcept {
-        return execution::affine(signal_wait_sender{signal_number});
+        return append_fallback_env(
+            execution::affine(signal_wait_sender{signal_number}),
+            execution::prop{execution::get_start_scheduler, execution::inline_scheduler{}}
+        );
     }
 
     template<std::convertible_to<int>... SignalNumbers>
     [[nodiscard]]
     COIO_ALWAYS_INLINE auto signal_wait(SignalNumbers... signal_numbers) noexcept {
-        return execution::affine(when_any(signal_wait_sender{static_cast<int>(signal_numbers)}...));
+        return append_fallback_env(
+            execution::affine(when_any(signal_wait_sender{static_cast<int>(signal_numbers)}...)),
+            execution::prop{execution::get_start_scheduler, execution::inline_scheduler{}}
+        );
     }
 
     [[nodiscard]]
