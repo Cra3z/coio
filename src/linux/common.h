@@ -5,6 +5,7 @@
 #include <variant>
 #include <system_error>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h> // IWYU pragma: keep
 #include <coio/detail/error.h> // IWYU pragma: keep
@@ -36,6 +37,20 @@ namespace coio::detail {
 #else
         return errno_ == EWOULDBLOCK or errno_ == EAGAIN;
 #endif
+    }
+
+    COIO_ALWAYS_INLINE auto poll_file(int fd, short events, const char* msg) -> void {
+        ::pollfd pfd{
+            .fd = fd,
+            .events = events,
+            .revents = 0
+        };
+        while (true) {
+            const int rc = ::poll(&pfd, 1, -1);
+            if (rc == -1 and errno == EINTR) continue;
+            throw_last_error(rc, msg);
+            return;
+        }
     }
 
     auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6>;

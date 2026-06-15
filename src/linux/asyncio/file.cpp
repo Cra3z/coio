@@ -44,35 +44,59 @@ namespace coio::detail {
     }
 
     auto file_read(file_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
-        const auto n = ::read(handle, buffer.data(), buffer.size());
-        throw_last_error(n, "read_some");
-        if (not buffer.empty() and n == 0) throw std::system_error{coio::error::eof, "read_some"};
-        return n;
+        while (true) {
+            const auto n = ::read(handle, buffer.data(), buffer.size());
+            if (n == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLIN, "read_some");
+                continue;
+            }
+            throw_last_error(n, "read_some");
+            if (not buffer.empty() and n == 0) throw std::system_error{coio::error::eof, "read_some"};
+            return n;
+        }
     }
 
     auto file_write(file_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
-        const auto n = ::write(handle, buffer.data(), buffer.size());
-        throw_last_error(n, "write_some");
-        return n;
+        while (true) {
+            const auto n = ::write(handle, buffer.data(), buffer.size());
+            if (n == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLOUT, "write_some");
+                continue;
+            }
+            throw_last_error(n, "write_some");
+            return n;
+        }
     }
 
     auto file_read_at(file_native_handle_type handle, std::size_t offset, std::span<std::byte> buffer) -> std::size_t {
         if (offset > std::numeric_limits<::off_t>::max()) [[unlikely]] {
             throw std::system_error{std::make_error_code(std::errc::value_too_large), "read_some_at"};
         }
-        const auto n = ::pread(handle, buffer.data(), buffer.size(), offset);
-        throw_last_error(n, "read_some_at");
-        if (not buffer.empty() and n == 0) throw std::system_error{coio::error::eof, "read_some_at"};
-        return n;
+        while (true) {
+            const auto n = ::pread(handle, buffer.data(), buffer.size(), offset);
+            if (n == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLIN, "read_some_at");
+                continue;
+            }
+            throw_last_error(n, "read_some_at");
+            if (not buffer.empty() and n == 0) throw std::system_error{coio::error::eof, "read_some_at"};
+            return n;
+        }
     }
 
     auto file_write_at(file_native_handle_type handle, std::size_t offset, std::span<const std::byte> buffer) -> std::size_t {
         if (offset > std::numeric_limits<::off_t>::max()) [[unlikely]] {
             throw std::system_error{std::make_error_code(std::errc::value_too_large), "write_some_at"};
         }
-        const auto n = ::pwrite(handle, buffer.data(), buffer.size(), offset);
-        throw_last_error(n, "write_some_at");
-        return n;
+        while (true) {
+            const auto n = ::pwrite(handle, buffer.data(), buffer.size(), offset);
+            if (n == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLOUT, "write_some_at");
+                continue;
+            }
+            throw_last_error(n, "write_some_at");
+            return n;
+        }
     }
 
     auto close_file(file_native_handle_type handle) -> void {

@@ -27,11 +27,14 @@ auto handle_connection(io_context::scheduler sched) -> coio::task<> try {
         std::getline(std::cin, content);
         if (content.empty()) continue;
         if (content == "exit" or content == "quit") break;
-        co_await (coio::async_write(socket, coio::as_bytes(content)) | as_throwing);
+        ::println("content size: {}", content.size());
+        auto w = co_await (coio::async_write(socket, coio::as_bytes(content)) | as_throwing);
+        ::println("send {} byte(s)", w);
         std::size_t content_length = content.size();
         coio::flat_buffer buffer;
         co_await (coio::async_read(socket, buffer, content_length) | as_throwing);
         const auto buffer_data = buffer.data();
+        ::println("size: {}", buffer.size());
         ::println("-- {}", std::string_view{reinterpret_cast<const char*>(buffer_data.data()), buffer_data.size()});
         buffer.consume(content_length);
     }

@@ -457,12 +457,12 @@ namespace coio {
                     }
                 }
 
-                node* ready_time_ops = nullptr;
-                timer_queue_.take_ready_timers(ready_time_ops, &node::next_);
+                detail::intrusive_list<node> ready_time_ops{&node::next_};
+                timer_queue_.take_ready_timers(ready_time_ops);
 
                 lock.unlock();
 
-                if (ready_time_ops) op_queue_.enqueue(*ready_time_ops);
+                if (auto ops = ready_time_ops.release()) op_queue_.enqueue(*ops);
 
                 if (not infinite) {
                     const auto op = op_queue_.try_dequeue();

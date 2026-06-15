@@ -64,7 +64,7 @@ namespace coio {
             auto register_event(int event_type, std::uint32_t extra_flags) noexcept -> bool;
 
         private:
-            virtual auto perform() noexcept -> void = 0;
+            virtual auto perform() noexcept -> bool = 0;
 
         protected:
             int fd;
@@ -267,12 +267,13 @@ namespace coio {
                 unreachable();
             }
 
-            auto do_perform() noexcept -> void {
+            auto do_perform() noexcept -> bool {
                 static_assert(always_false<Sexpr>, "this operation isn't supported");
+                unreachable();
             }
 
-            auto perform() noexcept -> void override {
-                do_perform();
+            auto perform() noexcept -> bool override {
+                return do_perform();
             }
 
         protected:
@@ -284,7 +285,7 @@ namespace coio {
         auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_state_base_for<async_read_some_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_read_some_t>::do_perform() noexcept -> bool;
 
         template<>
         auto epoll_state_base_for<async_read_some_t>::do_cancel() -> void;
@@ -295,7 +296,7 @@ namespace coio {
         auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_state_base_for<async_write_some_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_write_some_t>::do_perform() noexcept -> bool;
 
         template<>
         auto epoll_state_base_for<async_write_some_t>::do_cancel() -> void;
@@ -306,7 +307,7 @@ namespace coio {
         auto epoll_state_base_for<async_send_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_state_base_for<async_send_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_send_t>::do_perform() noexcept -> bool;
 
         template<>
         auto epoll_state_base_for<async_send_t>::do_cancel() -> void;
@@ -317,7 +318,7 @@ namespace coio {
         auto epoll_state_base_for<async_receive_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_state_base_for<async_receive_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_receive_t>::do_perform() noexcept -> bool;
 
         template<>
         auto epoll_state_base_for<async_receive_t>::do_cancel() -> void;
@@ -328,7 +329,7 @@ namespace coio {
         auto epoll_state_base_for<async_receive_from_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_state_base_for<async_receive_from_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_receive_from_t>::do_perform() noexcept -> bool;
 
         template<>
         auto epoll_state_base_for<async_receive_from_t>::do_cancel() -> void;
@@ -339,7 +340,7 @@ namespace coio {
         auto epoll_state_base_for<async_send_to_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_state_base_for<async_send_to_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_send_to_t>::do_perform() noexcept -> bool;
 
         template<>
         auto epoll_state_base_for<async_send_to_t>::do_cancel() -> void;
@@ -350,7 +351,7 @@ namespace coio {
         auto epoll_state_base_for<async_accept_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_state_base_for<async_accept_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_accept_t>::do_perform() noexcept -> bool;
 
         template<>
         auto epoll_state_base_for<async_accept_t>::do_cancel() -> void;
@@ -361,7 +362,7 @@ namespace coio {
         auto epoll_state_base_for<async_connect_t>::do_start() noexcept -> bool;
 
         template<>
-        auto epoll_state_base_for<async_connect_t>::do_perform() noexcept -> void;
+        auto epoll_state_base_for<async_connect_t>::do_perform() noexcept -> bool;
 
         template<>
         auto epoll_state_base_for<async_connect_t>::do_cancel() -> void;

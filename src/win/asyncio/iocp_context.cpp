@@ -201,20 +201,19 @@ namespace coio {
             const ::BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, static_cast<::DWORD>(timeout));
             const ::DWORD err = success ? 0 : ::GetLastError();
 
-            node* ready_time_ops = nullptr;
-            timer_queue_.take_ready_timers(ready_time_ops, &node::next_);
+            detail::intrusive_list<node> ready_time_ops{&node::next_}, ready_io_ops{&node::next_};
+            timer_queue_.take_ready_timers(ready_time_ops);
 
             lock.unlock();
 
-            node* ready_io_ops = nullptr;
             if (overlapped and key != wake_completion_key) {
-                auto inode = static_cast<iocp_node*>(overlapped);
-                inode->complete(bytes, err);
-                inode->next_ = std::exchange(ready_io_ops, inode);
+                auto op = static_cast<iocp_node*>(overlapped);
+                op->complete(bytes, err);
+                ready_io_ops.push_back(*op);
             }
 
-            if (ready_time_ops) op_queue_.enqueue(*ready_time_ops);
-            if (ready_io_ops) op_queue_.enqueue(*ready_io_ops);
+            if (auto ops = ready_time_ops.release()) op_queue_.enqueue(*ops);
+            if (auto ops = ready_io_ops.release()) op_queue_.enqueue(*ops);
 
             if (not infinite) {
                 const auto op = op_queue_.try_dequeue();

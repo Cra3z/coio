@@ -170,45 +170,90 @@ namespace coio::detail::socket {
         check_fd(handle);
         auto sa = endpoint_to_sockaddr_in(peer);
         auto [psa, len] = to_sockaddr(sa);
-        throw_last_error(::connect(handle, psa, len), "connect");
+        const int rc = ::connect(handle, psa, len);
+        if (rc == 0) return;
+
+        const int ec = errno;
+        if (ec != EINPROGRESS and ec != EAGAIN) {
+            throw std::system_error{ec, std::system_category(), "connect"};
+        }
+
+        poll_file(handle, POLLOUT, "connect");
+
+        int so_error = 0;
+        ::socklen_t so_error_len = sizeof(so_error);
+        throw_last_error(::getsockopt(handle, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len), "connect");
+        if (so_error != 0) {
+            throw std::system_error{so_error, std::system_category(), "connect"};
+        }
     }
 
     auto accept(socket_native_handle_type handle) -> socket_native_handle_type {
         check_fd(handle);
-        auto accepted = ::accept4(handle, nullptr, nullptr, 0);
-        detail::throw_last_error(accepted, "accept");
-        return accepted;
+        while (true) {
+            auto accepted = ::accept4(handle, nullptr, nullptr, 0);
+            if (accepted == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLIN, "accept");
+                continue;
+            }
+            detail::throw_last_error(accepted, "accept");
+            return accepted;
+        }
     }
 
     auto receive(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
         check_fd(handle);
-        ::ssize_t n = ::recv(handle, buffer.data(), buffer.size(), 0);
-        throw_last_error(n, "receive");
-        return n;
+        while (true) {
+            ::ssize_t n = ::recv(handle, buffer.data(), buffer.size(), 0);
+            if (n == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLIN, "receive");
+                continue;
+            }
+            throw_last_error(n, "receive");
+            return n;
+        }
     }
 
     auto send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
         check_fd(handle);
-        ::ssize_t n = ::send(handle, buffer.data(), buffer.size(), MSG_NOSIGNAL);
-        throw_last_error(n, "send");
-        return n;
+        while (true) {
+            ::ssize_t n = ::send(handle, buffer.data(), buffer.size(), MSG_NOSIGNAL);
+            if (n == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLOUT, "send");
+                continue;
+            }
+            throw_last_error(n, "send");
+            return n;
+        }
     }
 
     auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::pair<endpoint, size_t> {
         check_fd(handle);
-        ::sockaddr_storage addr{};
-        ::socklen_t len = sizeof(addr);
-        ::ssize_t n = ::recvfrom(handle, buffer.data(), buffer.size(), 0, reinterpret_cast<::sockaddr*>(&addr), &len);
-        throw_last_error(n, "receive_from");
-        return {sockaddr_storage_to_endpoint(addr), n};
+        while (true) {
+            ::sockaddr_storage addr{};
+            ::socklen_t len = sizeof(addr);
+            ::ssize_t n = ::recvfrom(handle, buffer.data(), buffer.size(), 0, reinterpret_cast<::sockaddr*>(&addr), &len);
+            if (n == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLIN, "receive_from");
+                continue;
+            }
+            throw_last_error(n, "receive_from");
+            return {sockaddr_storage_to_endpoint(addr), n};
+        }
     }
 
     auto send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
         check_fd(handle);
         auto sa = endpoint_to_sockaddr_in(dest);
         auto [psa, len] = to_sockaddr(sa);
-        ::ssize_t n = ::sendto(handle, buffer.data(), buffer.size(), MSG_NOSIGNAL, psa, len);
-        throw_last_error(n, "send_to");
-        return n;
+        while (true) {
+            ::ssize_t n = ::sendto(handle, buffer.data(), buffer.size(), MSG_NOSIGNAL, psa, len);
+            if (n == -1 and is_blocking_errno(errno)) {
+                poll_file(handle, POLLOUT, "send_to");
+                continue;
+            }
+            throw_last_error(n, "send_to");
+            return n;
+        }
     }
 }

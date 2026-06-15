@@ -143,11 +143,11 @@ namespace coio {
             virtual auto equals(const backend*) const noexcept -> bool = 0;
 
             template<execution::scheduler Sched>
-            auto try_get_scheduler() const noexcept -> std::optional<Sched> {
+            auto try_get_scheduler() const noexcept -> const Sched* {
                 if (auto self = dynamic_cast<const backend_sched<Sched>*>(this)) {
-                    return self->sched;
+                    return std::addressof(self->sched);
                 }
-                return std::nullopt;
+                return nullptr;
             }
         };
 
@@ -344,10 +344,9 @@ namespace coio {
 
         template<different_from<polymorphic_scheduler> Sched> requires execution::scheduler<Sched>
         auto operator== (const Sched& sched) const noexcept -> bool {
-            if (std::optional<Sched> inner_sched = this->target<Sched>()) {
-                return *inner_sched == sched;
-            }
-            return false;
+            if (backend_ == nullptr) return false;
+            auto inner_sched = backend_->try_get_scheduler<Sched>();
+            return inner_sched ? *inner_sched == sched : false;
         }
 
         COIO_ALWAYS_INLINE auto swap(polymorphic_scheduler& other) noexcept -> void {
@@ -360,8 +359,10 @@ namespace coio {
 
         template<different_from<polymorphic_scheduler> Sched> requires execution::scheduler<Sched> and unqualified_object<Sched>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto target() const noexcept -> std::optional<Sched> {
-            return backend_ ? backend_->try_get_scheduler<Sched>() : std::nullopt;
+        COIO_ALWAYS_INLINE auto target() const noexcept(std::is_nothrow_copy_constructible_v<Sched>) -> std::optional<Sched> {
+            if (backend_ == nullptr) return std::nullopt;
+            auto inner_sched = backend_->try_get_scheduler<Sched>();
+            return inner_sched ? *inner_sched : std::optional<Sched>{};
         }
 
     private:

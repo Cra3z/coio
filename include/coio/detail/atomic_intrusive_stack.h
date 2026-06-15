@@ -10,7 +10,7 @@ namespace coio::detail {
     };
 
     template<typename T>
-    class intrusive_stack {
+    class atomic_intrusive_stack {
         static_assert(unqualified_object<T> and not std::is_array_v<T>);
     public:
         using value_type = T;
@@ -20,7 +20,7 @@ namespace coio::detail {
         using const_reference = T&;
 
     public:
-        explicit intrusive_stack(pointer T::* next) noexcept : head_(this), next_(next) {}
+        explicit atomic_intrusive_stack(pointer T::* next) noexcept : head_(this), next_(next) {}
 
         /// return the list status before pushing
         auto push(reference object) noexcept -> stack_status {

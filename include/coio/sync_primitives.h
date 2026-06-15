@@ -5,8 +5,8 @@
 #include <mutex>
 #include <optional>
 #include <utility>
+#include <coio/detail/atomic_intrusive_stack.h>
 #include <coio/detail/execution.h>
-#include <coio/detail/intrusive_stack.h>
 #include <coio/utils/atomutex.h>
 #include <coio/utils/stop_token.h>
 
@@ -633,6 +633,6 @@ namespace coio {
 
     private:
         std::atomic<count_type> counter_;
-        detail::intrusive_stack<typename wait_sender::state_base> waiting_list_{&wait_sender::state_base::next_};
+        detail::atomic_intrusive_stack<typename wait_sender::state_base> waiting_list_{&wait_sender::state_base::next_};
     };
 }

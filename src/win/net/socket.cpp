@@ -10,6 +10,65 @@ namespace coio::detail::socket {
                 throw std::system_error{std::make_error_code(std::errc::bad_file_descriptor)};
             }
         }
+
+        auto poll_socket(socket_native_handle_type handle, short kind, const char* msg) -> void {
+            while (true) {
+                ::fd_set read_set;
+                ::fd_set write_set;
+                ::fd_set except_set;
+                FD_ZERO(&read_set);
+                FD_ZERO(&write_set);
+                FD_ZERO(&except_set);
+
+                ::fd_set* readfds = nullptr;
+                ::fd_set* writefds = nullptr;
+                ::fd_set* exceptfds = nullptr;
+                switch (kind) {
+                case 0: // recv/recvfrom
+                    FD_SET(handle, &read_set);
+                    readfds = &read_set;
+                    break;
+                case 1: // send/sendto
+                    FD_SET(handle, &write_set);
+                    writefds = &write_set;
+                    break;
+                case 2: // connect
+                    FD_SET(handle, &write_set);
+                    FD_SET(handle, &except_set);
+                    writefds = &write_set;
+                    exceptfds = &except_set;
+                    break;
+                default:
+                    unreachable();
+                }
+
+                if (::select(0, readfds, writefds, exceptfds, nullptr) == SOCKET_ERROR) {
+                    const int err = ::WSAGetLastError();
+                    if (err == WSAEINTR) continue;
+                    throw std::system_error{err, std::system_category(), msg};
+                }
+                return;
+            }
+        }
+
+        COIO_ALWAYS_INLINE auto poll_read(socket_native_handle_type handle, const char* msg) -> void {
+            poll_socket(handle, 0, msg);
+        }
+
+        COIO_ALWAYS_INLINE auto poll_write(socket_native_handle_type handle, const char* msg) -> void {
+            poll_socket(handle, 1, msg);
+        }
+
+        COIO_ALWAYS_INLINE auto poll_connect(socket_native_handle_type handle, const char* msg) -> void {
+            poll_socket(handle, 2, msg);
+        }
+
+        [[noreturn]]
+        COIO_ALWAYS_INLINE auto throw_wsa_error_value(int err, const char* msg) -> void {
+            if (err == ERROR_NETNAME_DELETED) err = WSAECONNRESET;
+            else if (err == ERROR_PORT_UNREACHABLE) err = WSAECONNREFUSED;
+            throw std::system_error{err, std::system_category(), msg};
+        }
     }
 
     auto local_endpoint(socket_native_handle_type handle) -> endpoint {
@@ -176,64 +235,120 @@ namespace coio::detail::socket {
         check_handle(handle);
         auto sa = endpoint_to_sockaddr_in(peer);
         auto [psa, len] = to_sockaddr(sa);
-        throw_wsa_error(::connect(handle, psa, len), "connect");
+        if (::connect(handle, psa, len) == 0) return;
+        const int err = ::WSAGetLastError();
+        if (err != WSAEWOULDBLOCK and err != WSAEINPROGRESS) {
+            throw_wsa_error_value(err, "connect");
+        }
+
+        poll_connect(handle, "connect");
+
+        int so_error = 0;
+        int so_error_len = sizeof(so_error);
+        throw_wsa_error(::getsockopt(handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&so_error), &so_error_len), "connect");
+        if (so_error != 0) {
+            throw_wsa_error_value(so_error, "connect");
+        }
     }
 
     auto accept(socket_native_handle_type handle) -> socket_native_handle_type {
         check_handle(handle);
-        const ::SOCKET accepted = ::accept(handle, nullptr, nullptr);
-        if (accepted == static_cast<::SOCKET>(SOCKET_ERROR)) [[unlikely]] {
-            throw std::system_error{to_error_code(::WSAGetLastError()), "accept"};
+        while (true) {
+            const ::SOCKET accepted = ::accept(handle, nullptr, nullptr);
+            if (accepted == static_cast<::SOCKET>(SOCKET_ERROR)) [[unlikely]] {
+                const int err = ::WSAGetLastError();
+                if (err == WSAEWOULDBLOCK) {
+                    poll_read(handle, "accept");
+                    continue;
+                }
+                throw_wsa_error_value(err, "accept");
+            }
+            return accepted;
         }
-        return accepted;
     }
 
     auto receive(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
         check_handle(handle);
-        const int n = ::recv(
-            handle,
-            reinterpret_cast<char*>(buffer.data()),
-            static_cast<int>(buffer.size()), 0
-        );
-        throw_wsa_error(n, "receive");
-        return static_cast<std::size_t>(n);
+        while (true) {
+            const int n = ::recv(
+                handle,
+                reinterpret_cast<char*>(buffer.data()),
+                static_cast<int>(buffer.size()), 0
+            );
+            if (n == SOCKET_ERROR) {
+                const int err = ::WSAGetLastError();
+                if (err == WSAEWOULDBLOCK) {
+                    poll_read(handle, "receive");
+                    continue;
+                }
+                throw_wsa_error_value(err, "receive");
+            }
+            return static_cast<std::size_t>(n);
+        }
     }
 
     auto send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
         check_handle(handle);
-        const int n = ::send(
-            handle,
-            reinterpret_cast<const char*>(buffer.data()),
-            static_cast<int>(buffer.size()), 0
-        );
-        throw_wsa_error(n, "send");
-        return static_cast<std::size_t>(n);
+        while (true) {
+            const int n = ::send(
+                handle,
+                reinterpret_cast<const char*>(buffer.data()),
+                static_cast<int>(buffer.size()), 0
+            );
+            if (n == SOCKET_ERROR) {
+                const int err = ::WSAGetLastError();
+                if (err == WSAEWOULDBLOCK) {
+                    poll_write(handle, "send");
+                    continue;
+                }
+                throw_wsa_error_value(err, "send");
+            }
+            return static_cast<std::size_t>(n);
+        }
     }
 
     auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::pair<endpoint, size_t> {
         check_handle(handle);
-        ::sockaddr_storage addr{};
-        int len = sizeof(addr);
-        const int n = ::recvfrom(
-            handle,
-            reinterpret_cast<char*>(buffer.data()), static_cast<int>(std::min<std::size_t>(buffer.size(), INT_MAX)),
-            0, reinterpret_cast<::sockaddr*>(&addr), &len
-        );
-        throw_wsa_error(n, "receive_from");
-        return {sockaddr_storage_to_endpoint(addr), static_cast<std::size_t>(n)};
+        while (true) {
+            ::sockaddr_storage addr{};
+            int len = sizeof(addr);
+            const int n = ::recvfrom(
+                handle,
+                reinterpret_cast<char*>(buffer.data()), static_cast<int>(std::min<std::size_t>(buffer.size(), INT_MAX)),
+                0, reinterpret_cast<::sockaddr*>(&addr), &len
+            );
+            if (n == SOCKET_ERROR) {
+                const int err = ::WSAGetLastError();
+                if (err == WSAEWOULDBLOCK) {
+                    poll_read(handle, "receive_from");
+                    continue;
+                }
+                throw_wsa_error_value(err, "receive_from");
+            }
+            return {sockaddr_storage_to_endpoint(addr), static_cast<std::size_t>(n)};
+        }
     }
 
     auto send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
         check_handle(handle);
         auto sa = endpoint_to_sockaddr_in(dest);
         auto [psa, len] = to_sockaddr(sa);
-        const int n = ::sendto(
-            handle,
-            reinterpret_cast<const char*>(buffer.data()), static_cast<int>(std::min<std::size_t>(buffer.size(), INT_MAX)),
-            0, psa, len
-        );
-        throw_wsa_error(n, "send_to");
-        return static_cast<std::size_t>(n);
+        while (true) {
+            const int n = ::sendto(
+                handle,
+                reinterpret_cast<const char*>(buffer.data()), static_cast<int>(std::min<std::size_t>(buffer.size(), INT_MAX)),
+                0, psa, len
+            );
+            if (n == SOCKET_ERROR) {
+                const int err = ::WSAGetLastError();
+                if (err == WSAEWOULDBLOCK) {
+                    poll_write(handle, "send_to");
+                    continue;
+                }
+                throw_wsa_error_value(err, "send_to");
+            }
+            return static_cast<std::size_t>(n);
+        }
     }
 }
 

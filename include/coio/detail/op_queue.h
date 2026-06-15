@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 #include <coio/detail/config.h>
+#include <coio/detail/intrusive_list.h>
 #include <coio/utils/atomutex.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
@@ -248,17 +249,14 @@ namespace coio::detail {
             return true;
         }
 
-        template<typename BaseOp, typename Next> requires std::derived_from<Op, BaseOp>
-        COIO_ALWAYS_INLINE auto take_ready_timers(BaseOp*& head, const Next& next) -> void {
-            head = nullptr;
-            BaseOp* tail = nullptr;
+        template<typename BaseOp> requires std::derived_from<Op, BaseOp>
+        COIO_ALWAYS_INLINE auto take_ready_timers(intrusive_list<BaseOp>& list) -> void {
             std::scoped_lock _{mtx_};
             while (not underlying_.empty() and std::chrono::steady_clock::now() >= underlying_.front().deadline) {
                 Op* op = underlying_.front().op;
+                COIO_ASSERT(op != nullptr);
                 do_remove(0);
-                if (head == nullptr) head = op;
-                if (tail) std::invoke(next, *tail) = op;
-                tail = op;
+                list.push_back(*op);
             }
         }
 
