@@ -35,7 +35,7 @@ A C++ **asynchronous I/O** library based on [sender/receiver model](https://wg21
 
 ### Build Options
 - `COIO_BUILD_EXAMPLES` (`ON`/`OFF`, default `OFF`) - Build example programs
-- `COIO_BUILD_TESTS` (`ON/OFF`, default `OFF`) - Build **doctest**-based tests
+- `COIO_BUILD_TESTS` (`ON/OFF`, default `OFF`) - Build [**doctest**](https://github.com/doctest/doctest)-based tests
 - `COIO_BUILD_WITH_ASAN` (`ON`/`OFF`, default `OFF`) - Whether to enable **AddressSanitizer**
 - `COIO_BUILD_WITH_TSAN` (`ON`/`OFF`, default `OFF`) - Whether to enable **ThreadSanitizer**
 - `COIO_BUILD_WITH_UBSAN` (`ON`/`OFF`, default `OFF`) - Whether to enable **UndefinedBehaviorSanitizer**

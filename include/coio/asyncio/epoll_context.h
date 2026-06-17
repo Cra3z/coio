@@ -182,9 +182,6 @@ namespace coio {
                 Sexpr sexpr;
             };
 
-            template<typename T = void, typename Alloc = void>
-            using task = coio::task<T, Alloc, scheduler>;
-
         public:
             using scheduler_base::scheduler_base;
 
@@ -202,6 +199,9 @@ namespace coio {
         public:
             friend auto operator== (const scheduler& lhs, const scheduler& rhs) -> bool = default;
         };
+
+        template<typename T = void, typename Alloc = void>
+        using task = coio::task<T, Alloc, scheduler>;
 
     private:
         explicit epoll_context(std::nullptr_t, std::pmr::memory_resource& memory_resource) noexcept :
