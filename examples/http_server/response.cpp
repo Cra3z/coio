@@ -40,7 +40,7 @@ namespace http {
         }
     }
 
-    auto response::write_to(tcp_socket& socket) -> coio::task<> {
+    auto response::write_to(tcp_socket& socket) -> io_context::task<> {
         std::string line_and_headers;
         line_and_headers.reserve(512);
 

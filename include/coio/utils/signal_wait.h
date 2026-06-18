@@ -158,6 +158,7 @@ namespace coio {
     template<std::convertible_to<int>... SignalNumbers>
     [[nodiscard]]
     COIO_ALWAYS_INLINE auto signal_wait(SignalNumbers... signal_numbers) noexcept {
+        static_assert((... and std::is_nothrow_convertible_v<SignalNumbers, int>));
         return append_fallback_env(
             execution::affine(when_any(signal_wait_sender{static_cast<int>(signal_numbers)}...)),
             execution::prop{execution::get_start_scheduler, execution::inline_scheduler{}}

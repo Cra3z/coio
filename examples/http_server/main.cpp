@@ -12,14 +12,14 @@
 
 constexpr std::uint16_t port = 8080;
 
-auto signal_watchdog(http::io_context_pool& pool) -> coio::task<> {
+auto signal_watchdog(http::io_context_pool& pool) -> coio::inline_task<> {
     const int signum = co_await coio::signal_wait(SIGINT, SIGTERM);
     ::println("server stop with signal: ({}){}", signum, coio::strsignal(signum));
     pool.stop();
 }
 
-auto start_server(http::io_context_pool& pool, coio::async_scope& scope, http::router& router) -> coio::task<> try {
-    http::tcp_acceptor acceptor(pool.get_scheduler());
+auto start_server(http::io_context_pool& pool, coio::async_scope& scope, http::router& router) -> http::io_context::task<> try {
+    http::tcp_acceptor acceptor(co_await coio::read_scheduler());
     acceptor.open(coio::tcp::v6());
     acceptor.set_option(http::tcp_acceptor::reuse_address(true));
     acceptor.set_option(http::tcp_acceptor::v6_only(false));
@@ -27,13 +27,17 @@ auto start_server(http::io_context_pool& pool, coio::async_scope& scope, http::r
     acceptor.listen();
     ::debug("server started at http://localhost:{}", port);
     while (true) {
-        http::tcp_socket socket = co_await acceptor.async_accept(pool.get_scheduler());
+        auto next_scheduler = pool.pick_scheduler();
+        http::tcp_socket socket = co_await acceptor.async_accept(next_scheduler);
         auto endpoint = socket.remote_endpoint();
-        scope.spawn(http::connection(
-            std::move(socket),
-            endpoint,
-            router
-        ));
+        scope.spawn_on(
+            next_scheduler,
+            http::connection(
+                std::move(socket),
+                endpoint,
+                router
+            )
+        );
     }
 }
 catch (const std::exception& e) {
@@ -45,7 +49,7 @@ auto main() -> int try {
     http::io_context_pool pool{4};
     coio::async_scope scope;
     scope.spawn(signal_watchdog(pool));
-    scope.spawn(start_server(pool, scope, router));
+    scope.spawn_on(pool.pick_scheduler(), start_server(pool, scope, router));
     coio::this_thread::sync_wait(scope.join());
 }
 catch (const std::exception& e) {

@@ -15,7 +15,8 @@ using io_context = coio::iocp_context;
 
 using udp_socket = coio::udp::socket<io_context::scheduler>;
 
-auto start_server(io_context::scheduler sched) -> coio::task<> try {
+auto start_server() -> io_context::task<> try {
+    io_context::scheduler sched = co_await coio::read_scheduler();
     udp_socket socket{sched, coio::udp::v4()};
     socket.bind(coio::endpoint{coio::ipv4_address::any(), 8087});
 
@@ -31,7 +32,7 @@ catch (const std::system_error& e) {
     ::println("server error: {}", e.what());
 }
 
-auto signal_watchdog(io_context& context) -> coio::task<> {
+auto signal_watchdog(io_context& context) -> coio::inline_task<> {
     const int signum = co_await coio::signal_wait(SIGINT, SIGTERM);
     ::debug("server stop with signal: ({}){}", signum, coio::strsignal(signum));
     context.request_stop();
@@ -40,7 +41,7 @@ auto signal_watchdog(io_context& context) -> coio::task<> {
 auto main() -> int {
     io_context context;
     coio::async_scope scope;
-    scope.spawn(start_server(context.get_scheduler()));
+    scope.spawn_on(context.get_scheduler(), start_server());
     scope.spawn(signal_watchdog(context));
     context.run();
     coio::this_thread::sync_wait(scope.join());

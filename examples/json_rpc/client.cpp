@@ -7,7 +7,7 @@ auto generate_id() noexcept -> int {
     return id++;
 }
 
-auto call(json_rpc::tcp_socket& socket, const json_rpc::value& request) -> coio::task<json_rpc::value> {
+auto call(json_rpc::tcp_socket& socket, const json_rpc::value& request) -> json_rpc::io_context::task<json_rpc::value> {
     coio::flat_buffer buffer;
     const std::string line = json_rpc::dump(request) + '\n';
     co_await (coio::async_write(socket, coio::as_bytes(line)) | as_throwing);
@@ -19,7 +19,8 @@ auto call(json_rpc::tcp_socket& socket, const json_rpc::value& request) -> coio:
     co_return value;
 }
 
-auto run_client(json_rpc::io_context::scheduler sched) -> coio::task<> try {
+auto run_client() -> json_rpc::io_context::task<> try {
+    json_rpc::io_context::scheduler sched = co_await coio::read_scheduler();
     static auto json_rpc_version = "2.0";
     json_rpc::tcp_socket socket{sched};
     co_await socket.async_connect({coio::ipv4_address::loopback(), 9090});
@@ -61,7 +62,7 @@ catch (const std::exception& e) {
 auto main() -> int {
     json_rpc::io_context context;
     coio::async_scope scope;
-    scope.spawn(run_client(context.get_scheduler()));
+    scope.spawn_on(context.get_scheduler(), run_client());
     context.run();
     coio::this_thread::sync_wait(scope.join());
 }

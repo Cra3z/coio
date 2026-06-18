@@ -383,6 +383,8 @@ namespace coio {
         std::coroutine_handle<promise_type> coro_;
     };
 
+    template<typename T = void, typename Alloc = void>
+    using inline_task = task<T, Alloc, execution::inline_scheduler>;
 }
 
 #include <coio/detail/suppress_pop.h> // IWYU pragma: keep

@@ -56,7 +56,7 @@ public:
         work_guards_.clear();
     }
 
-    auto get_scheduler() noexcept -> io_context::scheduler {
+    auto pick_scheduler() noexcept -> io_context::scheduler {
         return io_contexts_[std::exchange(next_, (next_ + 1) % io_contexts_.size())]->get_scheduler();
     }
 
@@ -67,7 +67,7 @@ private:
     std::vector<coio::work_guard<io_context>> work_guards_;
 };
 
-auto handle_connection(tcp_socket socket) -> coio::task<> {
+auto handle_connection(tcp_socket socket) -> io_context::task<> {
     auto remote_endpoint = socket.remote_endpoint();
     ::debug("new connection from [{}]", remote_endpoint);
     try {
@@ -82,18 +82,19 @@ auto handle_connection(tcp_socket socket) -> coio::task<> {
     }
 }
 
-auto start_server(io_context_pool& pool, coio::async_scope& scope) -> coio::task<> try {
-    tcp_acceptor acceptor{pool.get_scheduler(), coio::endpoint{coio::ipv4_address::any(), 8086}};
+auto start_server(io_context_pool& pool, coio::async_scope& scope) -> io_context::task<> try {
+    tcp_acceptor acceptor{co_await coio::read_scheduler(), coio::endpoint{coio::ipv4_address::any(), 8086}};
     ::debug("server \"{}\" start...", acceptor.local_endpoint());
     while (true) {
-        scope.spawn(handle_connection(co_await acceptor.async_accept(pool.get_scheduler())));
+        auto next_scheduler = pool.pick_scheduler();
+        scope.spawn_on(next_scheduler, handle_connection(co_await acceptor.async_accept(next_scheduler)));
     }
 }
 catch (const std::system_error& e) {
     ::debug("acceptor error: {}", e.what());
 }
 
-auto signal_watchdog(io_context_pool& pool) -> coio::task<> {
+auto signal_watchdog(io_context_pool& pool) -> coio::inline_task<> {
     const int signum = co_await coio::signal_wait(SIGINT, SIGTERM);
     ::debug("server stop with signal: ({}){}", signum, coio::strsignal(signum));
     pool.stop();
@@ -103,6 +104,6 @@ auto main() -> int {
     io_context_pool pool{4};
     coio::async_scope scope;
     scope.spawn(signal_watchdog(pool));
-    scope.spawn(start_server(pool, scope));
+    scope.spawn_on(pool.pick_scheduler(), start_server(pool, scope));
     coio::this_thread::sync_wait(scope.join());
 }

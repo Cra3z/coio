@@ -17,7 +17,7 @@ namespace http {
         }
     }
 
-    auto io_context_pool::get_scheduler() noexcept -> io_context::scheduler {
+    auto io_context_pool::pick_scheduler() noexcept -> io_context::scheduler {
         return io_contexts_[std::exchange(next_, (next_ + 1) % io_contexts_.size())]->get_scheduler();
     }
 }

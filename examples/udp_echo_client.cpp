@@ -14,7 +14,8 @@ using io_context = coio::iocp_context;
 
 using udp_socket = coio::udp::socket<io_context::scheduler>;
 
-auto handle_connection(io_context::scheduler sched) -> coio::task<> try {
+auto handle_connection() -> io_context::task<> try {
+    io_context::scheduler sched = co_await coio::read_scheduler();
     udp_socket socket{sched, coio::udp::v4()};
     socket.bind(coio::endpoint{coio::ipv4_address::any(), 0});
 
@@ -44,7 +45,7 @@ catch (const std::exception& e) {
 auto main() -> int {
     io_context context;
     coio::async_scope scope;
-    scope.spawn(handle_connection(context.get_scheduler()));
+    scope.spawn_on(context.get_scheduler(), handle_connection());
     context.run();
     coio::this_thread::sync_wait(scope.join());
 }

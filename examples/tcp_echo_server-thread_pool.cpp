@@ -57,7 +57,7 @@ private:
     std::vector<coio::work_guard<io_context>> work_guards_;
 };
 
-auto handle_connection(tcp_socket socket) -> coio::task<> {
+auto handle_connection(tcp_socket socket) -> io_context::task<> {
     auto remote_endpoint = socket.remote_endpoint();
     ::debug("new connection from [{}]", remote_endpoint);
     try {
@@ -72,18 +72,19 @@ auto handle_connection(tcp_socket socket) -> coio::task<> {
     }
 }
 
-auto start_server(io_context::scheduler sched, coio::async_scope& scope) -> coio::task<> try {
+auto start_server(coio::async_scope& scope) -> io_context::task<> try {
+    io_context::scheduler sched = co_await coio::read_scheduler();
     tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8086}};
     ::debug("server \"{}\" start...", acceptor.local_endpoint());
     while (true) {
-        scope.spawn(handle_connection(co_await acceptor.async_accept()));
+        scope.spawn_on(sched, handle_connection(co_await acceptor.async_accept()));
     }
 }
 catch (const std::system_error& e) {
     ::debug("acceptor error: {}", e.what());
 }
 
-auto signal_watchdog(thread_pool& pool) -> coio::task<> {
+auto signal_watchdog(thread_pool& pool) -> coio::inline_task<> {
     const int signum = co_await coio::signal_wait(SIGINT, SIGTERM);
     ::debug("server stop with signal: ({}){}", signum, coio::strsignal(signum));
     pool.stop();
@@ -94,6 +95,6 @@ auto main() -> int {
     thread_pool pool{4};
     coio::async_scope scope;
     scope.spawn(signal_watchdog(pool));
-    scope.spawn(start_server(pool.get_scheduler(), scope));
+    scope.spawn_on(pool.get_scheduler(), start_server(scope));
     coio::this_thread::sync_wait(scope.join());
 }

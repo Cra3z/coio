@@ -16,7 +16,8 @@ using io_context = coio::iocp_context;
 using tcp_socket = coio::tcp::socket<io_context::scheduler>;
 using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
 
-auto handle_connection(io_context::scheduler sched) -> coio::task<> try {
+auto handle_connection() -> io_context::task<> try {
+    io_context::scheduler sched = co_await coio::read_scheduler();
     tcp_socket socket{sched};
     co_await socket.async_connect({coio::ipv4_address::loopback(), 8086});
     ::println("local endpoint: {}", socket.local_endpoint());
@@ -27,14 +28,11 @@ auto handle_connection(io_context::scheduler sched) -> coio::task<> try {
         std::getline(std::cin, content);
         if (content.empty()) continue;
         if (content == "exit" or content == "quit") break;
-        ::println("content size: {}", content.size());
-        auto w = co_await (coio::async_write(socket, coio::as_bytes(content)) | as_throwing);
-        ::println("send {} byte(s)", w);
+        co_await (coio::async_write(socket, coio::as_bytes(content)) | as_throwing);
         std::size_t content_length = content.size();
         coio::flat_buffer buffer;
         co_await (coio::async_read(socket, buffer, content_length) | as_throwing);
         const auto buffer_data = buffer.data();
-        ::println("size: {}", buffer.size());
         ::println("-- {}", std::string_view{reinterpret_cast<const char*>(buffer_data.data()), buffer_data.size()});
         buffer.consume(content_length);
     }
@@ -46,7 +44,7 @@ catch (const std::exception& e) {
 auto main() -> int {
     io_context context;
     coio::async_scope scope;
-    scope.spawn(handle_connection(context.get_scheduler()));
+    scope.spawn_on(context.get_scheduler(), handle_connection());
     context.run();
     coio::this_thread::sync_wait(scope.join());
 }

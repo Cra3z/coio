@@ -100,7 +100,7 @@ namespace http {
         tcp_socket socket,
         coio::endpoint remote_endpoint,
         router& router
-    ) -> coio::task<> try {
+    ) -> io_context::task<> try {
         while (true) {
             coio::streambuf buf;
             co_await (coio::async_read_until(socket, buf, "\r\n\r\n") | as_throwing);

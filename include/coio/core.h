@@ -34,6 +34,22 @@ namespace coio {
 
     using execution::when_all;
     using execution::when_all_with_variant;
+
+    inline constexpr auto read_scheduler = []() noexcept {
+        return execution::read_env(execution::get_scheduler);
+    };
+
+    inline constexpr auto read_start_scheduler = []() noexcept {
+        return execution::read_env(execution::get_start_scheduler);
+    };
+
+    inline constexpr auto read_allocator = []() noexcept {
+        return execution::read_env(get_allocator);
+    };
+
+    inline constexpr auto read_stop_token = []() noexcept {
+        return execution::read_env(get_stop_token);
+    };
 }
 
 #include <coio/detail/suppress_pop.h> // IWYU pragma: keep

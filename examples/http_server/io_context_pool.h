@@ -20,7 +20,7 @@ namespace http {
             work_guards_.clear();
         }
 
-        auto get_scheduler() noexcept -> io_context::scheduler;
+        auto pick_scheduler() noexcept -> io_context::scheduler;
 
     private:
         std::size_t next_ = 0;
