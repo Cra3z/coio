@@ -1,5 +1,9 @@
 ﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
+#include <cstddef>
+#include <functional>
+#include <stop_token>
+#include <utility>
 #include <coio/detail/config.h>
 #include <coio/detail/concepts.h>
 #include <coio/utils/type_traits.h>
@@ -354,7 +358,74 @@ namespace coio {
             type_list<>,
             execution::completion_signatures_of_t<Sndr, Env>
         >;
+
+        template<template<typename> typename>
+        struct check_type_alias_exists;
+
+        template<typename StopToken>
+        struct stoppable_token_traits;
+
+        template<typename StopToken> requires requires {
+            typename check_type_alias_exists<StopToken::template callback_type>;
+        }
+        struct stoppable_token_traits<StopToken> {
+            template<typename Fn>
+            using callback_type = typename StopToken::template callback_type<Fn>;
+        };
+
+        template<>
+        struct stoppable_token_traits<std::stop_token> {
+            template<typename Fn>
+            using callback_type = std::stop_callback<Fn>;
+        };
     }
+
+    template<typename StopToken, typename Callback>
+    using stop_callback_for_t = typename detail::stoppable_token_traits<StopToken>::template callback_type<Callback>;
+
+    template<typename StopToken>
+    concept stoppable_token = requires(const StopToken& token) {
+        typename detail::check_type_alias_exists<detail::stoppable_token_traits<StopToken>::template callback_type>;
+        { token.stop_requested() } noexcept -> boolean_testable;
+        { token.stop_possible() } noexcept -> boolean_testable;
+        { StopToken(token) } noexcept;
+    } and std::copyable<StopToken> and std::equality_comparable<StopToken>;
+
+    template<typename Source>
+    concept stoppable_source = requires(Source& src, const Source& csrc) {
+        { csrc.get_token() } -> stoppable_token;
+        { csrc.stop_requested() } noexcept -> boolean_testable;
+        { src.request_stop() } -> boolean_testable;
+    };
+
+    template<typename Token>
+    concept unstoppable_token = stoppable_token<Token> and requires(const Token tok) {
+        requires std::bool_constant<not Token::stop_possible()>::value;
+    };
+
+    template<typename Env>
+    using stop_token_of_t = std::decay_t<std::invoke_result_t<get_stop_token_t, Env>>;
+
+    using coio::detail::execution_impl::never_stop_token;
+    using coio::detail::execution_impl::inplace_stop_source;
+    using coio::detail::execution_impl::inplace_stop_token;
+    using coio::detail::execution_impl::inplace_stop_callback;
+
+    template<typename Sched, typename Env>
+    concept infallible_scheduler =
+        execution::scheduler<Sched> and
+        (std::same_as<
+                execution::completion_signatures<execution::set_value_t()>,
+                execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>> or
+            (not unstoppable_token<stop_token_of_t<Env>> and
+                (std::same_as<
+                        execution::completion_signatures<execution::set_value_t(),
+                                                         execution::set_stopped_t()>,
+                        execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>> or
+                    std::same_as<
+                        execution::completion_signatures<execution::set_stopped_t(),
+                                                         execution::set_value_t()>,
+                        execution::completion_signatures_of_t<execution::schedule_result_t<Sched>, Env>>)));
 
     template<typename Scheduler>
     concept timed_scheduler = execution::scheduler<Scheduler> and requires (Scheduler&& sch) {
