@@ -5,7 +5,6 @@
 #include <coio/detail/execution.h>
 #include <coio/utils/retain_ptr.h>
 #include <coio/utils/scope_exit.h>
-#include <coio/utils/stop_token.h>
 
 namespace coio {
     class polymorphic_scheduler {
@@ -37,6 +36,9 @@ namespace coio {
         };
 
         struct state_holder {
+            static constexpr std::size_t storage_size = 6 * sizeof(void*);
+            static constexpr std::size_t storage_alignment = alignof(void*);
+
             // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
             struct state_proxy_base {
                 state_proxy_base() = default;
@@ -51,7 +53,7 @@ namespace coio {
             };
 
             // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
-            template<execution::sender Sndr>
+            template<typename Sndr, bool>
             struct state_proxy : state_proxy_base {
                 using allocator_t = decltype(detail::get_suitable_allocator(std::declval<execution::env_of_t<Sndr>>()));
 
@@ -74,14 +76,35 @@ namespace coio {
                 execution::connect_result_t<Sndr, receiver> inner;
             };
 
+            // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
+            template<typename Sndr>
+            struct state_proxy<Sndr, true> : state_proxy_base {
+                state_proxy(Sndr sndr, receiver rcvr) : inner(execution::connect(std::move(sndr), std::move(rcvr))) {}
+
+                auto do_start() noexcept -> void override {
+                    execution::start(inner);
+                }
+
+                auto delete_self() noexcept -> void override {
+                    std::destroy_at(this);
+                }
+
+                execution::connect_result_t<Sndr, receiver> inner;
+            };
+
             template<execution::sender Sndr>
-            state_holder(Sndr sndr, receiver rcvr) {
-                auto alloc = detail::get_suitable_allocator(execution::get_env(sndr));
-                using alloc_t = std::allocator_traits<decltype(alloc)>::template rebind_alloc<state_proxy<Sndr>>;
-                alloc_t al(std::move(alloc));
-                auto ptr = std::allocator_traits<alloc_t>::allocate(al, 1);
-                std::allocator_traits<alloc_t>::construct(al, ptr, std::move(sndr), std::move(rcvr));
-                proxy = ptr;
+            state_holder(Sndr sndr, receiver rcvr) { // NOLINT(*-pro-type-member-init)
+                if constexpr (sizeof(state_proxy<Sndr, true>) <= storage_size and alignof(state_proxy<Sndr, true>) <= storage_alignment) {
+                    proxy = ::new(static_cast<void*>(storage)) state_proxy<Sndr, true>(std::move(sndr), std::move(rcvr));
+                }
+                else {
+                    auto alloc = detail::get_suitable_allocator(execution::get_env(sndr));
+                    using alloc_t = std::allocator_traits<decltype(alloc)>::template rebind_alloc<state_proxy<Sndr, false>>;
+                    alloc_t al(std::move(alloc));
+                    auto ptr = std::allocator_traits<alloc_t>::allocate(al, 1);
+                    std::allocator_traits<alloc_t>::construct(al, ptr, std::move(sndr), std::move(rcvr));
+                    proxy = ptr;
+                }
             }
 
             state_holder(const state_holder&) = delete;
@@ -99,30 +122,8 @@ namespace coio {
             }
 
             state_proxy_base* proxy;
+            alignas(storage_alignment) std::byte storage[storage_size];
         };
-
-        // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
-        template<execution::receiver Rcvr>
-        struct state : state_base {
-            state(Rcvr rcvr, auto* sndr_proxy) :
-                state_base(&do_complete),
-                rcvr_(std::move(rcvr)),
-                holder_(sndr_proxy->do_connect(receiver{this})) {}
-
-            auto start() & noexcept -> void {
-                holder_.do_start();
-            }
-
-            static auto do_complete(state_base* self) noexcept -> void {
-                auto this_ = static_cast<state*>(self);
-                execution::set_value(std::move(this_->rcvr_));
-            }
-
-            Rcvr rcvr_;
-            state_holder holder_;
-        };
-
-        class schedule_sender;
 
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
         struct backend : retain_base<backend> {
@@ -134,7 +135,7 @@ namespace coio {
 
             auto operator= (const backend&) -> backend& = delete;
 
-            virtual auto schedule() -> schedule_sender = 0;
+            virtual auto do_connect(receiver) -> state_holder = 0;
 
             virtual auto get_forward_progress_guarantee() const noexcept -> execution::forward_progress_guarantee = 0;
 
@@ -151,43 +152,30 @@ namespace coio {
             }
         };
 
+        // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
+        template<execution::receiver Rcvr>
+        struct state : state_base {
+            state(Rcvr rcvr, retain_ptr<backend> backend) :
+                state_base(&do_complete),
+                rcvr_(std::move(rcvr)),
+                backend_(std::move(backend)),
+                holder_(backend_->do_connect(receiver{this})) {}
+
+            auto start() & noexcept -> void {
+                holder_.do_start();
+            }
+
+            static auto do_complete(state_base* self) noexcept -> void {
+                auto this_ = static_cast<state*>(self);
+                execution::set_value(std::move(this_->rcvr_));
+            }
+
+            Rcvr rcvr_;
+            retain_ptr<backend> backend_;
+            state_holder holder_;
+        };
+
         class schedule_sender {
-        private:
-            // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
-            struct sndr_proxy_base {
-                sndr_proxy_base() = default;
-
-                sndr_proxy_base(const sndr_proxy_base&) = delete;
-
-                auto operator= (const sndr_proxy_base&) -> sndr_proxy_base& = delete;
-
-                virtual auto do_connect(receiver) noexcept -> state_holder = 0;
-
-                virtual auto delete_self() noexcept -> void = 0;
-            };
-
-            // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
-            template<execution::scheduler Sched>
-            struct sndr_proxy : sndr_proxy_base {
-                using sched_sndr_t = execution::schedule_result_t<Sched>;
-
-                sndr_proxy(Sched sched) : sndr_(execution::schedule(sched)) {}
-
-                auto do_connect(receiver rcvr) noexcept -> state_holder override {
-                    return state_holder(std::move(sndr_), std::move(rcvr));
-                }
-
-                auto delete_self() noexcept -> void override {
-                    auto alloc = detail::get_suitable_allocator(execution::get_env(sndr_));
-                    using alloc_t = std::allocator_traits<decltype(alloc)>::template rebind_alloc<sndr_proxy>;
-                    alloc_t al(std::move(alloc));
-                    std::allocator_traits<alloc_t>::destroy(al, this);
-                    std::allocator_traits<alloc_t>::deallocate(al, this, 1);
-                }
-
-                sched_sndr_t sndr_;
-            };
-
         public:
             using sender_concept = execution::sender_tag;
             using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
@@ -201,63 +189,35 @@ namespace coio {
             };
 
         public:
+            explicit schedule_sender(retain_ptr<backend> backend) noexcept : backend_(std::move(backend)) {}
+
+            schedule_sender(const schedule_sender&) = delete;
+
+            schedule_sender(schedule_sender&& other) noexcept = default;
+
+            auto operator= (schedule_sender other) noexcept -> schedule_sender& {
+                std::ranges::swap(backend_, other.backend_);
+                return *this;
+            }
+
+            template<execution::receiver Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && {
+                COIO_ASSERT(backend_ != nullptr);
+                return state<Rcvr>{std::move(rcvr), std::move(backend_)};
+            }
+
             template<similar_to<schedule_sender>, typename...>
             static consteval auto get_completion_signatures() noexcept {
                 return completion_signatures{};
             }
 
-            template<execution::scheduler Sched>
-            explicit schedule_sender(retain_ptr<backend> backend, Sched sched) : backend_(std::move(backend)) {
-                auto sched_sndr = execution::schedule(sched);
-                auto alloc = detail::get_suitable_allocator(execution::get_env(sched_sndr));
-                using alloc_t = std::allocator_traits<decltype(alloc)>::template rebind_alloc<sndr_proxy<Sched>>;
-                alloc_t al(std::move(alloc));
-                auto ptr = std::allocator_traits<alloc_t>::allocate(al, 1);
-                std::allocator_traits<alloc_t>::construct(al, ptr, std::move(sched));
-                proxy_ = ptr;
-            }
-
-            schedule_sender(const schedule_sender&) = delete;
-
-            schedule_sender(schedule_sender&& other) noexcept :
-                backend_(std::move(other.backend_)),
-                proxy_(std::exchange(other.proxy_, {})) {}
-
-            ~schedule_sender() {
-                if (proxy_) proxy_->delete_self();
-            }
-
-            auto operator= (schedule_sender other) noexcept -> schedule_sender& {
-                std::ranges::swap(backend_, other.backend_);
-                std::swap(proxy_, other.proxy_);
-                return *this;
-            }
-
-            COIO_ALWAYS_INLINE auto swap(schedule_sender& other) noexcept -> void {
-                std::swap(proxy_, other.proxy_);
-            }
-
-            COIO_ALWAYS_INLINE friend auto swap(schedule_sender& lhs, schedule_sender& rhs) noexcept -> void {
-                lhs.swap(rhs);
-            }
-
-            template<execution::receiver Rcvr>
-            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
-                COIO_ASSERT(proxy_ != nullptr);
-                scope_exit _{[this]() noexcept {
-                    std::exchange(proxy_, nullptr)->delete_self();
-                }};
-                return state<Rcvr>{std::move(rcvr), proxy_};
-            }
-
             COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
-                COIO_ASSERT(proxy_ != nullptr);
+                COIO_ASSERT(backend_ != nullptr);
                 return env{backend_};
             }
 
         private:
             retain_ptr<backend> backend_;
-            sndr_proxy_base* proxy_;
         };
 
         // ReSharper disable once CppPolymorphicClassWithNonVirtualPublicDestructor
@@ -265,8 +225,8 @@ namespace coio {
         struct backend_sched : backend {
             explicit backend_sched(Sched sched) noexcept : sched(std::move(sched)) {}
 
-            auto schedule() -> schedule_sender override {
-                return schedule_sender{retain_ptr<backend>{this}, sched};
+            auto do_connect(receiver rcvr) -> state_holder override {
+                return state_holder{execution::schedule(sched), std::move(rcvr)};
             }
 
             auto get_forward_progress_guarantee() const noexcept -> execution::forward_progress_guarantee override {
@@ -324,9 +284,9 @@ namespace coio {
         explicit polymorphic_scheduler(polymorphic_scheduler sched, const Alloc&) noexcept : polymorphic_scheduler(std::move(sched)) {}
 
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto schedule() const -> schedule_sender {
+        COIO_ALWAYS_INLINE auto schedule() const noexcept -> schedule_sender {
             COIO_ASSERT(backend_ != nullptr);
-            return backend_->schedule();
+            return schedule_sender{backend_};
         }
 
         COIO_ALWAYS_INLINE auto query(execution::get_forward_progress_guarantee_t) const noexcept -> execution::forward_progress_guarantee {

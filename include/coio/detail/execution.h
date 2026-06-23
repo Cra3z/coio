@@ -406,10 +406,10 @@ namespace coio {
     template<typename Env>
     using stop_token_of_t = std::decay_t<std::invoke_result_t<get_stop_token_t, Env>>;
 
-    using coio::detail::execution_impl::never_stop_token;
-    using coio::detail::execution_impl::inplace_stop_source;
-    using coio::detail::execution_impl::inplace_stop_token;
-    using coio::detail::execution_impl::inplace_stop_callback;
+    using detail::execution_impl::never_stop_token;
+    using detail::execution_impl::inplace_stop_source;
+    using detail::execution_impl::inplace_stop_token;
+    using detail::execution_impl::inplace_stop_callback;
 
     template<typename Sched, typename Env>
     concept infallible_scheduler =
