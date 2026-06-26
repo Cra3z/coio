@@ -16,7 +16,7 @@ auto main() -> int {
     io_context context;
     auto [reader, writer] = coio::make_pipe(context.get_scheduler());
     coio::async_scope scope;
-    scope.spawn([](auto r) -> coio::task<> {
+    scope.spawn([](coio::pipe_reader<io_context::scheduler> r) -> coio::task<> {
         try {
             char buffer[128];
             while (true) {
@@ -33,7 +33,7 @@ auto main() -> int {
         }
     }(std::move(reader)));
 
-    scope.spawn([](auto w) -> coio::task<> {
+    scope.spawn([](coio::pipe_writer<io_context::scheduler> w) -> coio::task<> {
         std::string_view messages[]{
           "Lorem ipsum dolor sit amet, consectetur adipiscing elit",
           "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",

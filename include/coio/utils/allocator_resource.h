@@ -4,6 +4,7 @@
 #include <memory_resource>
 #include <cstddef>
 #include <coio/utils/utility.h>
+#include <coio/utils/new_object.h>
 #include <coio/detail/concepts.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
@@ -99,11 +100,7 @@ namespace coio {
                     std::destroy_at(this);
                 }
                 else {
-                    using alloc_t = typename std::allocator_traits<Alloc>::template rebind_alloc<proxied>;
-                    using traits_t = std::allocator_traits<alloc_t>;
-                    alloc_t alloc(alloc_);
-                    traits_t::destroy(alloc, this);
-                    traits_t::deallocate(alloc, this, 1);
+                    coio::delete_object(alloc_, this);
                 }
             }
 
@@ -113,25 +110,13 @@ namespace coio {
     public:
         // ReSharper disable once CppPossiblyUninitializedMember
         template<simple_allocator Alloc>
-        explicit allocator_resource(Alloc alloc) { // NOLINT(*-pro-type-member-init)
-            proxied<Alloc>* location = nullptr;
+        explicit allocator_resource(const Alloc& alloc) { // NOLINT(*-pro-type-member-init)
             if constexpr (is_small_object<proxied<Alloc>>) {
-                location = std::construct_at(reinterpret_cast<proxied<Alloc>*>(storage_), alloc);
+                impl_ = std::construct_at(reinterpret_cast<proxied<Alloc>*>(storage_), alloc);
             }
             else {
-                using alloc_t = typename std::allocator_traits<Alloc>::template rebind_alloc<proxied<Alloc>>;
-                using traits_t = std::allocator_traits<alloc_t>;
-                alloc_t pro_alloc(alloc);
-                location = traits_t::allocate(pro_alloc, 1);
-                try {
-                    traits_t::construct(pro_alloc, location, alloc);
-                }
-                catch (...) {
-                    traits_t::deallocate(pro_alloc, location, 1);
-                    throw;
-                }
+                impl_ = coio::new_object<proxied<Alloc>>(alloc, alloc);
             }
-            impl_ = location;
         }
 
         allocator_resource(const allocator_resource&) = delete;

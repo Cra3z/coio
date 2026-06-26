@@ -3,6 +3,7 @@
 #include <optional>
 #include <coio/detail/concepts.h>
 #include <coio/detail/execution.h>
+#include <coio/utils/new_object.h>
 #include <coio/utils/retain_ptr.h>
 #include <coio/utils/scope_exit.h>
 
@@ -66,10 +67,7 @@ namespace coio {
                 }
 
                 auto delete_self() noexcept -> void override {
-                    using alloc_t = std::allocator_traits<allocator_t>::template rebind_alloc<state_proxy>;
-                    alloc_t al(std::move(alloc));
-                    std::allocator_traits<alloc_t>::destroy(al, this);
-                    std::allocator_traits<alloc_t>::deallocate(al, this, 1);
+                    coio::delete_object(alloc, this);
                 }
 
                 allocator_t alloc;
@@ -99,11 +97,7 @@ namespace coio {
                 }
                 else {
                     auto alloc = detail::get_suitable_allocator(execution::get_env(sndr));
-                    using alloc_t = std::allocator_traits<decltype(alloc)>::template rebind_alloc<state_proxy<Sndr, false>>;
-                    alloc_t al(std::move(alloc));
-                    auto ptr = std::allocator_traits<alloc_t>::allocate(al, 1);
-                    std::allocator_traits<alloc_t>::construct(al, ptr, std::move(sndr), std::move(rcvr));
-                    proxy = ptr;
+                    proxy = coio::new_object<state_proxy<Sndr, false>>(alloc, std::move(sndr), std::move(rcvr));
                 }
             }
 
@@ -251,10 +245,7 @@ namespace coio {
             explicit backend_for(Sched sched, Alloc alloc) noexcept : base(std::move(sched)), alloc(std::move(alloc)) {}
 
             auto do_lose() noexcept -> void override {
-                using alloc_t = std::allocator_traits<Alloc>::template rebind_alloc<backend_for>;
-                alloc_t al(std::move(alloc));
-                std::allocator_traits<alloc_t>::destroy(al, this);
-                std::allocator_traits<alloc_t>::deallocate(al, this, 1);
+                coio::delete_object(alloc, this);
             }
 
             COIO_NO_UNIQUE_ADDRESS Alloc alloc;
@@ -262,11 +253,9 @@ namespace coio {
 
         template<typename Sched, typename Alloc>
         static auto create_backend(Sched sched, Alloc alloc) -> retain_ptr<backend> {
-            using alloc_t = std::allocator_traits<Alloc>::template rebind_alloc<backend_for<Sched, Alloc>>;
-            alloc_t al(alloc);
-            auto ptr = std::allocator_traits<alloc_t>::allocate(al, 1);
-            std::allocator_traits<alloc_t>::construct(al, ptr, std::move(sched), std::move(alloc));
-            return retain_ptr<backend>(ptr);
+            return retain_ptr<backend>{
+                coio::new_object<backend_for<Sched, Alloc>>(alloc, std::move(sched), std::move(alloc))
+            };
         }
 
     public:
