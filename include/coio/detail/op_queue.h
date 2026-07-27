@@ -1,9 +1,11 @@
 ﻿#pragma once
+#include <atomic>
 #include <chrono>
 #include <concepts>
 #include <functional>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <ranges>
 #include <type_traits>
@@ -15,100 +17,7 @@
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio::detail {
-    class queue_event {
-    public:
-        enum class status : unsigned char {
-            available,
-            try_again,
-            stop_requested
-        };
-        using enum status;
-
-    public:
-        auto wakeup(std::ptrdiff_t update = 1) noexcept -> void {
-            COIO_ASSERT(update >= 0);
-            if (update == 0) [[unlikely]] return;
-
-            auto old = count_.load(std::memory_order_relaxed);
-            while (true) {
-                if (old == sentinel) return;
-                COIO_ASSERT(update <= max() - old);
-                if (count_.compare_exchange_weak(old, old + update, std::memory_order_release, std::memory_order_relaxed)) {
-                    const auto waiting_upper_bound = waiting_.load();
-                    if (waiting_upper_bound == 0) {}
-                    else if (waiting_upper_bound <= update) {
-                        count_.notify_all();
-                    }
-                    else {
-                        for (std::ptrdiff_t i = 0; i < update; ++i) count_.notify_one();
-                    }
-                    return;
-                }
-            }
-        }
-
-        [[nodiscard]]
-        auto wait() noexcept -> status {
-            auto old = count_.load(std::memory_order_acquire);
-
-            while (true) {
-                if (old == sentinel) {
-                    return status::stop_requested;
-                }
-
-                while (old == 0) {
-                    waiting_.fetch_add(1);
-                    count_.wait(0, std::memory_order_acquire);
-                    waiting_.fetch_sub(1);
-
-                    old = count_.load(std::memory_order_acquire);
-                    if (old == sentinel) {
-                        return status::stop_requested;
-                    }
-                }
-
-                if (count_.compare_exchange_weak(old, old - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
-                    return status::available;
-                }
-            }
-        }
-
-        [[nodiscard]]
-        COIO_ALWAYS_INLINE auto try_wait() noexcept -> status {
-            auto old = count_.load(std::memory_order_acquire);
-
-            while (true) {
-                if (old == sentinel) return status::stop_requested;
-                if (old == 0) return status::try_again;
-
-                if (count_.compare_exchange_weak(old, old - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
-                    return status::available;
-                }
-            }
-        }
-
-        COIO_ALWAYS_INLINE auto request_stop() noexcept -> void {
-            auto old = count_.load(std::memory_order_acquire);
-            while (old != sentinel) {
-                if (count_.compare_exchange_weak(old, sentinel, std::memory_order_release, std::memory_order_acquire)) {
-                    count_.notify_all();
-                    return;
-                }
-            }
-        }
-
-        [[nodiscard]]
-        static constexpr auto max() noexcept -> std::ptrdiff_t {
-            return std::numeric_limits<std::ptrdiff_t>::max();
-        }
-
-    private:
-        std::atomic<std::ptrdiff_t> count_{0};
-        std::atomic<std::ptrdiff_t> waiting_{0};
-        static constexpr std::ptrdiff_t sentinel = -1;
-    };
-
-
+    // Intrusive MPSC queue
     template<typename Op, auto NextAccessor> requires std::is_nothrow_invocable_r_v<Op*, decltype(NextAccessor), Op*>
     class op_queue {
     public:
@@ -120,86 +29,76 @@ namespace coio::detail {
 
         auto operator= (const op_queue&) -> op_queue& = delete;
 
-        COIO_ALWAYS_INLINE auto enqueue(Op& op) -> std::size_t {
-            std::size_t count = 0;
-            {
-                std::scoped_lock _{op_queue_mtx_};
-                count = this->do_enqueue(op);
-            }
-            event_.wakeup(static_cast<std::ptrdiff_t>(count));
-            return count;
+        COIO_ALWAYS_INLINE auto enqueue(Op& op) -> void {
+            this->publish(this->reverse(&op), &op);
         }
 
         template<typename Ops> requires
             std::ranges::input_range<Ops> and
             std::convertible_to<std::ranges::range_reference_t<Ops>, Op&>
-        COIO_ALWAYS_INLINE auto bulk_enqueue(Ops&& ops) -> std::size_t {
-            std::size_t count = 0;
-            {
-                std::scoped_lock _{op_queue_mtx_};
-                count = this->do_bulk_enqueue(std::forward<Ops>(ops));
-            }
-            event_.wakeup(static_cast<std::ptrdiff_t>(count));
-            return count;
-        }
+        COIO_ALWAYS_INLINE auto bulk_enqueue(Ops&& ops) -> bool {
+            Op* head = nullptr;
+            Op* tail = nullptr;
 
-        [[nodiscard]]
-        COIO_ALWAYS_INLINE auto try_dequeue() -> Op* {
-            if (event_.try_wait() == queue_event::try_again) return nullptr;
-            std::scoped_lock _{op_queue_mtx_};
-            return do_dequeue();
+            for (Op& op : ops) {
+                COIO_ASSERT(std::invoke(NextAccessor, &op) == nullptr);
+                if (tail == nullptr) tail = &op;
+                std::invoke(NextAccessor, &op) = head;
+                head = &op;
+            }
+
+            if (head == nullptr) return false;
+            this->publish(head, tail);
+            return true;
         }
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto dequeue() -> Op* {
-            // wait until work may be available, or stop is requested.
-            // The actual queue state is checked under the mutex below.
-            static_cast<void>(event_.wait());
-            std::scoped_lock _{op_queue_mtx_};
-            return do_dequeue();
-        }
+            if (front_ == nullptr) {
+                Op* incoming = incoming_.exchange(nullptr, std::memory_order_acquire);
+                if (incoming == nullptr) return nullptr;
+                front_ = this->reverse(incoming);
+            }
 
-        COIO_ALWAYS_INLINE auto request_stop() noexcept -> void {
-            event_.request_stop();
+            Op* op = front_;
+            front_ = std::invoke(NextAccessor, op);
+            std::invoke(NextAccessor, op) = nullptr;
+            return op;
         }
 
     private:
-        COIO_ALWAYS_INLINE auto do_enqueue(Op& op) -> std::size_t {
-            if (auto old_tail = std::exchange(op_queue_tail_, &op)) {
-                std::invoke(NextAccessor, old_tail) = &op;
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE static auto reverse(Op* node) noexcept -> Op* {
+            Op* reversed = nullptr;
+
+            while (true) {
+                Op* next = std::invoke(NextAccessor, node);
+                std::invoke(NextAccessor, node) = reversed;
+                reversed = node;
+                if (next == nullptr) break;
+                node = next;
             }
-            std::size_t count = 1;
-            while (auto tail_next = std::invoke(NextAccessor, op_queue_tail_)) {
-                op_queue_tail_ = tail_next;
-                ++count;
-            }
-            if (op_queue_head_ == nullptr) op_queue_head_ = &op;
-            return count;
+
+            return reversed;
         }
 
-        template<typename Ops> requires
-            std::ranges::input_range<Ops> and
-            std::convertible_to<std::ranges::range_reference_t<Ops>, Op&>
-        COIO_ALWAYS_INLINE auto do_bulk_enqueue(Ops&& ops) -> std::size_t {
-            std::size_t count = 0;
-            for (Op& op : ops) {
-                this->do_enqueue(op);
-                ++count;
+        COIO_ALWAYS_INLINE auto publish(Op* head, Op* tail) noexcept -> void {
+            COIO_ASSERT(head != nullptr and tail != nullptr);
+            Op* old = incoming_.load(std::memory_order_relaxed);
+            do {
+                std::invoke(NextAccessor, tail) = old;
             }
-            return count;
-        }
-
-        COIO_ALWAYS_INLINE auto do_dequeue() noexcept -> Op* {
-            if (op_queue_head_ == nullptr) return nullptr;
-            if (op_queue_head_ == op_queue_tail_) op_queue_tail_ = nullptr;
-            return std::exchange(op_queue_head_, std::invoke(NextAccessor, op_queue_head_));
+            while (not incoming_.compare_exchange_weak(
+                old,
+                head,
+                std::memory_order_release,
+                std::memory_order_relaxed
+            ));
         }
 
     private:
-        atomutex op_queue_mtx_;
-        Op* op_queue_head_{};
-        Op* op_queue_tail_{};
-        queue_event event_;
+        alignas(std::hardware_destructive_interference_size) std::atomic<Op*> incoming_{};
+        alignas(std::hardware_destructive_interference_size) Op* front_ = nullptr;
     };
 
 

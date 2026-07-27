@@ -164,6 +164,13 @@ namespace coio {
         using detail::execution_impl::let_error;
         using detail::execution_impl::let_stopped;
 
+        using detail::execution_impl::bulk_t;
+        using detail::execution_impl::bulk_chunked_t;
+        using detail::execution_impl::bulk_unchunked_t;
+        using detail::execution_impl::bulk;
+        using detail::execution_impl::bulk_chunked;
+        using detail::execution_impl::bulk_unchunked;
+
         using detail::execution_impl::when_all_t;
         using detail::execution_impl::when_all_with_variant_t;
         using detail::execution_impl::when_all;
@@ -208,6 +215,28 @@ namespace coio {
         using detail::execution_impl::spawn;
         using detail::execution_impl::spawn_future;
     }
+
+#if defined(COIO_EXECUTION_USE_NVIDIA) or defined(COIO_EXECUTION_USE_BEMAN)
+    using detail::execution_impl::stop_callback_for_t;
+    using detail::execution_impl::stop_token_of_t;
+    using detail::execution_impl::stoppable_token;
+    using detail::execution_impl::unstoppable_token;
+
+    using detail::execution_impl::never_stop_token;
+    using detail::execution_impl::inplace_stop_source;
+    using detail::execution_impl::inplace_stop_token;
+    using detail::execution_impl::inplace_stop_callback;
+#else
+    using ::std::stop_callback_for_t;
+    using ::std::stop_token_of_t;
+    using ::std::stoppable_token;
+    using ::std::unstoppable_token;
+
+    using ::std::never_stop_token;
+    using ::std::inplace_stop_source;
+    using ::std::inplace_stop_token;
+    using ::std::inplace_stop_callback;
+#endif
 
     namespace detail {
         struct io_scheduler_tag : execution::scheduler_tag {};
@@ -358,38 +387,7 @@ namespace coio {
             type_list<>,
             execution::completion_signatures_of_t<Sndr, Env>
         >;
-
-        template<template<typename> typename>
-        struct check_type_alias_exists;
-
-        template<typename StopToken>
-        struct stoppable_token_traits;
-
-        template<typename StopToken> requires requires {
-            typename check_type_alias_exists<StopToken::template callback_type>;
-        }
-        struct stoppable_token_traits<StopToken> {
-            template<typename Fn>
-            using callback_type = typename StopToken::template callback_type<Fn>;
-        };
-
-        template<>
-        struct stoppable_token_traits<std::stop_token> {
-            template<typename Fn>
-            using callback_type = std::stop_callback<Fn>;
-        };
     }
-
-    template<typename StopToken, typename Callback>
-    using stop_callback_for_t = typename detail::stoppable_token_traits<StopToken>::template callback_type<Callback>;
-
-    template<typename StopToken>
-    concept stoppable_token = requires(const StopToken& token) {
-        typename detail::check_type_alias_exists<detail::stoppable_token_traits<StopToken>::template callback_type>;
-        { token.stop_requested() } noexcept -> boolean_testable;
-        { token.stop_possible() } noexcept -> boolean_testable;
-        { StopToken(token) } noexcept;
-    } and std::copyable<StopToken> and std::equality_comparable<StopToken>;
 
     template<typename Source>
     concept stoppable_source = requires(Source& src, const Source& csrc) {
@@ -397,19 +395,6 @@ namespace coio {
         { csrc.stop_requested() } noexcept -> boolean_testable;
         { src.request_stop() } -> boolean_testable;
     };
-
-    template<typename Token>
-    concept unstoppable_token = stoppable_token<Token> and requires(const Token tok) {
-        requires std::bool_constant<not Token::stop_possible()>::value;
-    };
-
-    template<typename Env>
-    using stop_token_of_t = std::decay_t<std::invoke_result_t<get_stop_token_t, Env>>;
-
-    using detail::execution_impl::never_stop_token;
-    using detail::execution_impl::inplace_stop_source;
-    using detail::execution_impl::inplace_stop_token;
-    using detail::execution_impl::inplace_stop_callback;
 
     template<typename Sched, typename Env>
     concept infallible_scheduler =

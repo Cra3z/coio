@@ -70,27 +70,26 @@ namespace coio {
         if (work_count_ == 0) return false;
 
         while (work_count_ > 0) {
-            if (const auto op = op_queue_.try_dequeue()) {
-                op->finish();
+            if (consume()) {
                 return true;
             }
 
-            std::unique_lock lock{bolt_, std::try_to_lock};
-            if (not lock) {
-                return consume(infinite);
-            }
+            pulling_cqes_.store(true, std::memory_order_release);
+            scope_exit flag_guard{[this]() noexcept {
+                pulling_cqes_.store(false, std::memory_order_release);
+            }};
 
             if (work_count_ == 0) break;
 
-            if (std::unique_lock _{uring_mtx_, std::try_to_lock}) {
-                submit_sqes();
-            }
+            uring_mtx_.lock();
+            submit_sqes(); // nothrow
+            uring_mtx_.unlock();
 
             detail::intrusive_list<node> ready_io_ops{&node::next_};
             ::io_uring_cqe* cqe = nullptr;
-            std::optional cqe_guard{scope_exit{[&] {
+            scope_exit cqe_guard{[&] {
                 ::io_uring_cqe_seen(&uring_, cqe);
-            }}};
+            }};
             int ec = 0;
             if (infinite) {
                 using microseconds = std::chrono::duration<std::int64_t, std::micro>;
@@ -149,15 +148,13 @@ namespace coio {
                 }
             }
 
-            lock.unlock();
+            flag_guard.reset();
 
             if (auto ops = ready_time_ops.release()) op_queue_.enqueue(*ops);
             if (auto ops = ready_io_ops.release()) op_queue_.enqueue(*ops);
 
             if (not infinite) {
-                const auto op = op_queue_.try_dequeue();
-                if (op) op->finish();
-                return op != nullptr;
+                return consume();
             }
         }
         return false;
@@ -173,7 +170,7 @@ namespace coio {
         return sqe;
     }
 
-    auto uring_context::submit_sqes() -> void { // pre: uring_mtx_ is locked
+    auto uring_context::submit_sqes() noexcept -> void { // pre: uring_mtx_ is locked
         if (pending_sqes_ == 0) return;
         const int n = ::io_uring_submit(&uring_);
         if (n < 0) [[unlikely]] std::terminate();
@@ -181,9 +178,8 @@ namespace coio {
         pending_sqes_ -= n;
     }
 
-    auto uring_context::post_submit_sqes() -> void { // pre: uring_mtx_ is locked
-        if (bolt_.try_lock()) {
-            scope_exit _{std::bind_front(&atomutex::unlock, &bolt_)};
+    auto uring_context::post_submit_sqes() noexcept -> void { // pre: uring_mtx_ is locked
+        if (not pulling_cqes_.load(std::memory_order_acquire)) {
             if (pending_sqes_ < submit_batch_size) return;
             submit_sqes();
         }

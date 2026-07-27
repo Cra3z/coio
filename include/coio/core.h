@@ -1,9 +1,8 @@
 ﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <coio/task.h> // IWYU pragma: keep
-#include <coio/execution_context.h>
+#include <coio/execution_context.h> // IWYU pragma: keep
 #include <coio/detail/execution.h>
-#include <coio/detail/atomic_intrusive_stack.h>
 #include <coio/utils/async_scope.h> // IWYU pragma: keep
 #include <coio/utils/variant_sender.h> // IWYU pragma: keep
 #include <coio/utils/when_any.h> // IWYU pragma: keep

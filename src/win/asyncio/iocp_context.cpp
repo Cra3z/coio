@@ -174,14 +174,13 @@ namespace coio {
         if (work_count_ == 0) return false;
 
         while (work_count_ > 0) {
-            if (const auto op = op_queue_.try_dequeue()) {
-                op->finish();
+            if (consume()) {
                 return true;
             }
 
             std::unique_lock lock{bolt_, std::try_to_lock};
             if (not lock) {
-                return consume(infinite);
+                return consume();
             }
 
             if (work_count_ == 0) break;
@@ -216,9 +215,7 @@ namespace coio {
             if (auto ops = ready_io_ops.release()) op_queue_.enqueue(*ops);
 
             if (not infinite) {
-                const auto op = op_queue_.try_dequeue();
-                if (op) op->finish();
-                return op != nullptr;
+                return consume();
             }
         }
 

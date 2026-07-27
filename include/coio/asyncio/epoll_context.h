@@ -61,7 +61,7 @@ namespace coio {
 
         protected:
             [[nodiscard]]
-            auto register_event(int event_type, std::uint32_t extra_flags) noexcept -> bool;
+            auto register_event(int event_type) noexcept -> bool;
 
         private:
             virtual auto perform() noexcept -> bool = 0;
@@ -228,7 +228,7 @@ namespace coio {
 
     private:
         int epoll_fd_;
-        atomutex bolt_;
+        atomutex mtx_;
         detail::reactor_interrupter interrupter_;
     };
 

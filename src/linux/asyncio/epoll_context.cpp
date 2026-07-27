@@ -66,7 +66,7 @@ namespace coio {
         }
     }
 
-    auto epoll_context::epoll_node::register_event(int event_type, std::uint32_t extra_flags) noexcept -> bool {
+    auto epoll_context::epoll_node::register_event(int event_type) noexcept -> bool {
         std::scoped_lock _{data->fd_lock};
         const bool in_op_registered = data->in_op;
         const bool out_op_registered = data->out_op;
@@ -78,7 +78,7 @@ namespace coio {
         }
         else unreachable();
 
-        std::uint32_t ev = event_type | extra_flags;
+        std::uint32_t ev = event_type | EPOLLET;
         int epoll_ctl_op = data->events == 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
 
         if (in_op_registered) {
@@ -146,12 +146,12 @@ namespace coio {
         epoll_context& context = ctx_;
         cancel();
         {
-            std::scoped_lock _{context.bolt_, data_->fd_lock};
+            std::scoped_lock _{context.mtx_, data_->fd_lock};
             if (data_->events != 0) {
                 detail::throw_last_error(::epoll_ctl(context.epoll_fd_, EPOLL_CTL_DEL, fd_, nullptr));
             }
         }
-        ctx_.get().reclaim_epoll_data(std::exchange(data_, nullptr));
+        context.reclaim_epoll_data(std::exchange(data_, nullptr));
         return std::exchange(fd_, -1);
     }
 
@@ -166,11 +166,11 @@ namespace coio {
                 std::exchange(data_->out_op, nullptr)
             };
         }();
-        const std::size_t n = context.op_queue_.bulk_enqueue(ops |
+        const bool has_ops = context.op_queue_.bulk_enqueue(ops |
             std::views::filter(std::identity{}) |
             std::views::transform([](auto p) noexcept -> auto& { return *p; })
         );
-        if (n > 0) context.interrupt();
+        if (has_ops) context.interrupt();
     }
 
     epoll_context::epoll_context(std::pmr::memory_resource& memory_resource): epoll_context(nullptr, memory_resource) {
@@ -197,15 +197,11 @@ namespace coio {
 
         ::epoll_event ready_events[detail::epoll_max_wait_count];
         while (work_count_ > 0) {
-            if (const auto op = op_queue_.try_dequeue()) {
-                op->finish();
+            if (consume()) {
                 return true;
             }
 
-            std::unique_lock lock{bolt_, std::try_to_lock};
-            if (not lock) {
-                return consume(infinite);
-            }
+            std::unique_lock lock{mtx_};
 
             if (work_count_ == 0) break;
 
@@ -257,9 +253,7 @@ namespace coio {
             if (auto ops = ready_io_ops.release()) op_queue_.enqueue(*ops);
 
             if (not infinite) {
-                const auto op = op_queue_.try_dequeue();
-                if (op) op->finish();
-                return op != nullptr;
+                return consume();
             }
         }
         return false;
@@ -301,10 +295,20 @@ namespace coio {
                 immediately_post();
                 return true;
             }
-            if (not register_event(EPOLLIN, 0)) [[unlikely]] {
+            const ::ssize_t n = ::read(fd, buffer.data(), buffer.size());
+            if (n == -1) {
+                if (is_blocking_errno(errno)) {
+                    if (not register_event(EPOLLIN)) [[unlikely]] {
+                        result.set_error(std::error_code{errno, std::system_category()});
+                        return false;
+                    }
+                    return true;
+                }
                 result.set_error(std::error_code{errno, std::system_category()});
                 return false;
             }
+            result.set_value(n);
+            immediately_post();
             return true;
         }
 
@@ -341,10 +345,20 @@ namespace coio {
                 immediately_post();
                 return true;
             }
-            if (not register_event(EPOLLOUT, 0)) [[unlikely]] {
+            const ::ssize_t n = ::write(fd, buffer.data(), buffer.size());
+            if (n == -1) {
+                if (is_blocking_errno(errno)) {
+                    if (not register_event(EPOLLOUT)) [[unlikely]] {
+                        result.set_error(std::error_code{errno, std::system_category()});
+                        return false;
+                    }
+                    return true;
+                }
                 result.set_error(std::error_code{errno, std::system_category()});
                 return false;
             }
+            result.set_value(n);
+            immediately_post();
             return true;
         }
 
@@ -379,7 +393,7 @@ namespace coio {
             const ::ssize_t n = ::recv(fd, buffer.data(), buffer.size(), MSG_DONTWAIT);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLIN, EPOLLET)) [[unlikely]] {
+                    if (not register_event(EPOLLIN)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
                         return false;
                     }
@@ -424,7 +438,7 @@ namespace coio {
             const ::ssize_t n = ::send(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLOUT, EPOLLET)) [[unlikely]] {
+                    if (not register_event(EPOLLOUT)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
                         return false;
                     }
@@ -473,7 +487,7 @@ namespace coio {
             );
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLIN, EPOLLET)) [[unlikely]] {
+                    if (not register_event(EPOLLIN)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
                         return false;
                     }
@@ -524,7 +538,7 @@ namespace coio {
             ::ssize_t n = ::sendto(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLOUT, EPOLLET)) [[unlikely]] {
+                    if (not register_event(EPOLLOUT)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
                         return false;
                     }
@@ -568,10 +582,20 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return false;
             }
-            if (not register_event(EPOLLIN, 0)) [[unlikely]] {
+            const int accepted = ::accept4(fd, nullptr, nullptr, SOCK_NONBLOCK);
+            if (accepted == -1) {
+                if (is_blocking_errno(errno)) {
+                    if (not register_event(EPOLLIN)) [[unlikely]] {
+                        result.set_error(std::error_code{errno, std::system_category()});
+                        return false;
+                    }
+                    return true;
+                }
                 result.set_error(std::error_code{errno, std::system_category()});
                 return false;
             }
+            result.set_value(accepted);
+            immediately_post();
             return true;
         }
 
@@ -625,7 +649,7 @@ namespace coio {
             }
             if (ec != 0) {
                 if (ec == EINPROGRESS or ec == EAGAIN) {
-                    if (not register_event(EPOLLOUT, 0)) [[unlikely]] {
+                    if (not register_event(EPOLLOUT)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
                         return false;
                     }

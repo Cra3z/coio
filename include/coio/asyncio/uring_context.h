@@ -178,13 +178,13 @@ namespace coio {
 
         auto allocate_sqe() noexcept -> ::io_uring_sqe*;
 
-        auto submit_sqes() -> void;
+        auto submit_sqes() noexcept -> void;
 
-        auto post_submit_sqes() -> void;
+        auto post_submit_sqes() noexcept -> void;
 
     private:
         atomutex uring_mtx_;
-        atomutex bolt_;
+        std::atomic<bool> pulling_cqes_{false};
         std::size_t pending_sqes_ = 0;
         ::io_uring uring_{};
     };

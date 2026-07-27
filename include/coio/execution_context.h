@@ -362,8 +362,8 @@ namespace coio {
             }
 
         protected:
-            COIO_ALWAYS_INLINE auto consume(bool infinite) -> bool {
-                node* op = infinite ? op_queue_.dequeue() : op_queue_.try_dequeue();
+            COIO_ALWAYS_INLINE auto consume() -> bool {
+                node* op = op_queue_.dequeue();
                 if (op) op->finish();
                 return op;
             }
@@ -371,7 +371,6 @@ namespace coio {
             COIO_ALWAYS_INLINE auto shutdown() -> void {
                 auto self = static_cast<Ctx*>(this);
                 self->interrupt();
-                op_queue_.request_stop();
             }
 
         protected:
@@ -438,14 +437,8 @@ namespace coio {
             if (work_count_ == 0) return false;
 
             while (work_count_ > 0) {
-                if (const auto op = op_queue_.try_dequeue()) {
-                    op->finish();
+                if (consume()) {
                     return true;
-                }
-
-                std::unique_lock lock{bolt_, std::try_to_lock};
-                if (not lock) {
-                    return consume(infinite);
                 }
 
                 if (infinite) {
@@ -460,14 +453,10 @@ namespace coio {
                 detail::intrusive_list<node> ready_time_ops{&node::next_};
                 timer_queue_.take_ready_timers(ready_time_ops);
 
-                lock.unlock();
-
                 if (auto ops = ready_time_ops.release()) op_queue_.enqueue(*ops);
 
                 if (not infinite) {
-                    const auto op = op_queue_.try_dequeue();
-                    if (op) op->finish();
-                    return op != nullptr;
+                    return consume();
                 }
             }
             return false;
@@ -478,7 +467,6 @@ namespace coio {
         }
 
     private:
-        atomutex bolt_;
         std::counting_semaphore<> sema_{0};
     };
 }
