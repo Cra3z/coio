@@ -1,4 +1,4 @@
-﻿// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
+// ReSharper disable CppPolymorphicClassWithNonVirtualPublicDestructor
 #pragma once
 #include <coio/detail/config.h>
 #if not COIO_HAS_EPOLL
@@ -8,12 +8,18 @@
 #include <coio/execution_context.h>
 #include <coio/utils/async_result.h>
 #include <coio/detail/io_descriptions.h>
+#include <coio/detail/object_pool.h>
 #include <coio/utils/atomutex.h>
 
 namespace coio {
     namespace detail {
-        template<typename Sexpr>
+        template<typename Tag>
+        class epoll_node_for;
+
+        template<typename Tag>
         class epoll_state_base_for;
+
+        enum class seek_whence;
 
         class reactor_interrupter {
         public:
@@ -41,7 +47,9 @@ namespace coio {
     }
 
     class epoll_context : public detail::loop_base<epoll_context> {
-        template<typename Sexpr>
+        template<typename Tag>
+        friend class detail::epoll_node_for;
+        template<typename Tag>
         friend class detail::epoll_state_base_for;
         friend loop_base;
     private:
@@ -50,8 +58,10 @@ namespace coio {
         struct per_fd_data {
             atomutex fd_lock;
             std::uint32_t events{};
+            std::uint32_t ready_events{};
             epoll_node* in_op{nullptr};
             epoll_node* out_op{nullptr};
+            per_fd_data* next_free{nullptr};
         };
 
         class epoll_node : public node {
@@ -60,8 +70,14 @@ namespace coio {
             epoll_node(epoll_context& context, int fd, per_fd_data* data) noexcept : node(context), fd(fd), data(data) {}
 
         protected:
+            enum class register_result : unsigned char {
+                armed,
+                ready,
+                failure
+            };
+
             [[nodiscard]]
-            auto register_event(int event_type, std::uint32_t extra_flags) noexcept -> bool;
+            auto register_event(int event_type) noexcept -> register_result;
 
         private:
             virtual auto perform() noexcept -> bool = 0;
@@ -78,10 +94,6 @@ namespace coio {
             using scheduler_concept = detail::io_scheduler_tag;
 
             class io_object {
-                friend scheduler;
-            private:
-                io_object(std::nullptr_t, epoll_context& ctx, int fd);
-
             public:
                 io_object(epoll_context& ctx, int fd);
 
@@ -111,7 +123,7 @@ namespace coio {
 
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto get_io_scheduler() const noexcept -> scheduler {
-                    return scheduler{ctx_.get()};
+                    return scheduler{*ctx_};
                 }
 
                 [[nodiscard]]
@@ -119,33 +131,119 @@ namespace coio {
                     return fd_;
                 }
 
-                auto release() -> int;
+                auto close() -> void;
 
                 auto cancel() -> void;
 
+                [[nodiscard]]
+                auto receive(std::span<std::byte> buffer) -> std::size_t;
+
+                [[nodiscard]]
+                auto send(std::span<const std::byte> buffer) -> std::size_t;
+
+                [[nodiscard]]
+                auto receive_from(std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t>;
+
+                [[nodiscard]]
+                auto send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
+
+                auto read_some(std::span<std::byte> buffer) -> std::size_t;
+
+                auto write_some(std::span<const std::byte> buffer) -> std::size_t;
+
+                auto read_some_at(std::size_t offset, std::span<std::byte> buffer) -> std::size_t;
+
+                auto write_some_at(std::size_t offset, std::span<const std::byte> buffer) -> std::size_t;
+
+                auto seek(std::size_t offset, detail::seek_whence whence) -> std::size_t;
+
+                auto resize(std::size_t new_size) -> void;
+
             private:
-                std::reference_wrapper<epoll_context> ctx_;
+                template<typename Tag, typename... Args>
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_initiate(Args... args) noexcept {
+                    COIO_ASSERT(ctx_ != nullptr);
+                    return stop_when(
+                        io_sender<Tag, Args...>{fd_, ctx_, data_, {std::move(args)...}},
+                        ctx_->stop_source_.get_token()
+                    );
+                }
+
+            public:
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) noexcept {
+                    return async_initiate<detail::receive_tag>(buffer);
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer) noexcept {
+                    return async_initiate<detail::send_tag>(buffer);
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_receive_from(std::span<std::byte> buffer) noexcept {
+                    return async_initiate<detail::receive_from_tag>(buffer);
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_send_to(std::span<const std::byte> buffer, const endpoint& dest) noexcept {
+                    return async_initiate<detail::send_to_tag>(buffer, dest);
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_accept() noexcept {
+                    return async_initiate<detail::accept_tag>();
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) noexcept {
+                    return async_initiate<detail::connect_tag>(peer);
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) noexcept {
+                    return async_initiate<detail::read_some_tag>(buffer);
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) noexcept {
+                    return async_initiate<detail::write_some_tag>(buffer);
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_read_some_at(std::size_t offset, std::span<std::byte> buffer) noexcept {
+                    return async_initiate<detail::read_some_at_tag>(offset, buffer);
+                }
+
+                [[nodiscard]]
+                COIO_ALWAYS_INLINE auto async_write_some_at(std::size_t offset, std::span<const std::byte> buffer) noexcept {
+                    return async_initiate<detail::write_some_at_tag>(offset, buffer);
+                }
+
+            private:
+                epoll_context* ctx_;
                 int fd_ = -1;
-                per_fd_data* data_;
+                per_fd_data* data_ = nullptr;
             };
 
-            template<std::move_constructible Sexpr>
+            template<typename Tag, typename... Args>
             struct io_sender {
                 using sender_concept = execution::sender_tag;
                 using completion_signatures = execution::completion_signatures<
-                    typename Sexpr::value_signature,
+                    typename Tag::value_signature,
                     execution::set_error_t(std::error_code),
                     execution::set_stopped_t()
                 >;
 
                 template<typename Rcvr>
-                struct state_base : detail::epoll_state_base_for<Sexpr> {
-                    using base = detail::epoll_state_base_for<Sexpr>;
+                struct state_base : detail::epoll_state_base_for<Tag> {
+                    using base = detail::epoll_state_base_for<Tag>;
 
-                    template<typename... Args>
-                    state_base(Rcvr rcvr, Args&&... args) noexcept : base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
+                    state_base(Rcvr rcvr, int fd, epoll_context& context, per_fd_data* data, Args... args) noexcept :
+                        base(fd, context, data, std::move(args)...), rcvr_(std::move(rcvr)) {}
 
-                    COIO_ALWAYS_INLINE auto do_finish(bool) noexcept -> void {
+                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
                         this->result.forward_to(std::move(this->rcvr_));
                     }
 
@@ -157,14 +255,19 @@ namespace coio {
 
                 template<execution::receiver Rcvr>
                 COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
-                    COIO_ASSERT(context != nullptr and data != nullptr);
-                    return state<Rcvr>{
-                        std::move(rcvr),
-                        std::exchange(fd, -1),
-                        *std::exchange(context, nullptr),
-                        std::exchange(data, nullptr),
-                        std::move(sexpr)
-                    };
+                    COIO_ASSERT(context != nullptr);
+                    return std::apply(
+                        [&](Args... args_) {
+                            return state<Rcvr>{
+                                std::move(rcvr),
+                                std::exchange(fd, -1),
+                                *std::exchange(context, nullptr),
+                                std::exchange(data, nullptr),
+                                std::move(args_)...
+                            };
+                        },
+                        std::move(args)
+                    );
                 }
 
                 template<similar_to<io_sender>, typename...>
@@ -179,7 +282,7 @@ namespace coio {
                 int fd;
                 epoll_context* context;
                 per_fd_data* data;
-                Sexpr sexpr;
+                std::tuple<Args...> args;
             };
 
         public:
@@ -190,22 +293,12 @@ namespace coio {
                 return io_object{*ctx_, fd};
             }
 
-            template<typename Sexpr>
-            [[nodiscard]]
-            COIO_ALWAYS_INLINE auto schedule_io(io_object& obj, Sexpr sexpr) noexcept {
-                return stop_when(io_sender<Sexpr>{obj.fd_, ctx_, obj.data_, std::move(sexpr)}, ctx_->stop_source_.get_token());
-            }
-
         public:
             friend auto operator== (const scheduler& lhs, const scheduler& rhs) -> bool = default;
         };
 
         template<typename T = void, typename Alloc = void>
         using task = coio::task<T, Alloc, scheduler>;
-
-    private:
-        explicit epoll_context(std::nullptr_t, std::pmr::memory_resource& memory_resource) noexcept :
-            loop_base(memory_resource), epoll_fd_(-1) {}
 
     public:
         explicit epoll_context(std::pmr::memory_resource& memory_resource = *std::pmr::get_default_resource());
@@ -227,144 +320,212 @@ namespace coio {
         auto cancel_op(int event, epoll_node* op) -> void;
 
     private:
-        int epoll_fd_;
-        atomutex bolt_;
+        // entries are recycled, never freed while the context lives, so straggling
+        // references (fetched event batches, stop callbacks) cannot dangle
+        detail::object_pool<per_fd_data, &per_fd_data::next_free, std::pmr::polymorphic_allocator<>> data_pool_;
         detail::reactor_interrupter interrupter_;
+        int epoll_fd_;
     };
 
     namespace detail {
-        template<typename Sexpr>
-        struct epoll_sexpr_wrapper {
-            using type = Sexpr;
-        };
-
-        template<>
-        struct epoll_sexpr_wrapper<async_receive_from_t> {
-            struct type {
-                type(async_receive_from_t s) : peer{}, buffer(s.buffer) {}
-                ::sockaddr_storage peer;
-                std::span<std::byte> buffer;
-            };
-        };
-
-        template<typename Sexpr>
-        class epoll_state_base_for : private epoll_sexpr_wrapper<Sexpr>::type, public epoll_context::epoll_node {
-        private:
-            using base1 = typename epoll_sexpr_wrapper<Sexpr>::type;
-
+        // common per-operation state: links into the reactor and owns the completion result
+        template<typename Tag>
+        class epoll_node_for : public epoll_context::epoll_node {
         public:
-            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, Sexpr sexpr) noexcept :
-                base1(std::move(sexpr)),
+            epoll_node_for(int fd, epoll_context& context, epoll_context::per_fd_data* data) noexcept :
                 epoll_node(context, fd, data) {}
 
         protected:
-            auto do_cancel() -> void {
-                static_assert(always_false<Sexpr>, "this operation isn't supported");
-            }
+            async_result<typename Tag::value_signature, execution::set_error_t(std::error_code)> result;
+        };
 
-            auto do_start() noexcept -> bool {
-                static_assert(always_false<Sexpr>, "this operation isn't supported");
-                unreachable();
-            }
-
-            auto do_perform() noexcept -> bool {
-                static_assert(always_false<Sexpr>, "this operation isn't supported");
-                unreachable();
-            }
-
-            auto perform() noexcept -> bool override {
-                return do_perform();
-            }
+        template<typename Tag>
+        class epoll_state_base_for : public epoll_node_for<Tag> {
+        public:
+            template<typename... Args>
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, const Args&...) noexcept :
+                epoll_node_for<Tag>(fd, context, data) {}
 
         protected:
-            async_result<typename Sexpr::value_signature, execution::set_error_t(std::error_code)> result;
+            auto do_start() noexcept -> start_result {
+                static_assert(always_false<Tag>, "this operation isn't supported");
+                unreachable();
+            }
+
+            auto do_cancel() -> void {
+                static_assert(always_false<Tag>, "this operation isn't supported");
+            }
+
+        private:
+            auto perform() noexcept -> bool override {
+                static_assert(always_false<Tag>, "this operation isn't supported");
+                unreachable();
+            }
         };
 
         /// async_read_some
         template<>
-        auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> bool;
+        class epoll_state_base_for<read_some_tag> : public epoll_node_for<read_some_tag> {
+        public:
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, std::span<std::byte> buffer) noexcept :
+                epoll_node_for(fd, context, data),
+                buffer_(buffer) {}
 
-        template<>
-        auto epoll_state_base_for<async_read_some_t>::do_perform() noexcept -> bool;
+        protected:
+            auto do_start() noexcept -> start_result;
 
-        template<>
-        auto epoll_state_base_for<async_read_some_t>::do_cancel() -> void;
+            auto do_cancel() -> void;
+
+        private:
+            auto perform() noexcept -> bool override;
+
+        private:
+            std::span<std::byte> buffer_;
+        };
 
 
         /// async_write_some
         template<>
-        auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> bool;
+        class epoll_state_base_for<write_some_tag> : public epoll_node_for<write_some_tag> {
+        public:
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, std::span<const std::byte> buffer) noexcept :
+                epoll_node_for(fd, context, data),
+                buffer_(buffer) {}
 
-        template<>
-        auto epoll_state_base_for<async_write_some_t>::do_perform() noexcept -> bool;
+        protected:
+            auto do_start() noexcept -> start_result;
 
-        template<>
-        auto epoll_state_base_for<async_write_some_t>::do_cancel() -> void;
+            auto do_cancel() -> void;
 
+        private:
+            auto perform() noexcept -> bool override;
 
-        /// async_send
-        template<>
-        auto epoll_state_base_for<async_send_t>::do_start() noexcept -> bool;
-
-        template<>
-        auto epoll_state_base_for<async_send_t>::do_perform() noexcept -> bool;
-
-        template<>
-        auto epoll_state_base_for<async_send_t>::do_cancel() -> void;
+        private:
+            std::span<const std::byte> buffer_;
+        };
 
 
         /// async_receive
         template<>
-        auto epoll_state_base_for<async_receive_t>::do_start() noexcept -> bool;
+        class epoll_state_base_for<receive_tag> : public epoll_node_for<receive_tag> {
+        public:
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, std::span<std::byte> buffer) noexcept :
+                epoll_node_for(fd, context, data),
+                buffer_(buffer) {}
 
-        template<>
-        auto epoll_state_base_for<async_receive_t>::do_perform() noexcept -> bool;
+        protected:
+            auto do_start() noexcept -> start_result;
 
+            auto do_cancel() -> void;
+
+        private:
+            auto perform() noexcept -> bool override;
+
+        private:
+            std::span<std::byte> buffer_;
+        };
+
+        /// async_send
         template<>
-        auto epoll_state_base_for<async_receive_t>::do_cancel() -> void;
+        class epoll_state_base_for<send_tag> : public epoll_node_for<send_tag> {
+        public:
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, std::span<const std::byte> buffer) noexcept :
+                epoll_node_for(fd, context, data),
+                buffer_(buffer) {}
+
+        protected:
+            auto do_start() noexcept -> start_result;
+
+            auto do_cancel() -> void;
+
+        private:
+            auto perform() noexcept -> bool override;
+
+        private:
+            std::span<const std::byte> buffer_;
+        };
 
 
         /// async_receive_from
         template<>
-        auto epoll_state_base_for<async_receive_from_t>::do_start() noexcept -> bool;
+        class epoll_state_base_for<receive_from_tag> : public epoll_node_for<receive_from_tag> {
+        public:
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, std::span<std::byte> buffer) noexcept :
+                epoll_node_for(fd, context, data),
+                peer_{},
+                buffer_(buffer) {}
 
-        template<>
-        auto epoll_state_base_for<async_receive_from_t>::do_perform() noexcept -> bool;
+        protected:
+            auto do_start() noexcept -> start_result;
 
-        template<>
-        auto epoll_state_base_for<async_receive_from_t>::do_cancel() -> void;
+            auto do_cancel() -> void;
+
+        private:
+            auto perform() noexcept -> bool override;
+
+        private:
+            ::sockaddr_storage peer_;
+            std::span<std::byte> buffer_;
+        };
 
 
         /// async_send_to
         template<>
-        auto epoll_state_base_for<async_send_to_t>::do_start() noexcept -> bool;
+        class epoll_state_base_for<send_to_tag> : public epoll_node_for<send_to_tag> {
+        public:
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, std::span<const std::byte> buffer, const endpoint& peer) noexcept :
+                epoll_node_for(fd, context, data),
+                peer_(peer),
+                buffer_(buffer) {}
 
-        template<>
-        auto epoll_state_base_for<async_send_to_t>::do_perform() noexcept -> bool;
+        protected:
+            auto do_start() noexcept -> start_result;
 
-        template<>
-        auto epoll_state_base_for<async_send_to_t>::do_cancel() -> void;
+            auto do_cancel() -> void;
+
+        private:
+            auto perform() noexcept -> bool override;
+
+        private:
+            endpoint peer_;
+            std::span<const std::byte> buffer_;
+        };
 
 
         /// async_accept
         template<>
-        auto epoll_state_base_for<async_accept_t>::do_start() noexcept -> bool;
+        class epoll_state_base_for<accept_tag> : public epoll_node_for<accept_tag> {
+        public:
+            using epoll_node_for::epoll_node_for;
 
-        template<>
-        auto epoll_state_base_for<async_accept_t>::do_perform() noexcept -> bool;
+        protected:
+            auto do_start() noexcept -> start_result;
 
-        template<>
-        auto epoll_state_base_for<async_accept_t>::do_cancel() -> void;
+            auto do_cancel() -> void;
+
+        private:
+            auto perform() noexcept -> bool override;
+        };
 
 
         /// async_connect
         template<>
-        auto epoll_state_base_for<async_connect_t>::do_start() noexcept -> bool;
+        class epoll_state_base_for<connect_tag> : public epoll_node_for<connect_tag> {
+        public:
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, const endpoint& peer) noexcept :
+                epoll_node_for(fd, context, data),
+                peer_(peer) {}
 
-        template<>
-        auto epoll_state_base_for<async_connect_t>::do_perform() noexcept -> bool;
+        protected:
+            auto do_start() noexcept -> start_result;
 
-        template<>
-        auto epoll_state_base_for<async_connect_t>::do_cancel() -> void;
+            auto do_cancel() -> void;
+
+        private:
+            auto perform() noexcept -> bool override;
+
+        private:
+            endpoint peer_;
+        };
     }
 }

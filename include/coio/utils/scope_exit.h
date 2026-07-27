@@ -40,13 +40,17 @@ namespace coio {
         scope_exit(const scope_exit&) = delete;
 
         constexpr ~scope_exit() noexcept {
-            if (flag) on_exit();
+            reset();
         }
 
-        auto operator= (const scope_exit&) ->scope_exit& = delete;
+        auto operator= (const scope_exit&) -> scope_exit& = delete;
 
-        constexpr auto release() noexcept ->void {
+        constexpr auto release() noexcept -> void {
             flag = false;
+        }
+
+        constexpr auto reset() noexcept -> void {
+            if (std::exchange(flag, false)) on_exit();
         }
 
     private:

@@ -1,114 +1,23 @@
 ﻿#pragma once
+#include <atomic>
 #include <chrono>
 #include <concepts>
 #include <functional>
-#include <limits>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <ranges>
 #include <type_traits>
 #include <utility>
-#include <vector>
 #include <coio/detail/config.h>
 #include <coio/detail/intrusive_list.h>
 #include <coio/utils/atomutex.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio::detail {
-    class queue_event {
-    public:
-        enum class status : unsigned char {
-            available,
-            try_again,
-            stop_requested
-        };
-        using enum status;
-
-    public:
-        auto wakeup(std::ptrdiff_t update = 1) noexcept -> void {
-            COIO_ASSERT(update >= 0);
-            if (update == 0) [[unlikely]] return;
-
-            auto old = count_.load(std::memory_order_relaxed);
-            while (true) {
-                if (old == sentinel) return;
-                COIO_ASSERT(update <= max() - old);
-                if (count_.compare_exchange_weak(old, old + update, std::memory_order_release, std::memory_order_relaxed)) {
-                    const auto waiting_upper_bound = waiting_.load();
-                    if (waiting_upper_bound == 0) {}
-                    else if (waiting_upper_bound <= update) {
-                        count_.notify_all();
-                    }
-                    else {
-                        for (std::ptrdiff_t i = 0; i < update; ++i) count_.notify_one();
-                    }
-                    return;
-                }
-            }
-        }
-
-        [[nodiscard]]
-        auto wait() noexcept -> status {
-            auto old = count_.load(std::memory_order_acquire);
-
-            while (true) {
-                if (old == sentinel) {
-                    return status::stop_requested;
-                }
-
-                while (old == 0) {
-                    waiting_.fetch_add(1);
-                    count_.wait(0, std::memory_order_acquire);
-                    waiting_.fetch_sub(1);
-
-                    old = count_.load(std::memory_order_acquire);
-                    if (old == sentinel) {
-                        return status::stop_requested;
-                    }
-                }
-
-                if (count_.compare_exchange_weak(old, old - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
-                    return status::available;
-                }
-            }
-        }
-
-        [[nodiscard]]
-        COIO_ALWAYS_INLINE auto try_wait() noexcept -> status {
-            auto old = count_.load(std::memory_order_acquire);
-
-            while (true) {
-                if (old == sentinel) return status::stop_requested;
-                if (old == 0) return status::try_again;
-
-                if (count_.compare_exchange_weak(old, old - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
-                    return status::available;
-                }
-            }
-        }
-
-        COIO_ALWAYS_INLINE auto request_stop() noexcept -> void {
-            auto old = count_.load(std::memory_order_acquire);
-            while (old != sentinel) {
-                if (count_.compare_exchange_weak(old, sentinel, std::memory_order_release, std::memory_order_acquire)) {
-                    count_.notify_all();
-                    return;
-                }
-            }
-        }
-
-        [[nodiscard]]
-        static constexpr auto max() noexcept -> std::ptrdiff_t {
-            return std::numeric_limits<std::ptrdiff_t>::max();
-        }
-
-    private:
-        std::atomic<std::ptrdiff_t> count_{0};
-        std::atomic<std::ptrdiff_t> waiting_{0};
-        static constexpr std::ptrdiff_t sentinel = -1;
-    };
-
-
+    COIO_MSVC_SUPPRESS_PUSH()
+    COIO_MSVC_IGNORE(4324) // ignore C4324: structure was padded due to alignment specifier
+    // Intrusive MPSC queue
     template<typename Op, auto NextAccessor> requires std::is_nothrow_invocable_r_v<Op*, decltype(NextAccessor), Op*>
     class op_queue {
     public:
@@ -120,110 +29,100 @@ namespace coio::detail {
 
         auto operator= (const op_queue&) -> op_queue& = delete;
 
-        COIO_ALWAYS_INLINE auto enqueue(Op& op) -> std::size_t {
-            std::size_t count = 0;
-            {
-                std::scoped_lock _{op_queue_mtx_};
-                count = this->do_enqueue(op);
-            }
-            event_.wakeup(static_cast<std::ptrdiff_t>(count));
-            return count;
+        COIO_ALWAYS_INLINE auto enqueue(Op& op) -> void {
+            this->publish(this->reverse(&op), &op);
         }
 
         template<typename Ops> requires
             std::ranges::input_range<Ops> and
             std::convertible_to<std::ranges::range_reference_t<Ops>, Op&>
-        COIO_ALWAYS_INLINE auto bulk_enqueue(Ops&& ops) -> std::size_t {
-            std::size_t count = 0;
-            {
-                std::scoped_lock _{op_queue_mtx_};
-                count = this->do_bulk_enqueue(std::forward<Ops>(ops));
-            }
-            event_.wakeup(static_cast<std::ptrdiff_t>(count));
-            return count;
-        }
+        COIO_ALWAYS_INLINE auto bulk_enqueue(Ops&& ops) -> bool {
+            Op* head = nullptr;
+            Op* tail = nullptr;
 
-        [[nodiscard]]
-        COIO_ALWAYS_INLINE auto try_dequeue() -> Op* {
-            if (event_.try_wait() == queue_event::try_again) return nullptr;
-            std::scoped_lock _{op_queue_mtx_};
-            return do_dequeue();
+            for (Op& op : ops) {
+                COIO_ASSERT(std::invoke(NextAccessor, &op) == nullptr);
+                if (tail == nullptr) tail = &op;
+                std::invoke(NextAccessor, &op) = head;
+                head = &op;
+            }
+
+            if (head == nullptr) return false;
+            this->publish(head, tail);
+            return true;
         }
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto dequeue() -> Op* {
-            // wait until work may be available, or stop is requested.
-            // The actual queue state is checked under the mutex below.
-            static_cast<void>(event_.wait());
-            std::scoped_lock _{op_queue_mtx_};
-            return do_dequeue();
-        }
+            if (front_ == nullptr) {
+                Op* incoming = incoming_.exchange(nullptr, std::memory_order_acquire);
+                if (incoming == nullptr) return nullptr;
+                front_ = this->reverse(incoming);
+            }
 
-        COIO_ALWAYS_INLINE auto request_stop() noexcept -> void {
-            event_.request_stop();
+            Op* op = front_;
+            front_ = std::invoke(NextAccessor, op);
+            std::invoke(NextAccessor, op) = nullptr;
+            return op;
         }
 
     private:
-        COIO_ALWAYS_INLINE auto do_enqueue(Op& op) -> std::size_t {
-            if (auto old_tail = std::exchange(op_queue_tail_, &op)) {
-                std::invoke(NextAccessor, old_tail) = &op;
+        [[nodiscard]]
+        COIO_ALWAYS_INLINE static auto reverse(Op* node) noexcept -> Op* {
+            Op* reversed = nullptr;
+
+            while (true) {
+                Op* next = std::invoke(NextAccessor, node);
+                std::invoke(NextAccessor, node) = reversed;
+                reversed = node;
+                if (next == nullptr) break;
+                node = next;
             }
-            std::size_t count = 1;
-            while (auto tail_next = std::invoke(NextAccessor, op_queue_tail_)) {
-                op_queue_tail_ = tail_next;
-                ++count;
-            }
-            if (op_queue_head_ == nullptr) op_queue_head_ = &op;
-            return count;
+
+            return reversed;
         }
 
-        template<typename Ops> requires
-            std::ranges::input_range<Ops> and
-            std::convertible_to<std::ranges::range_reference_t<Ops>, Op&>
-        COIO_ALWAYS_INLINE auto do_bulk_enqueue(Ops&& ops) -> std::size_t {
-            std::size_t count = 0;
-            for (Op& op : ops) {
-                this->do_enqueue(op);
-                ++count;
+        COIO_ALWAYS_INLINE auto publish(Op* head, Op* tail) noexcept -> void {
+            COIO_ASSERT(head != nullptr and tail != nullptr);
+            Op* old = incoming_.load(std::memory_order_relaxed);
+            do {
+                std::invoke(NextAccessor, tail) = old;
             }
-            return count;
-        }
-
-        COIO_ALWAYS_INLINE auto do_dequeue() noexcept -> Op* {
-            if (op_queue_head_ == nullptr) return nullptr;
-            if (op_queue_head_ == op_queue_tail_) op_queue_tail_ = nullptr;
-            return std::exchange(op_queue_head_, std::invoke(NextAccessor, op_queue_head_));
+            while (not incoming_.compare_exchange_weak(
+                old,
+                head,
+                std::memory_order_release,
+                std::memory_order_relaxed
+            ));
         }
 
     private:
-        atomutex op_queue_mtx_;
-        Op* op_queue_head_{};
-        Op* op_queue_tail_{};
-        queue_event event_;
+        alignas(64) std::atomic<Op*> incoming_{};
+        alignas(64) Op* front_ = nullptr;
+    };
+    COIO_MSVC_SUPPRESS_POP()
+
+    template<typename Op>
+    struct timer_heap_links {
+        // `prev` is the parent when the node is a first child, the previous sibling otherwise;
+        // null when the node is the root or not linked into the heap
+        Op* prev = nullptr;
+        Op* child = nullptr;
+        Op* sibling = nullptr;
     };
 
-
-    template<typename Op, std::regular_invocable<const Op&> auto Proj, auto HeapIndexAccessor, typename Allocator = std::allocator<void>>
+    // intrusive pairing heap: no allocation, every operation is noexcept;
+    // `add` is O(1), `remove`/`take_ready_timers` pop in amortized O(log n)
+    template<typename Op, std::regular_invocable<const Op&> auto Proj, auto LinksAccessor>
         requires std::three_way_comparable_with<
             std::chrono::steady_clock::time_point, std::invoke_result_t<decltype(Proj), const Op&>
-        > and std::is_nothrow_invocable_r_v<std::size_t&, decltype(HeapIndexAccessor), Op&>
+        > and std::is_nothrow_invocable_r_v<timer_heap_links<Op>&, decltype(LinksAccessor), Op&>
     class timer_queue {
     private:
         using reference = Op&;
 
-        struct item {
-            std::chrono::steady_clock::time_point deadline;
-            Op* op;
-        };
-
-        using allocator_type = std::allocator_traits<Allocator>::template rebind_alloc<item>;
-
-        static constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
-
     public:
         timer_queue() = default;
-
-        explicit timer_queue(Allocator alloc) noexcept : underlying_(allocator_type(alloc)) {}
 
         timer_queue(const timer_queue&) = delete;
 
@@ -231,93 +130,110 @@ namespace coio::detail {
 
         auto operator= (const timer_queue&) -> timer_queue& = delete;
 
-        COIO_ALWAYS_INLINE auto add(reference op) -> bool {
-            const auto deadline = std::invoke(Proj, op);
+        COIO_ALWAYS_INLINE auto add(reference op) noexcept -> bool {
             std::scoped_lock _{mtx_};
-            const auto index = underlying_.size();
-            underlying_.emplace_back(deadline, &op);
-            std::invoke(HeapIndexAccessor, op) = index;
-            up_node(index);
-            return std::invoke(HeapIndexAccessor, op) == 0;
+            links(op) = {};
+            root_ = root_ == nullptr ? &op : meld(root_, &op);
+            return root_ == &op;
         }
 
-        COIO_ALWAYS_INLINE auto remove(reference op) -> bool {
+        COIO_ALWAYS_INLINE auto remove(reference op) noexcept -> bool {
             std::scoped_lock _{mtx_};
-            const auto index = std::invoke(HeapIndexAccessor, op);
-            if (index >= underlying_.size()) return false;
-            do_remove(index);
+            if (&op == root_) {
+                static_cast<void>(pop_root());
+                return true;
+            }
+            if (links(op).prev == nullptr) return false; // never added, or already fired/removed
+            unlink(op);
+            if (Op* subtree = merge_children(links(op).child)) {
+                root_ = meld(root_, subtree);
+            }
+            links(op) = {};
             return true;
         }
 
         template<typename BaseOp> requires std::derived_from<Op, BaseOp>
-        COIO_ALWAYS_INLINE auto take_ready_timers(intrusive_list<BaseOp>& list) -> void {
+        COIO_ALWAYS_INLINE auto take_ready_timers(intrusive_list<BaseOp>& list) noexcept -> void {
             std::scoped_lock _{mtx_};
-            while (not underlying_.empty() and std::chrono::steady_clock::now() >= underlying_.front().deadline) {
-                Op* op = underlying_.front().op;
-                COIO_ASSERT(op != nullptr);
-                do_remove(0);
-                list.push_back(*op);
+            const auto now = std::chrono::steady_clock::now();
+            while (root_ != nullptr and now >= std::invoke(Proj, *root_)) {
+                list.push_back(*pop_root());
             }
         }
 
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto earliest() noexcept -> std::optional<std::chrono::steady_clock::time_point> {
             std::scoped_lock _{mtx_};
-            if (underlying_.empty()) return {};
-            return underlying_.front().deadline;
+            if (root_ == nullptr) return {};
+            return std::invoke(Proj, *root_);
         }
 
     private:
-        COIO_ALWAYS_INLINE auto up_node(std::size_t index) noexcept -> void {
-            while (index > 0) {
-                const auto parent = (index - 1) / 2;
-                if (underlying_[index].deadline >= underlying_[parent].deadline) break;
-                swap_node(index, parent);
-                index = parent;
-            }
+        COIO_ALWAYS_INLINE static auto links(reference op) noexcept -> timer_heap_links<Op>& {
+            return std::invoke(LinksAccessor, op);
         }
 
-        COIO_ALWAYS_INLINE auto down_node(std::size_t index) noexcept -> void {
-            auto left_child = index * 2 + 1;
-            while (left_child < underlying_.size()) {
-                auto next = left_child;
-                const auto right_child = left_child + 1;
-                if (right_child < underlying_.size() and underlying_[right_child].deadline < underlying_[left_child].deadline) {
-                    next = right_child;
-                }
-                if (underlying_[index].deadline < underlying_[next].deadline) break;
-                swap_node(index, next);
-                index = next;
-                left_child = index * 2 + 1;
-            }
+        // pre: `a` and `b` are both roots of well-formed trees (null `prev`/`sibling`)
+        COIO_ALWAYS_INLINE static auto meld(Op* a, Op* b) noexcept -> Op* {
+            if (std::invoke(Proj, *b) < std::invoke(Proj, *a)) std::swap(a, b);
+            // `b` becomes the first child of `a`
+            links(*b).prev = a;
+            links(*b).sibling = links(*a).child;
+            if (links(*a).child != nullptr) links(*links(*a).child).prev = b;
+            links(*a).child = b;
+            return a;
         }
 
-        COIO_ALWAYS_INLINE auto swap_node(std::size_t i, std::size_t j) noexcept -> void {
-            std::swap(underlying_[i], underlying_[j]);
-            std::invoke(HeapIndexAccessor, *underlying_[i].op) = i;
-            std::invoke(HeapIndexAccessor, *underlying_[j].op) = j;
+        // two-pass pairwise merge of a child list; returns the resulting root (or null)
+        static auto merge_children(Op* first) noexcept -> Op* {
+            if (first == nullptr) return nullptr;
+
+            Op* merged = nullptr; // merged pairs, stacked via `sibling`
+            while (first != nullptr) {
+                Op* a = first;
+                Op* b = links(*a).sibling;
+                first = b == nullptr ? nullptr : links(*b).sibling;
+                links(*a).prev = nullptr;
+                links(*a).sibling = nullptr;
+                if (b != nullptr) {
+                    links(*b).prev = nullptr;
+                    links(*b).sibling = nullptr;
+                    a = meld(a, b);
+                }
+                links(*a).sibling = merged;
+                merged = a;
+            }
+
+            Op* result = merged;
+            merged = links(*result).sibling;
+            links(*result).sibling = nullptr;
+            while (merged != nullptr) {
+                Op* next = links(*merged).sibling;
+                links(*merged).sibling = nullptr;
+                result = meld(result, merged);
+                merged = next;
+            }
+            return result;
         }
 
-        COIO_ALWAYS_INLINE auto do_remove(std::size_t index) noexcept -> void {
-            if (index == underlying_.size() - 1) {
-                std::invoke(HeapIndexAccessor, *underlying_[index].op) = npos;
-                underlying_.pop_back();
-            }
-            else {
-                swap_node(index, underlying_.size() - 1);
-                std::invoke(HeapIndexAccessor, *underlying_.back().op) = npos;
-                underlying_.pop_back();
-                if (index > 0 and underlying_[index].deadline < underlying_[(index - 1) / 2].deadline) {
-                    up_node(index);
-                }
-                else {
-                    down_node(index);
-                }
-            }
+        COIO_ALWAYS_INLINE auto pop_root() noexcept -> Op* {
+            Op* top = root_;
+            root_ = merge_children(links(*top).child);
+            links(*top) = {};
+            return top;
+        }
+
+        // pre: `op` is linked and is not the root
+        COIO_ALWAYS_INLINE static auto unlink(reference op) noexcept -> void {
+            Op* prev = links(op).prev;
+            Op* sibling = links(op).sibling;
+            if (links(*prev).child == &op) links(*prev).child = sibling; // `prev` is the parent
+            else links(*prev).sibling = sibling;                        // `prev` is the previous sibling
+            if (sibling != nullptr) links(*sibling).prev = prev;
         }
 
     private:
-        std::vector<item, allocator_type> underlying_;
+        Op* root_ = nullptr;
         atomutex mtx_;
     };
 }

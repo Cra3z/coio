@@ -160,7 +160,7 @@ namespace coio {
             COIO_STATIC_CALL_OP auto operator() (
                 output_random_access_device auto& device,
                 std::size_t offset,
-                std::span<std::byte> buffer
+                std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
                 const std::size_t total = buffer.size();
                 if (total == 0) return 0;
@@ -207,12 +207,17 @@ namespace coio {
 
                     search_pos = data.size();
 
-                    std::size_t bytes_to_read = std::max<std::size_t>(512, buffer.capacity() - buffer.size());
-                    if (bytes_to_read == 0) bytes_to_read = 512;
+                    if (buffer.size() == buffer.max_size()) [[unlikely]] {
+                        throw std::system_error{error::not_found, "read_until"};
+                    }
+
+                    const std::size_t bytes_to_read = std::min(
+                        std::max<std::size_t>(512, buffer.capacity() - buffer.size()),
+                        std::min<std::size_t>(65536, buffer.max_size() - buffer.size())
+                    );
 
                     auto prep = buffer.prepare(bytes_to_read);
                     std::size_t n = device.read_some(prep);
-                    if (n == 0) return 0;
                     buffer.commit(n);
                 }
             }
@@ -247,12 +252,17 @@ namespace coio {
 
                     search_pos = size;
 
-                    std::size_t bytes_to_read = std::max<std::size_t>(512, buffer.capacity() - buffer.size());
-                    if (bytes_to_read == 0) bytes_to_read = 512;
+                    if (buffer.size() == buffer.max_size()) [[unlikely]] {
+                        throw std::system_error{error::not_found, "read_until"};
+                    }
+
+                    const std::size_t bytes_to_read = std::min(
+                        std::max<std::size_t>(512, buffer.capacity() - buffer.size()),
+                        std::min<std::size_t>(65536, buffer.max_size() - buffer.size())
+                    );
 
                     auto prep = buffer.prepare(bytes_to_read);
                     std::size_t n = device.read_some(prep);
-                    if (n == 0) return 0;
                     buffer.commit(n);
                 }
             }
@@ -588,6 +598,10 @@ namespace coio {
                     execution::set_value(std::move(this->rcvr), std::error_code{}, pos);
                     return;
                 }
+                if (buffer->size() == buffer->max_size()) [[unlikely]] {
+                    execution::set_value(std::move(this->rcvr), make_error_code(error::not_found), std::size_t{0});
+                    return;
+                }
                 do_read();
             }
 
@@ -621,8 +635,10 @@ namespace coio {
             }
 
             COIO_ALWAYS_INLINE auto do_read() noexcept -> void {
-                std::size_t bytes_to_read = std::max<std::size_t>(512, buffer->capacity() - buffer->size());
-                if (bytes_to_read == 0) bytes_to_read = 512;
+                const std::size_t bytes_to_read = std::min(
+                    std::max<std::size_t>(512, buffer->capacity() - buffer->size()),
+                    std::min<std::size_t>(65536, buffer->max_size() - buffer->size())
+                );
                 auto prep = buffer->prepare(bytes_to_read);
                 read_state.emplace(elide{execution::connect, device->async_read_some(prep), receiver{this}});
                 execution::start(*read_state);

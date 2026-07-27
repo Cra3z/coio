@@ -37,9 +37,6 @@ namespace coio {
             struct waiting_list {
                 auto add(node_t& node) noexcept -> int {
                     std::scoped_lock _{mtx};
-                    if (node.stop_requested()) {
-                        return -ERROR_OPERATION_ABORTED;
-                    }
                     auto old_head = head;
                     if (old_head == nullptr) {
                         return node.signum_;
@@ -127,13 +124,9 @@ namespace coio {
 
             auto operator=(const signal_state&) -> signal_state& = delete;
 
-            auto register_waiter(node_t& node) noexcept -> bool {
+            auto register_waiter(node_t& node) noexcept -> int {
                 const std::size_t index = signal_index(node.signum_);
-                if (const auto ret = waiting_lists[index].add(node); ret != 0) {
-                    node.finish_(&node, ret);
-                    return false;
-                }
-                return true;
+                return waiting_lists[index].add(node);
             }
 
             auto unregister_waiter(node_t& node) noexcept -> void {
@@ -192,8 +185,8 @@ namespace coio {
         };
     }
 
-    auto signal_wait_sender::node::do_start() noexcept -> void {
-        detail::signal_state::get().register_waiter(*this);
+    auto signal_wait_sender::node::do_start() noexcept -> int {
+        return detail::signal_state::get().register_waiter(*this);
     }
 
     auto signal_wait_sender::node::do_cancel() noexcept -> void {

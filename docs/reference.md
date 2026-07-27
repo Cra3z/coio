@@ -43,7 +43,9 @@ This document describes the public API of **coio**. It is intended to be a stabl
 ### Stop tokens and cancellation
 
 - Many async operations support cooperative cancellation by [stop token](https://eel.is/c++draft/thread.stoptoken).
-- Cancellation follows the sender/receiver contract: cancellation completes with `set_stopped()`.
+- A stop request asks the backend to cancel; it does not overwrite an actual target-operation result.
+- The receiver gets `set_stopped()` only when the cancellation path wins, for example when a pending operation is synchronously removed or the target backend reports cancellation. A target success or ordinary error remains `set_value()` or `set_error()` even if stop was requested first.
+- A stop request that already exists at `start()` does not skip backend initiation. An immediate target result wins; if the operation remains pending, coio then asks the backend to cancel it.
 
 ---
 
@@ -131,14 +133,12 @@ auto fibonacci(std::size_t n) -> coio::generator<int> {
 
 ### 4.1 Thread-safety model
 
-All execution contexts (`time_loop`, `epoll_context`, `uring_context` and `iocp_context`) share these guarantees:
+All execution contexts (`time_loop`, `epoll_context`, `uring_context` and `iocp_context`) are **MPSC** (multi-producer, single-consumer):
 
-- `run()` / `run_one()` can be called concurrently from multiple threads.
-- `poll()` / `poll_one()` can be called concurrently from multiple threads.
-- `get_scheduler()` is thread-safe.
-- `request_stop()` is thread-safe.
+- **Multi-producer**: any thread may concurrently start operations on a context (`schedule()`, `schedule_at()`/`schedule_after()`, and the `async_*` operations of its io objects), and `get_scheduler()`, `work_started()`/`work_finished()` and `request_stop()` are thread-safe.
+- **Single-consumer**: at most one thread may be inside `run()`, `run_one()`, `poll()` or `poll_one()` for a context at a time. This is a precondition and is not checked at runtime: concurrent consumer calls are undefined behavior. The consumer thread may change over the context's lifetime (e.g. `poll()` from one thread, later `run()` from another), provided the earlier call happens-before the later one (thread join, mutex, or similar synchronization).
 
-Work submitted to the context may be executed by **any** thread currently calling `run()`/`poll()`.
+Work submitted to the context is completed by its active `run()`/`poll()` consumer thread.
 
 ### 4.2 time_loop
 
@@ -283,8 +283,8 @@ Be careful with the term "concurrency":
 
 Like Asio sockets/streams, coio socket/acceptor objects are **not thread-safe**. In other words, **member functions must not be called concurrently** on the same socket/acceptor from multiple threads unless you provide external synchronization.
 
-If you drive the owning execution context from a single thread, and ensure all socket/acceptor
-operations are initiated from work running on that thread, that thread acts as an
+If all socket/acceptor operations are initiated from work running on the owning execution
+context's consumer thread, that thread acts as an
 "implicit strand" (operations are serialized by construction).
 
 This thread-safety rule is independent of how many operations may be outstanding.
@@ -294,6 +294,13 @@ The async interface supports the following **outstanding-operation** limits (Asi
 - **Allowed overlap**: you may have one read and one write outstanding at the same time.
 - **Not allowed**: two reads outstanding simultaneously; likewise for writes.
 - **Acceptors**: at most one outstanding `accept` / `async_accept` per acceptor.
+
+**Lifetime**: an I/O object must outlive all of its operations. A sender obtained from an
+I/O object (`async_read_some`, `async_receive`, ...) must be connected and started **before**
+the object is closed or destroyed; starting it afterwards is undefined behavior. On
+`epoll_context` in particular, `close()` returns the object's per-descriptor bookkeeping
+entry to an internal pool, so a stale start may silently corrupt the state of an unrelated
+I/O object that has since reused the entry, rather than failing cleanly with `EBADF`.
 
 Example: the following is **malformed** because it starts two reads without waiting for the first to complete:
 
@@ -315,9 +322,9 @@ co_await when_all(
 );
 ```
 
-If you drive an execution context from multiple threads, ensure **all initiating calls for a
-given socket/acceptor are serialized** (e.g. a mutex, or funneling initiation through a single
-owning thread/task).
+Operations may be initiated from threads other than the context consumer, but **all initiating
+calls for a given socket/acceptor must still be serialized** (e.g. a mutex, or funneling
+initiation through a single owning thread/task).
 
 ### EOF behavior
 
@@ -347,7 +354,7 @@ These primitives suspend coroutines instead of blocking threads.
 
 ## 11. Thread safety (summary)
 
-- Execution contexts: thread-safe `run/poll/get_scheduler/request_stop`.
+- Execution contexts: **MPSC** — one active `run/poll` consumer per context; `get_scheduler`, operation initiation, and `request_stop` may be used concurrently from other threads.
 - Sync primitives: safe across coroutines potentially running on different threads.
 - `async_scope`: safe to `spawn()` from multiple threads.
 - Sockets/acceptors: **not thread-safe**; do not call member functions concurrently on the same object without external synchronization. Also follow the per-object outstanding-operation limits described above.

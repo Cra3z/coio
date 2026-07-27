@@ -21,6 +21,12 @@ namespace coio {
         using socket_native_handle_type = ::UINT_PTR;
 #endif
         inline constexpr socket_native_handle_type invalid_socket_handle = socket_native_handle_type(-1);
+
+        enum class shutdown_type : short {
+            shutdown_send,
+            shutdown_receive,
+            shutdown_both,
+        };
     }
 
     class ipv4_address {
@@ -266,6 +272,9 @@ struct std::formatter<coio::ip_address> : coio::no_specification_formatter {
 template<>
 struct std::formatter<coio::endpoint> : coio::no_specification_formatter {
     auto format(const coio::endpoint& ep, std::format_context& ctx) const {
+        if (ep.ip().is_v6()) {
+            return std::format_to(ctx.out(), "[{}]:{}", ep.ip().to_string(), ep.port());
+        }
         return std::format_to(ctx.out(), "{}:{}", ep.ip().to_string(), ep.port());
     }
 };

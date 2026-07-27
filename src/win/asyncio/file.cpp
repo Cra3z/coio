@@ -56,12 +56,13 @@ namespace coio::detail {
                     if (err == ERROR_IO_PENDING) {
                         if (not ::GetOverlappedResult(handle, &overlapped, &n, TRUE)) {
                             err = ::GetLastError();
-                            if (err == ERROR_HANDLE_EOF) throw std::system_error{coio::error::eof, msg};
+                            // ERROR_BROKEN_PIPE is how a pipe reports its writer closing: map it to EOF like POSIX read() == 0
+                            if (err == ERROR_HANDLE_EOF or err == ERROR_BROKEN_PIPE) throw std::system_error{coio::error::eof, msg};
                             throw std::system_error{static_cast<int>(err), std::system_category(), msg};
                         }
                     }
                     else if (err == ERROR_OPERATION_ABORTED) continue;
-                    else if (err == ERROR_HANDLE_EOF) throw std::system_error{coio::error::eof, msg};
+                    else if (err == ERROR_HANDLE_EOF or err == ERROR_BROKEN_PIPE) throw std::system_error{coio::error::eof, msg};
                     else throw std::system_error{static_cast<int>(err), std::system_category(), msg};
                 }
                 break;
@@ -147,27 +148,12 @@ namespace coio::detail {
         return handle;
     }
 
-    auto file_read(file_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
-        return sync_file_read(handle, buffer, 0, "read_some");
-    }
-
-    auto file_write(file_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
-        return sync_file_write(handle, buffer, 0, "write_some");
-    }
-
     auto file_read_at(file_native_handle_type handle, std::size_t offset, std::span<std::byte> buffer) -> std::size_t {
         return sync_file_read(handle, buffer, offset, "read_some_at");
     }
 
     auto file_write_at(file_native_handle_type handle, std::size_t offset, std::span<const std::byte> buffer) -> std::size_t {
         return sync_file_write(handle, buffer, offset, "write_some_at");
-    }
-
-    auto close_file(file_native_handle_type handle) -> void {
-        if (handle == invalid_file_handle) return;
-        if (not ::CloseHandle(handle)) {
-            throw std::system_error(to_error_code(::GetLastError()), "close");
-        }
     }
 
     auto file_size(file_native_handle_type handle) -> std::size_t {

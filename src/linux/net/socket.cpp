@@ -152,11 +152,6 @@ namespace coio::detail::socket {
         return fd;
     }
 
-    auto close(socket_native_handle_type handle) -> void {
-        if (handle == invalid_socket_handle) return;
-        throw_last_error(::close(handle), "close");
-    }
-
     auto max_backlog() noexcept -> std::size_t {
         return SOMAXCONN;
     }
@@ -174,7 +169,7 @@ namespace coio::detail::socket {
         if (rc == 0) return;
 
         const int ec = errno;
-        if (ec != EINPROGRESS and ec != EAGAIN) {
+        if (ec != EINPROGRESS) {
             throw std::system_error{ec, std::system_category(), "connect"};
         }
 

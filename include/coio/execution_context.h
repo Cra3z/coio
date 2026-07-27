@@ -3,15 +3,18 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <functional>
 #include <memory_resource>
 #include <mutex>
 #include <limits>
 #include <queue>
 #include <semaphore>
+#include <thread>
 #include <utility>
 #include <coio/detail/execution.h>
 #include <coio/detail/op_queue.h>
+#include <coio/utils/scope_exit.h>
 #include <coio/utils/stop_token.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
@@ -20,6 +23,18 @@ namespace coio {
     class task;
 
     namespace detail {
+        enum class operation_phase : unsigned char {
+            starting,
+            armed,
+            cancel_deferred,
+            completed
+        };
+
+        enum class start_result : unsigned char {
+            completed,
+            pending
+        };
+
         template<typename Ctx>
         class loop_base {
             friend Ctx;
@@ -39,13 +54,41 @@ namespace coio {
                     COIO_ASSERT(next_ == nullptr);
                     auto& context = context_;
                     context.op_queue_.enqueue(*this);
-                    context.interrupt();
+                    context.wakeup_consumer();
+                }
+
+                auto publish() noexcept -> void {
+                    const auto previous = phase_.exchange(operation_phase::completed, std::memory_order_acq_rel);
+                    COIO_ASSERT(previous != operation_phase::completed);
+                    if (previous == operation_phase::armed) {
+                        immediately_post();
+                    }
                 }
 
                 Ctx& context_;
                 node* next_{};
+                std::atomic<operation_phase> phase_{operation_phase::starting};
             };
 
+            /// operation_phase state machine:
+            ///
+            /// [starting]
+            ///   |-- request_cancel() --------------------------> [cancel_deferred]
+            ///   |-- backend remains pending -------------------> [armed]
+            ///   `-- publish() ---------------------------------> [completed] (start posts)
+            ///
+            /// [cancel_deferred]
+            ///   |-- do_start() completes / publish() ----------> [completed] (start posts)
+            ///   `-- do_start() remains pending / do_cancel()
+            ///         |-- cancellation publishes --------------> [completed] (start posts)
+            ///         `-- backend remains pending -------------> [armed]
+            ///
+            /// [armed]
+            ///   |-- request_cancel() / do_cancel() ------------> [armed]
+            ///   `-- publish() ---------------------------------> [completed] (publisher posts)
+            ///
+            /// [completed]
+            ///   `-- request_cancel() --------------------------> [completed] (ignored)
             template<typename Base>
             class operation_state : public Base {
             private:
@@ -61,34 +104,76 @@ namespace coio {
                     this->context_.work_started();
                     if constexpr (not unstoppable_token<stop_token_t>) {
                         auto stop_token = coio::get_stop_token(execution::get_env(this->rcvr_));
-                        if (stop_token.stop_requested()) {
-                            this->context_.work_finished();
-                            execution::set_stopped(std::move(this->rcvr_));
-                            return;
-                        }
                         stop_cb_.emplace(
                             std::move(stop_token),
-                            std::bind_front(&operation_state::do_cancel, this)
+                            std::bind_front(&operation_state::request_cancel, this)
                         );
                     }
-                    if (not this->do_start()) {
-                        finish();
+
+                    if (this->do_start() == start_result::completed) {
+                        this->publish();
+                        return this->immediately_post();
                     }
+
+                    auto expected = operation_phase::starting;
+                    if (this->phase_.compare_exchange_strong(
+                        expected,
+                        operation_phase::armed,
+                        std::memory_order_release,
+                        std::memory_order_acquire
+                    )) {
+                        return;
+                    }
+
+                    if (expected == operation_phase::cancel_deferred) {
+                        this->do_cancel();
+                        expected = operation_phase::cancel_deferred;
+                        if (this->phase_.compare_exchange_strong(
+                            expected,
+                            operation_phase::armed,
+                            std::memory_order_release,
+                            std::memory_order_acquire
+                        )) {
+                            return;
+                        }
+                    }
+
+                    COIO_ASSERT(expected == operation_phase::completed);
+                    return this->immediately_post();
                 }
 
                 auto finish() -> void override {
                     this->context_.work_finished();
                     stop_cb_.reset();
-                    this->do_finish(coio::get_stop_token(execution::get_env(this->rcvr_)).stop_requested());
+                    this->do_finish();
                 }
 
             protected:
-                using callback_t = decltype(std::bind_front(&operation_state::do_cancel, std::declval<operation_state*>()));
+                auto request_cancel() noexcept -> void {
+                    auto phase = this->phase_.load(std::memory_order_acquire);
+                    while (phase == operation_phase::starting) {
+                        if (this->phase_.compare_exchange_weak(
+                            phase,
+                            operation_phase::cancel_deferred,
+                            std::memory_order_acq_rel,
+                            std::memory_order_acquire
+                        )) {
+                            return;
+                        }
+                    }
+                    if (phase == operation_phase::armed) {
+                        this->do_cancel();
+                    }
+                }
+
+            private:
+                using callback_t = decltype(std::bind_front(&operation_state::request_cancel, std::declval<operation_state*>()));
                 std::optional<stop_callback_for_t<stop_token_t, callback_t>> stop_cb_;
             };
 
             struct env {
-                auto query(execution::get_completion_scheduler_t<execution::set_value_t>) const noexcept {
+                template<typename Tag>
+                auto query(execution::get_completion_scheduler_t<Tag>) const noexcept {
                     return ctx_.get_scheduler();
                 }
 
@@ -103,29 +188,31 @@ namespace coio {
                 friend Ctx;
             private:
                 template<typename Rcvr>
-                struct state_base : node {
-                    state_base(Ctx& context, Rcvr rcvr) noexcept : node(context), rcvr_(std::move(rcvr)) {}
+                struct state : node {
+                    state(Ctx& context, Rcvr rcvr) noexcept : node(context), rcvr_(std::move(rcvr)) {}
 
-                    COIO_ALWAYS_INLINE auto do_start() noexcept -> bool {
+                    COIO_ALWAYS_INLINE auto start() noexcept -> void {
+                        this->context_.work_started();
                         this->immediately_post();
-                        return true;
                     }
 
-                    COIO_ALWAYS_INLINE auto do_finish(bool) noexcept -> void {
+                    auto finish() noexcept -> void override {
+                        this->context_.work_finished();
+                        if constexpr (not unstoppable_token<stop_token_of_t<execution::env_of_t<Rcvr>>>) {
+                            auto stop_token = get_stop_token(execution::get_env(rcvr_));
+                            if (stop_token.stop_requested()) {
+                                execution::set_stopped(std::move(rcvr_));
+                                return;
+                            }
+                        }
                         execution::set_value(std::move(rcvr_));
                     }
-
-                    COIO_ALWAYS_INLINE static auto do_cancel(state_base*) noexcept -> void {}
 
                     Rcvr rcvr_;
                 };
 
-                template<typename Rcvr>
-                using state = operation_state<state_base<Rcvr>>;
-
             public:
                 using sender_concept = execution::sender_tag;
-                using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
 
             public:
                 explicit schedule_sender(Ctx& context) noexcept : ctx_(&context) {}
@@ -134,9 +221,14 @@ namespace coio {
                     return env{*ctx_};
                 }
 
-                template<similar_to<schedule_sender>, typename...>
-                static consteval auto get_completion_signatures() noexcept -> completion_signatures {
-                    return {};
+                template<similar_to<schedule_sender>, typename Env>
+                static consteval auto get_completion_signatures() noexcept {
+                    if constexpr (unstoppable_token<stop_token_of_t<Env>>) {
+                        return execution::completion_signatures<execution::set_value_t()>{};
+                    }
+                    else {
+                        return execution::completion_signatures<execution::set_value_t(), execution::set_stopped_t()>{};
+                    }
                 }
 
                 template<execution::receiver Rcvr>
@@ -164,32 +256,33 @@ namespace coio {
                 struct timer_node : node {
                     timer_node(Ctx& context, time_point_type deadline) noexcept: node(context), deadline(deadline) {}
                     time_point_type deadline;
-                    std::size_t heap_index = static_cast<std::size_t>(-1);
+                    detail::timer_heap_links<timer_node> heap_links;
                 };
 
                 template<typename Rcvr>
                 struct state_base : timer_node {
                     state_base(Rcvr rcvr, Ctx& context, time_point_type deadline) noexcept: timer_node(context, deadline), rcvr_(std::move(rcvr)) {}
 
-                    auto do_start() noexcept -> bool {
+                    auto do_start() noexcept -> start_result {
                         auto& context = this->context_;
-                        if (context.timer_queue_.add(*this)) context.interrupt();
-                        return true;
+                        if (context.timer_queue_.add(*this)) context.wakeup_consumer();
+                        return start_result::pending;
                     }
 
-                    auto do_finish(bool canceled) noexcept -> void {
-                        if (canceled) execution::set_stopped(std::move(rcvr_));
+                    auto do_finish() noexcept -> void {
+                        if (canceled_) execution::set_stopped(std::move(rcvr_));
                         else execution::set_value(std::move(rcvr_));
                     }
 
                     auto do_cancel() noexcept -> void {
                         if (this->context_.timer_queue_.remove(*this)) {
-                            this->context_.op_queue_.enqueue(*this);
-                            this->context_.interrupt();
+                            canceled_ = true;
+                            this->publish();
                         }
                     }
 
                     Rcvr rcvr_;
+                    bool canceled_ = false;
                 };
 
                 template<typename Rcvr>
@@ -294,8 +387,7 @@ namespace coio {
             using timer_queue = detail::timer_queue<
                 typename sleep_sender::timer_node,
                 &sleep_sender::timer_node::deadline,
-                &sleep_sender::timer_node::heap_index,
-                std::pmr::polymorphic_allocator<>
+                &sleep_sender::timer_node::heap_links
             >;
 
             using op_queue = detail::op_queue<node, &node::next_>;
@@ -304,6 +396,12 @@ namespace coio {
             loop_base() = default;
 
             explicit loop_base(std::pmr::memory_resource& memory_resource) noexcept : allocator_(&memory_resource) {}
+
+            ~loop_base() {
+                if (work_count_.load(std::memory_order_acquire) != 0) [[unlikely]] {
+                    std::terminate();
+                }
+            }
 
         public:
             loop_base(const loop_base&) = delete;
@@ -335,13 +433,17 @@ namespace coio {
 
             auto poll_one() -> bool {
                 auto self = static_cast<Ctx*>(this);
+                consumer_id_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+                scope_exit _{[this]() noexcept { consumer_id_.store({}, std::memory_order_relaxed); }};
                 return self->do_one(false);
             }
 
             auto poll() -> std::size_t {
                 auto self = static_cast<Ctx*>(this);
+                consumer_id_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+                scope_exit _{[this]() noexcept { consumer_id_.store({}, std::memory_order_relaxed); }};
                 std::size_t count = 0;
-                while (poll_one()) {
+                while (self->do_one(false)) {
                     if (count < std::numeric_limits<std::size_t>::max()) ++count;
                 }
                 return count;
@@ -349,37 +451,53 @@ namespace coio {
 
             auto run_one() -> bool {
                 auto self = static_cast<Ctx*>(this);
+                consumer_id_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+                scope_exit _{[this]() noexcept { consumer_id_.store({}, std::memory_order_relaxed); }};
                 return self->do_one(true);
             }
 
             auto run() -> std::size_t {
                 auto self = static_cast<Ctx*>(this);
+                consumer_id_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+                scope_exit _{[this]() noexcept { consumer_id_.store({}, std::memory_order_relaxed); }};
                 std::size_t count = 0;
-                while (run_one()) {
+                while (self->do_one(true)) {
                     if (count < std::numeric_limits<std::size_t>::max()) ++count;
                 }
                 return count;
             }
 
         protected:
-            COIO_ALWAYS_INLINE auto consume(bool infinite) -> bool {
-                node* op = infinite ? op_queue_.dequeue() : op_queue_.try_dequeue();
+            COIO_ALWAYS_INLINE static auto publish_pending(node* op) noexcept -> void {
+                while (op != nullptr) {
+                    auto next = std::exchange(op->next_, nullptr);
+                    op->publish();
+                    op = next;
+                }
+            }
+
+            COIO_ALWAYS_INLINE auto consume() -> bool {
+                node* op = op_queue_.dequeue();
                 if (op) op->finish();
                 return op;
             }
 
+            COIO_ALWAYS_INLINE auto wakeup_consumer() -> void {
+                if (consumer_id_.load(std::memory_order_relaxed) == std::this_thread::get_id()) return;
+                static_cast<Ctx*>(this)->interrupt();
+            }
+
             COIO_ALWAYS_INLINE auto shutdown() -> void {
-                auto self = static_cast<Ctx*>(this);
-                self->interrupt();
-                op_queue_.request_stop();
+                wakeup_consumer();
             }
 
         protected:
             std::pmr::polymorphic_allocator<> allocator_;
             inplace_stop_source stop_source_;
             op_queue op_queue_;
-            timer_queue timer_queue_{allocator_};
+            timer_queue timer_queue_;
             std::atomic<std::size_t> work_count_{0};
+            std::atomic<std::thread::id> consumer_id_{};
         };
     }
 
@@ -429,7 +547,7 @@ namespace coio {
         using task = coio::task<T, Alloc, scheduler>;
 
     public:
-        using loop_base::loop_base;
+        explicit time_loop(std::pmr::memory_resource& resource = *std::pmr::get_default_resource()) noexcept : loop_base(resource) {}
 
         ~time_loop() = default;
 
@@ -438,14 +556,8 @@ namespace coio {
             if (work_count_ == 0) return false;
 
             while (work_count_ > 0) {
-                if (const auto op = op_queue_.try_dequeue()) {
-                    op->finish();
+                if (consume()) {
                     return true;
-                }
-
-                std::unique_lock lock{bolt_, std::try_to_lock};
-                if (not lock) {
-                    return consume(infinite);
                 }
 
                 if (infinite) {
@@ -460,14 +572,10 @@ namespace coio {
                 detail::intrusive_list<node> ready_time_ops{&node::next_};
                 timer_queue_.take_ready_timers(ready_time_ops);
 
-                lock.unlock();
-
-                if (auto ops = ready_time_ops.release()) op_queue_.enqueue(*ops);
+                publish_pending(ready_time_ops.release());
 
                 if (not infinite) {
-                    const auto op = op_queue_.try_dequeue();
-                    if (op) op->finish();
-                    return op != nullptr;
+                    return consume();
                 }
             }
             return false;
@@ -478,7 +586,6 @@ namespace coio {
         }
 
     private:
-        atomutex bolt_;
         std::counting_semaphore<> sema_{0};
     };
 }

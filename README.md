@@ -19,13 +19,13 @@ A C++ **asynchronous I/O** library based on [sender/receiver model](https://wg21
 
 - **Sender/Receiver model** — Composable asynchronous algorithms via `std::execution`
 - **Coroutine types** — `task<T, Allocator, Scheduler>` and `generator<Ref, Val, Allocator>` for async computations and lazy sequences
-- **Execution contexts** — `time_loop`, `epoll_context`, `uring_context` and `iocp_context` with thread-safe `run()`
+- **Execution contexts** — `time_loop`, `epoll_context`, `uring_context` and `iocp_context`
 - **Networking** — TCP/UDP sockets with sync and async operations
 - **Synchronization** — `async_mutex`, `async_semaphore`, `async_latch`
 - **Utilities** — Timers, concurrent queues, signal handling
 
 > [!NOTE]
-> Some network and async-io facilities are currently only implemented using epoll and io_uring on Linux, and IOCP on Windows.
+> Some network and async-io facilities are currently only implemented using epoll and io_uring on Linux (the io_uring backend requires kernel 5.19 or newer), and IOCP on Windows.
 
 ## Build and Install
 
