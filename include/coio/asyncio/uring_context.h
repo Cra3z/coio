@@ -102,8 +102,12 @@ namespace coio {
                     template<typename... Args>
                     state_base(Rcvr rcvr, Args&&... args) noexcept : base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
 
-                    COIO_ALWAYS_INLINE auto do_finish(bool) noexcept -> void {
+                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
                         this->result.forward_to(std::move(this->rcvr_));
+                    }
+
+                    COIO_ALWAYS_INLINE auto do_set_stopped() noexcept -> void {
+                        this->result.set_stopped();
                     }
 
                     Rcvr rcvr_;
@@ -239,19 +243,19 @@ namespace coio {
                 static_assert(always_false<Sexpr>, "this operation isn't supported");
             }
             
-            auto do_start() noexcept -> bool {
+            auto do_start() noexcept -> start_result {
                 std::scoped_lock _{context_.uring_mtx_};
                 auto sqe = context_.allocate_sqe();
                 if (sqe == nullptr) {
                     result.set_error(std::make_error_code(std::errc::no_buffer_space));
-                    return false;
+                    return start_result::completed;
                 }
                 this->prepare(sqe);
                 ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
                 // TODO: To suppress TSAN false positives, we need to add more TSAN annotations! see https://github.com/axboe/liburing/issues/1514
                 COIO_TSAN_RELEASE(static_cast<uring_node*>(this));
                 context_.post_submit_sqes();
-                return true;
+                return start_result::pending;
             }
 
             auto complete(int cqe_res) -> void override {

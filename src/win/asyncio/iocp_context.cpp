@@ -211,8 +211,8 @@ namespace coio {
                 ready_io_ops.push_back(*op);
             }
 
-            if (auto ops = ready_time_ops.release()) op_queue_.enqueue(*ops);
-            if (auto ops = ready_io_ops.release()) op_queue_.enqueue(*ops);
+            complete_pending(ready_time_ops.release());
+            complete_pending(ready_io_ops.release());
 
             if (not infinite) {
                 return consume();
@@ -245,15 +245,14 @@ namespace coio {
 
         /// async_read_some
         template<>
-        auto iocp_state_base_for<async_read_some_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_read_some_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
-                immediately_post();
-                return true;
+                return start_result::completed;
             }
 
             ::DWORD bytes_read = 0;
@@ -266,13 +265,13 @@ namespace coio {
             );
             if (not ok) {
                 const ::DWORD err = ::GetLastError();
-                if (err == ERROR_IO_PENDING) return true;
+                if (err == ERROR_IO_PENDING) return start_result::pending;
                 else {
                     complete(0, err);
-                    return false;
+                    return start_result::completed;
                 }
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -295,15 +294,14 @@ namespace coio {
 
         /// async_write_some
         template<>
-        auto iocp_state_base_for<async_write_some_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_write_some_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
-                immediately_post();
-                return true;
+                return start_result::completed;
             }
 
             ::DWORD bytes_written = 0;
@@ -316,11 +314,11 @@ namespace coio {
             );
             if (not ok) {
                 const ::DWORD err = ::GetLastError();
-                if (err == ERROR_IO_PENDING) return true;
+                if (err == ERROR_IO_PENDING) return start_result::pending;
                 complete(0, err);
-                return false;
+                return start_result::completed;
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -336,15 +334,14 @@ namespace coio {
 
         /// async_read_some_at
         template<>
-        auto iocp_state_base_for<async_read_some_at_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_read_some_at_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
-                immediately_post();
-                return true;
+                return start_result::completed;
             }
 
             ::DWORD bytes_read = 0;
@@ -359,13 +356,13 @@ namespace coio {
             );
             if (not ok) {
                 const ::DWORD err = ::GetLastError();
-                if (err == ERROR_IO_PENDING) return true;
+                if (err == ERROR_IO_PENDING) return start_result::pending;
                 else {
                     complete(0, err);
-                    return false;
+                    return start_result::completed;
                 }
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -382,15 +379,14 @@ namespace coio {
 
         /// async_write_some_at
         template<>
-        auto iocp_state_base_for<async_write_some_at_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_write_some_at_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
-                immediately_post();
-                return true;
+                return start_result::completed;
             }
             
             ::DWORD bytes_written = 0;
@@ -405,11 +401,11 @@ namespace coio {
             );
             if (not ok) {
                 const ::DWORD err = ::GetLastError();
-                if (err == ERROR_IO_PENDING) return true;
+                if (err == ERROR_IO_PENDING) return start_result::pending;
                 complete(0, err);
-                return false;
+                return start_result::completed;
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -425,15 +421,14 @@ namespace coio {
 
         /// async_receive
         template<>
-        auto iocp_state_base_for<async_receive_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_receive_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
-                immediately_post();
-                return true;
+                return start_result::completed;
             }
 
             ::WSABUF wsabuf = span_to_wsabuf(buffer);
@@ -450,11 +445,11 @@ namespace coio {
             );
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
-                if (err == WSA_IO_PENDING) return true;
+                if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
-                return false;
+                return start_result::completed;
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -475,15 +470,14 @@ namespace coio {
 
         /// async_send
         template<>
-        auto iocp_state_base_for<async_send_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_send_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
-                immediately_post();
-                return true;
+                return start_result::completed;
             }
             
             ::WSABUF wsabuf = span_to_wsabuf(buffer);
@@ -499,11 +493,11 @@ namespace coio {
             );
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
-                if (err == WSA_IO_PENDING) return true;
+                if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
-                return false;
+                return start_result::completed;
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -524,10 +518,10 @@ namespace coio {
 
         /// async_receive_from
         template<>
-        auto iocp_state_base_for<async_receive_from_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_receive_from_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             
             std::memset(&peer_storage, 0, sizeof(peer_storage));
@@ -548,11 +542,11 @@ namespace coio {
             );
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
-                if (err == WSA_IO_PENDING) return true;
+                if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
-                return false;
+                return start_result::completed;
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -573,10 +567,10 @@ namespace coio {
 
         /// async_send_to
         template<>
-        auto iocp_state_base_for<async_send_to_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_send_to_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             
             ::WSABUF wsabuf = span_to_wsabuf(buffer);
@@ -596,11 +590,11 @@ namespace coio {
             );
             if (rc == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
-                if (err == WSA_IO_PENDING) return true;
+                if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
-                return false;
+                return start_result::completed;
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -621,10 +615,10 @@ namespace coio {
 
         /// async_accept
         template<>
-        auto iocp_state_base_for<async_accept_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_accept_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             const auto sock = std::bit_cast<::SOCKET>(handle);
 
@@ -632,7 +626,7 @@ namespace coio {
             int info_length = sizeof(info);
             if (::getsockopt(sock, SOL_SOCKET, SO_PROTOCOL_INFO, reinterpret_cast<char*>(&info), &info_length) == SOCKET_ERROR) {
                 result.set_error(to_error_code(::WSAGetLastError()));
-                return false;
+                return start_result::completed;
             }
 
             accepted = ::WSASocketW(
@@ -646,7 +640,7 @@ namespace coio {
 
             if (accepted == INVALID_SOCKET) {
                 result.set_error(to_error_code(static_cast<::DWORD>(::WSAGetLastError())));
-                return false;
+                return start_result::completed;
             }
             
             ::DWORD bytes_received = 0;
@@ -662,11 +656,11 @@ namespace coio {
             );
             if (not ok) {
                 const int err = ::WSAGetLastError();
-                if (err == WSA_IO_PENDING) return true;
+                if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
-                return false;
+                return start_result::completed;
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>
@@ -689,10 +683,10 @@ namespace coio {
 
         /// async_connect
         template<>
-        auto iocp_state_base_for<async_connect_t>::do_start() noexcept -> bool {
+        auto iocp_state_base_for<async_connect_t>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
 
             const auto sock = std::bit_cast<::SOCKET>(handle);
@@ -708,7 +702,7 @@ namespace coio {
                 &byte_count, nullptr, nullptr) == SOCKET_ERROR)
             {
                 result.set_error(to_error_code(::WSAGetLastError()));
-                return false;
+                return start_result::completed;
             }
 
             {
@@ -716,7 +710,7 @@ namespace coio {
                 int info_length = sizeof(info);
                 if (::getsockopt(sock, SOL_SOCKET, SO_PROTOCOL_INFO, reinterpret_cast<char*>(&info), &info_length) != 0) {
                     result.set_error(to_error_code(::WSAGetLastError()));
-                    return false;
+                    return start_result::completed;
                 }
 
                 ::DWORD err = 0;
@@ -745,7 +739,7 @@ namespace coio {
                 }
                 if (err and err != WSAEINVAL) {
                     result.set_error(to_error_code(err));
-                    return false;
+                    return start_result::completed;
                 }
             }
 
@@ -762,11 +756,11 @@ namespace coio {
             );
             if (not ok) {
                 const int err = ::WSAGetLastError();
-                if (err == WSA_IO_PENDING) return true;
+                if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
-                return false;
+                return start_result::completed;
             }
-            return true;
+            return start_result::pending;
         }
 
         template<>

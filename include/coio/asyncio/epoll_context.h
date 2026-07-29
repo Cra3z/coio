@@ -145,8 +145,12 @@ namespace coio {
                     template<typename... Args>
                     state_base(Rcvr rcvr, Args&&... args) noexcept : base(std::forward<Args>(args)...), rcvr_(std::move(rcvr)) {}
 
-                    COIO_ALWAYS_INLINE auto do_finish(bool) noexcept -> void {
+                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
                         this->result.forward_to(std::move(this->rcvr_));
+                    }
+
+                    COIO_ALWAYS_INLINE auto do_set_stopped() noexcept -> void {
+                        this->result.set_stopped();
                     }
 
                     Rcvr rcvr_;
@@ -262,7 +266,7 @@ namespace coio {
                 static_assert(always_false<Sexpr>, "this operation isn't supported");
             }
 
-            auto do_start() noexcept -> bool {
+            auto do_start() noexcept -> start_result {
                 static_assert(always_false<Sexpr>, "this operation isn't supported");
                 unreachable();
             }
@@ -282,7 +286,7 @@ namespace coio {
 
         /// async_read_some
         template<>
-        auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> start_result;
 
         template<>
         auto epoll_state_base_for<async_read_some_t>::do_perform() noexcept -> bool;
@@ -293,7 +297,7 @@ namespace coio {
 
         /// async_write_some
         template<>
-        auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> start_result;
 
         template<>
         auto epoll_state_base_for<async_write_some_t>::do_perform() noexcept -> bool;
@@ -304,7 +308,7 @@ namespace coio {
 
         /// async_send
         template<>
-        auto epoll_state_base_for<async_send_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_send_t>::do_start() noexcept -> start_result;
 
         template<>
         auto epoll_state_base_for<async_send_t>::do_perform() noexcept -> bool;
@@ -315,7 +319,7 @@ namespace coio {
 
         /// async_receive
         template<>
-        auto epoll_state_base_for<async_receive_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_receive_t>::do_start() noexcept -> start_result;
 
         template<>
         auto epoll_state_base_for<async_receive_t>::do_perform() noexcept -> bool;
@@ -326,7 +330,7 @@ namespace coio {
 
         /// async_receive_from
         template<>
-        auto epoll_state_base_for<async_receive_from_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_receive_from_t>::do_start() noexcept -> start_result;
 
         template<>
         auto epoll_state_base_for<async_receive_from_t>::do_perform() noexcept -> bool;
@@ -337,7 +341,7 @@ namespace coio {
 
         /// async_send_to
         template<>
-        auto epoll_state_base_for<async_send_to_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_send_to_t>::do_start() noexcept -> start_result;
 
         template<>
         auto epoll_state_base_for<async_send_to_t>::do_perform() noexcept -> bool;
@@ -348,7 +352,7 @@ namespace coio {
 
         /// async_accept
         template<>
-        auto epoll_state_base_for<async_accept_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_accept_t>::do_start() noexcept -> start_result;
 
         template<>
         auto epoll_state_base_for<async_accept_t>::do_perform() noexcept -> bool;
@@ -359,7 +363,7 @@ namespace coio {
 
         /// async_connect
         template<>
-        auto epoll_state_base_for<async_connect_t>::do_start() noexcept -> bool;
+        auto epoll_state_base_for<async_connect_t>::do_start() noexcept -> start_result;
 
         template<>
         auto epoll_state_base_for<async_connect_t>::do_perform() noexcept -> bool;

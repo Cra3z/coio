@@ -150,8 +150,8 @@ namespace coio {
 
             flag_guard.reset();
 
-            if (auto ops = ready_time_ops.release()) op_queue_.enqueue(*ops);
-            if (auto ops = ready_io_ops.release()) op_queue_.enqueue(*ops);
+            complete_pending(ready_time_ops.release());
+            complete_pending(ready_io_ops.release());
 
             if (not infinite) {
                 return consume();

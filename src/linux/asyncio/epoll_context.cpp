@@ -158,7 +158,6 @@ namespace coio {
     auto epoll_context::scheduler::io_object::cancel() -> void {
         if (fd_ == -1) return;
         COIO_ASSERT(data_ != nullptr);
-        auto& context = ctx_.get();
         const auto ops = [this]{
             std::scoped_lock _{data_->fd_lock};
             return std::array{
@@ -166,11 +165,9 @@ namespace coio {
                 std::exchange(data_->out_op, nullptr)
             };
         }();
-        const bool has_ops = context.op_queue_.bulk_enqueue(ops |
-            std::views::filter(std::identity{}) |
-            std::views::transform([](auto p) noexcept -> auto& { return *p; })
-        );
-        if (has_ops) context.interrupt();
+        for (auto op : ops) {
+            if (op != nullptr) op->complete_stopped_operation();
+        }
     }
 
     epoll_context::epoll_context(std::pmr::memory_resource& memory_resource): epoll_context(nullptr, memory_resource) {
@@ -249,8 +246,8 @@ namespace coio {
 
             lock.unlock();
 
-            if (auto ops = ready_time_ops.release()) op_queue_.enqueue(*ops);
-            if (auto ops = ready_io_ops.release()) op_queue_.enqueue(*ops);
+            complete_pending(ready_time_ops.release());
+            complete_pending(ready_io_ops.release());
 
             if (not infinite) {
                 return consume();
@@ -278,38 +275,36 @@ namespace coio {
         if (registered_op != nullptr) {
             COIO_ASSERT(op == registered_op);  // if there is a registered operation, it shall be `op`
             fd_lock.unlock();
-            op->immediately_post();
+            op->complete_stopped_operation();
         }
     }
 
     namespace detail {
         /// async_read_some
         template<>
-        auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> bool {
+        auto epoll_state_base_for<async_read_some_t>::do_start() noexcept -> start_result {
             if (fd == -1) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
-                immediately_post();
-                return true;
+                return start_result::completed;
             }
             const ::ssize_t n = ::read(fd, buffer.data(), buffer.size());
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLIN)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
-                        return false;
+                        return start_result::completed;
                     }
-                    return true;
+                    return start_result::pending;
                 }
                 result.set_error(std::error_code{errno, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             result.set_value(n);
-            immediately_post();
-            return true;
+            return start_result::completed;
         }
 
         template<>
@@ -335,31 +330,29 @@ namespace coio {
 
         /// async_write_some
         template<>
-        auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> bool {
+        auto epoll_state_base_for<async_write_some_t>::do_start() noexcept -> start_result {
             if (fd == -1) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             if (buffer.empty()) [[unlikely]] {
                 result.set_value(0);
-                immediately_post();
-                return true;
+                return start_result::completed;
             }
             const ::ssize_t n = ::write(fd, buffer.data(), buffer.size());
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLOUT)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
-                        return false;
+                        return start_result::completed;
                     }
-                    return true;
+                    return start_result::pending;
                 }
                 result.set_error(std::error_code{errno, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             result.set_value(n);
-            immediately_post();
-            return true;
+            return start_result::completed;
         }
 
         template<>
@@ -385,26 +378,25 @@ namespace coio {
 
         /// async_receive
         template<>
-        auto epoll_state_base_for<async_receive_t>::do_start() noexcept -> bool {
+        auto epoll_state_base_for<async_receive_t>::do_start() noexcept -> start_result {
             if (fd == -1) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             const ::ssize_t n = ::recv(fd, buffer.data(), buffer.size(), MSG_DONTWAIT);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLIN)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
-                        return false;
+                        return start_result::completed;
                     }
-                    return true;
+                    return start_result::pending;
                 }
                 result.set_error(std::error_code{errno, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             result.set_value(n);
-            immediately_post();
-            return true;
+            return start_result::completed;
         }
 
         template<>
@@ -430,26 +422,25 @@ namespace coio {
 
         /// async_send
         template<>
-        auto epoll_state_base_for<async_send_t>::do_start() noexcept -> bool {
+        auto epoll_state_base_for<async_send_t>::do_start() noexcept -> start_result {
             if (fd == -1) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             const ::ssize_t n = ::send(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
             if (n == -1) {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLOUT)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
-                        return false;
+                        return start_result::completed;
                     }
-                    return true;
+                    return start_result::pending;
                 }
                 result.set_error(std::error_code{errno, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             result.set_value(n);
-            immediately_post();
-            return true;
+            return start_result::completed;
         }
 
         template<>
@@ -475,10 +466,10 @@ namespace coio {
 
         /// async_receive_from
         template<>
-        auto epoll_state_base_for<async_receive_from_t>::do_start() noexcept -> bool {
+        auto epoll_state_base_for<async_receive_from_t>::do_start() noexcept -> start_result {
             if (fd == -1) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             ::socklen_t len = sizeof(peer);
             const ::ssize_t n = ::recvfrom(
@@ -489,16 +480,15 @@ namespace coio {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLIN)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
-                        return false;
+                        return start_result::completed;
                     }
-                    return true;
+                    return start_result::pending;
                 }
                 result.set_error(std::error_code{errno, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             result.set_value(sockaddr_storage_to_endpoint(peer), n);
-            immediately_post();
-            return true;
+            return start_result::completed;
         }
 
         template<>
@@ -528,10 +518,10 @@ namespace coio {
 
         /// async_send_to
         template<>
-        auto epoll_state_base_for<async_send_to_t>::do_start() noexcept -> bool {
+        auto epoll_state_base_for<async_send_to_t>::do_start() noexcept -> start_result {
             if (fd == -1) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             auto sa = endpoint_to_sockaddr_in(peer);
             auto [psa, len] = to_sockaddr(sa);
@@ -540,16 +530,15 @@ namespace coio {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLOUT)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
-                        return false;
+                        return start_result::completed;
                     }
-                    return true;
+                    return start_result::pending;
                 }
                 result.set_error(std::error_code{errno, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             result.set_value(n);
-            immediately_post();
-            return true;
+            return start_result::completed;
         }
 
         template<>
@@ -577,26 +566,25 @@ namespace coio {
 
         /// async_accept
         template<>
-        auto epoll_state_base_for<async_accept_t>::do_start() noexcept -> bool {
+        auto epoll_state_base_for<async_accept_t>::do_start() noexcept -> start_result {
             if (fd == -1) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             const int accepted = ::accept4(fd, nullptr, nullptr, SOCK_NONBLOCK);
             if (accepted == -1) {
                 if (is_blocking_errno(errno)) {
                     if (not register_event(EPOLLIN)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
-                        return false;
+                        return start_result::completed;
                     }
-                    return true;
+                    return start_result::pending;
                 }
                 result.set_error(std::error_code{errno, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             result.set_value(accepted);
-            immediately_post();
-            return true;
+            return start_result::completed;
         }
 
         template<>
@@ -622,20 +610,20 @@ namespace coio {
 
         /// async_connect
         template<>
-        auto epoll_state_base_for<async_connect_t>::do_start() noexcept -> bool {
+        auto epoll_state_base_for<async_connect_t>::do_start() noexcept -> start_result {
             if (fd == -1) [[unlikely]] {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
-                return false;
+                return start_result::completed;
             }
             const auto flags = ::fcntl(fd, F_GETFL);
             if (flags == -1) [[unlikely]] {
                 result.set_error(std::error_code{errno, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             if ((flags & O_NONBLOCK) == 0) {
                 if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) [[unlikely]] {
                     result.set_error(std::error_code{errno, std::system_category()});
-                    return false;
+                    return start_result::completed;
                 }
             }
             auto sa = endpoint_to_sockaddr_in(peer);
@@ -644,23 +632,22 @@ namespace coio {
             if ((flags & O_NONBLOCK) == 0) {
                 if (::fcntl(fd, F_SETFL, flags) == -1) [[unlikely]] {
                     result.set_error(std::error_code{errno, std::system_category()});
-                    return false;
+                    return start_result::completed;
                 }
             }
             if (ec != 0) {
                 if (ec == EINPROGRESS or ec == EAGAIN) {
                     if (not register_event(EPOLLOUT)) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
-                        return false;
+                        return start_result::completed;
                     }
-                    return true;
+                    return start_result::pending;
                 }
                 result.set_error(std::error_code{ec, std::system_category()});
-                return false;
+                return start_result::completed;
             }
             result.set_value();
-            immediately_post();
-            return true;
+            return start_result::completed;
         }
 
         template<>
