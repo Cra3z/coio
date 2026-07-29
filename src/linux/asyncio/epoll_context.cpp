@@ -166,7 +166,7 @@ namespace coio {
             };
         }();
         for (auto op : ops) {
-            if (op != nullptr) op->complete_stopped_operation();
+            if (op != nullptr) op->publish();
         }
     }
 
@@ -246,8 +246,8 @@ namespace coio {
 
             lock.unlock();
 
-            complete_pending(ready_time_ops.release());
-            complete_pending(ready_io_ops.release());
+            publish_pending(ready_time_ops.release());
+            publish_pending(ready_io_ops.release());
 
             if (not infinite) {
                 return consume();
@@ -275,7 +275,7 @@ namespace coio {
         if (registered_op != nullptr) {
             COIO_ASSERT(op == registered_op);  // if there is a registered operation, it shall be `op`
             fd_lock.unlock();
-            op->complete_stopped_operation();
+            op->publish();
         }
     }
 

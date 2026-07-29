@@ -37,9 +37,6 @@ namespace coio {
             struct waiting_list {
                 auto add(node_t& node) noexcept -> int {
                     std::scoped_lock _{mtx};
-                    if (node.cancel_deferred()) {
-                        return -ERROR_OPERATION_ABORTED;
-                    }
                     auto old_head = head;
                     if (old_head == nullptr) {
                         return node.signum_;

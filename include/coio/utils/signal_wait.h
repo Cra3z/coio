@@ -39,10 +39,6 @@ namespace coio {
 
             auto do_cancel() noexcept -> void;
 
-            auto cancel_deferred() const noexcept -> bool {
-                return phase_.load(std::memory_order_acquire) == detail::operation_phase::cancel_deferred;
-            }
-
             int signum_;
             const finish_fn_t finish_;
             std::atomic<detail::operation_phase> phase_{detail::operation_phase::starting};
@@ -68,13 +64,6 @@ namespace coio {
                 if constexpr (not unstoppable_token<stop_token_t>) {
                     auto stop_token = coio::get_stop_token(execution::get_env(rcvr));
                     stop_cb.emplace(stop_token, std::bind_front(&op_state::request_cancel, this));
-                }
-
-                if (phase_.load(std::memory_order_acquire) == detail::operation_phase::cancel_deferred) {
-                    result_ = -ECANCELED;
-                    phase_.store(detail::operation_phase::completed, std::memory_order_release);
-                    deliver(this);
-                    return;
                 }
 
                 if (not detail::is_available_signal(signum_)) {

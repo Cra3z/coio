@@ -211,8 +211,8 @@ namespace coio {
                 ready_io_ops.push_back(*op);
             }
 
-            complete_pending(ready_time_ops.release());
-            complete_pending(ready_io_ops.release());
+            publish_pending(ready_time_ops.release());
+            publish_pending(ready_io_ops.release());
 
             if (not infinite) {
                 return consume();

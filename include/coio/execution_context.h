@@ -21,16 +21,16 @@ namespace coio {
     class task;
 
     namespace detail {
-        enum class operation_phase : std::uint8_t {
+        enum class operation_phase : unsigned char {
             starting,
             armed,
             cancel_deferred,
-            completed,
+            completed
         };
 
-        enum class start_result : std::uint8_t {
+        enum class start_result : unsigned char {
             completed,
-            pending,
+            pending
         };
 
         template<typename Ctx>
@@ -48,10 +48,6 @@ namespace coio {
 
                 virtual auto finish() -> void = 0;
 
-                virtual auto complete_operation() noexcept -> void = 0;
-
-                virtual auto complete_stopped_operation() noexcept -> void = 0;
-
                 COIO_ALWAYS_INLINE auto immediately_post() -> void {
                     COIO_ASSERT(next_ == nullptr);
                     auto& context = context_;
@@ -59,10 +55,38 @@ namespace coio {
                     context.interrupt();
                 }
 
+                auto publish() noexcept -> void {
+                    const auto previous = phase_.exchange(operation_phase::completed, std::memory_order_acq_rel);
+                    COIO_ASSERT(previous != operation_phase::completed);
+                    if (previous == operation_phase::armed) {
+                        immediately_post();
+                    }
+                }
+
                 Ctx& context_;
                 node* next_{};
+                std::atomic<operation_phase> phase_{operation_phase::starting};
             };
 
+            /// operation_phase state machine:
+            ///
+            /// [starting]
+            ///   |-- request_cancel() --------------------------> [cancel_deferred]
+            ///   |-- backend remains pending -------------------> [armed]
+            ///   `-- publish() ---------------------------------> [completed] (start posts)
+            ///
+            /// [cancel_deferred]
+            ///   |-- do_start() completes / publish() ----------> [completed] (start posts)
+            ///   `-- do_start() remains pending / do_cancel()
+            ///         |-- cancellation publishes --------------> [completed] (start posts)
+            ///         `-- backend remains pending -------------> [armed]
+            ///
+            /// [armed]
+            ///   |-- request_cancel() / do_cancel() ------------> [armed]
+            ///   `-- publish() ---------------------------------> [completed] (publisher posts)
+            ///
+            /// [completed]
+            ///   `-- request_cancel() --------------------------> [completed] (ignored)
             template<typename Base>
             class operation_state : public Base {
             private:
@@ -84,21 +108,13 @@ namespace coio {
                         );
                     }
 
-                    if (phase_.load(std::memory_order_acquire) == operation_phase::cancel_deferred) {
-                        this->do_set_stopped();
-                        phase_.store(operation_phase::completed, std::memory_order_release);
-                        post_as_last_action();
-                        return;
-                    }
-
                     if (this->do_start() == start_result::completed) {
-                        complete_operation();
-                        post_as_last_action();
-                        return;
+                        this->publish();
+                        return this->immediately_post();
                     }
 
                     auto expected = operation_phase::starting;
-                    if (phase_.compare_exchange_strong(
+                    if (this->phase_.compare_exchange_strong(
                         expected,
                         operation_phase::armed,
                         std::memory_order_release,
@@ -110,7 +126,7 @@ namespace coio {
                     if (expected == operation_phase::cancel_deferred) {
                         this->do_cancel();
                         expected = operation_phase::cancel_deferred;
-                        if (phase_.compare_exchange_strong(
+                        if (this->phase_.compare_exchange_strong(
                             expected,
                             operation_phase::armed,
                             std::memory_order_release,
@@ -121,7 +137,7 @@ namespace coio {
                     }
 
                     COIO_ASSERT(expected == operation_phase::completed);
-                    post_as_last_action();
+                    return this->immediately_post();
                 }
 
                 auto finish() -> void override {
@@ -130,24 +146,11 @@ namespace coio {
                     this->do_finish();
                 }
 
-                auto complete_operation() noexcept -> void override {
-                    const auto previous = phase_.exchange(operation_phase::completed, std::memory_order_acq_rel);
-                    COIO_ASSERT(previous != operation_phase::completed);
-                    if (previous == operation_phase::armed) {
-                        this->immediately_post();
-                    }
-                }
-
-                auto complete_stopped_operation() noexcept -> void override {
-                    this->do_set_stopped();
-                    complete_operation();
-                }
-
             protected:
                 auto request_cancel() noexcept -> void {
-                    auto phase = phase_.load(std::memory_order_acquire);
+                    auto phase = this->phase_.load(std::memory_order_acquire);
                     while (phase == operation_phase::starting) {
-                        if (phase_.compare_exchange_weak(
+                        if (this->phase_.compare_exchange_weak(
                             phase,
                             operation_phase::cancel_deferred,
                             std::memory_order_acq_rel,
@@ -162,13 +165,7 @@ namespace coio {
                 }
 
             private:
-                COIO_ALWAYS_INLINE auto post_as_last_action() noexcept -> void {
-                    COIO_ASSERT(phase_.load(std::memory_order_acquire) == operation_phase::completed);
-                    this->immediately_post();
-                }
-
                 using callback_t = decltype(std::bind_front(&operation_state::request_cancel, std::declval<operation_state*>()));
-                std::atomic<operation_phase> phase_{operation_phase::starting};
                 std::optional<stop_callback_for_t<stop_token_t, callback_t>> stop_cb_;
             };
 
@@ -196,18 +193,12 @@ namespace coio {
                     }
 
                     COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
-                        if (stopped_) execution::set_stopped(std::move(rcvr_));
-                        else execution::set_value(std::move(rcvr_));
+                        execution::set_value(std::move(rcvr_));
                     }
 
                     COIO_ALWAYS_INLINE static auto do_cancel() noexcept -> void {}
 
-                    COIO_ALWAYS_INLINE auto do_set_stopped() noexcept -> void {
-                        stopped_ = true;
-                    }
-
                     Rcvr rcvr_;
-                    bool stopped_ = false;
                 };
 
                 template<typename Rcvr>
@@ -224,22 +215,9 @@ namespace coio {
                     return env{*ctx_};
                 }
 
-                template<similar_to<schedule_sender>>
+                template<similar_to<schedule_sender>, typename...>
                 static consteval auto get_completion_signatures() noexcept -> completion_signatures {
                     return {};
-                }
-
-                template<similar_to<schedule_sender>, typename Env>
-                static consteval auto get_completion_signatures() noexcept {
-                    if constexpr (not unstoppable_token<stop_token_of_t<Env>>) {
-                        return execution::completion_signatures<
-                            execution::set_value_t(),
-                            execution::set_stopped_t()
-                        >{};
-                    }
-                    else {
-                        return completion_signatures{};
-                    }
                 }
 
                 template<execution::receiver Rcvr>
@@ -281,22 +259,19 @@ namespace coio {
                     }
 
                     auto do_finish() noexcept -> void {
-                        if (stopped_) execution::set_stopped(std::move(rcvr_));
+                        if (canceled_) execution::set_stopped(std::move(rcvr_));
                         else execution::set_value(std::move(rcvr_));
                     }
 
                     auto do_cancel() noexcept -> void {
                         if (this->context_.timer_queue_.remove(*this)) {
-                            this->complete_stopped_operation();
+                            canceled_ = true;
+                            this->publish();
                         }
                     }
 
-                    COIO_ALWAYS_INLINE auto do_set_stopped() noexcept -> void {
-                        stopped_ = true;
-                    }
-
                     Rcvr rcvr_;
-                    bool stopped_ = false;
+                    bool canceled_ = false;
                 };
 
                 template<typename Rcvr>
@@ -493,10 +468,10 @@ namespace coio {
             }
 
         protected:
-            COIO_ALWAYS_INLINE static auto complete_pending(node* op) noexcept -> void {
+            COIO_ALWAYS_INLINE static auto publish_pending(node* op) noexcept -> void {
                 while (op != nullptr) {
                     auto next = std::exchange(op->next_, nullptr);
-                    op->complete_operation();
+                    op->publish();
                     op = next;
                 }
             }
@@ -593,7 +568,7 @@ namespace coio {
                 detail::intrusive_list<node> ready_time_ops{&node::next_};
                 timer_queue_.take_ready_timers(ready_time_ops);
 
-                complete_pending(ready_time_ops.release());
+                publish_pending(ready_time_ops.release());
 
                 if (not infinite) {
                     return consume();

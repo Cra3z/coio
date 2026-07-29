@@ -43,7 +43,9 @@ This document describes the public API of **coio**. It is intended to be a stabl
 ### Stop tokens and cancellation
 
 - Many async operations support cooperative cancellation by [stop token](https://eel.is/c++draft/thread.stoptoken).
-- Cancellation follows the sender/receiver contract: cancellation completes with `set_stopped()`.
+- A stop request asks the backend to cancel; it does not overwrite an actual target-operation result.
+- The receiver gets `set_stopped()` only when the cancellation path wins, for example when a pending operation is synchronously removed or the target backend reports cancellation. A target success or ordinary error remains `set_value()` or `set_error()` even if stop was requested first.
+- A stop request that already exists at `start()` does not skip backend initiation. An immediate target result wins; if the operation remains pending, coio then asks the backend to cancel it.
 
 ---
 
@@ -133,12 +135,12 @@ auto fibonacci(std::size_t n) -> coio::generator<int> {
 
 All execution contexts (`time_loop`, `epoll_context`, `uring_context` and `iocp_context`) share these guarantees:
 
-- `run()` / `run_one()` can be called concurrently from multiple threads.
-- `poll()` / `poll_one()` can be called concurrently from multiple threads.
+- At most one thread may be inside `run()`, `run_one()`, `poll()` or `poll_one()` for a context at a time. A concurrent consumer call terminates the process.
+- Other threads may concurrently start operations or request stop.
 - `get_scheduler()` is thread-safe.
 - `request_stop()` is thread-safe.
 
-Work submitted to the context may be executed by **any** thread currently calling `run()`/`poll()`.
+Work submitted to the context is completed by its active `run()`/`poll()` consumer thread.
 
 ### 4.2 time_loop
 
@@ -283,8 +285,8 @@ Be careful with the term "concurrency":
 
 Like Asio sockets/streams, coio socket/acceptor objects are **not thread-safe**. In other words, **member functions must not be called concurrently** on the same socket/acceptor from multiple threads unless you provide external synchronization.
 
-If you drive the owning execution context from a single thread, and ensure all socket/acceptor
-operations are initiated from work running on that thread, that thread acts as an
+If all socket/acceptor operations are initiated from work running on the owning execution
+context's consumer thread, that thread acts as an
 "implicit strand" (operations are serialized by construction).
 
 This thread-safety rule is independent of how many operations may be outstanding.
@@ -315,9 +317,9 @@ co_await when_all(
 );
 ```
 
-If you drive an execution context from multiple threads, ensure **all initiating calls for a
-given socket/acceptor are serialized** (e.g. a mutex, or funneling initiation through a single
-owning thread/task).
+Operations may be initiated from threads other than the context consumer, but **all initiating
+calls for a given socket/acceptor must still be serialized** (e.g. a mutex, or funneling
+initiation through a single owning thread/task).
 
 ### EOF behavior
 
@@ -347,7 +349,7 @@ These primitives suspend coroutines instead of blocking threads.
 
 ## 11. Thread safety (summary)
 
-- Execution contexts: thread-safe `run/poll/get_scheduler/request_stop`.
+- Execution contexts: one active `run/poll` consumer per context; `get_scheduler`, operation initiation, and `request_stop` may be used concurrently from other threads.
 - Sync primitives: safe across coroutines potentially running on different threads.
 - `async_scope`: safe to `spawn()` from multiple threads.
 - Sockets/acceptors: **not thread-safe**; do not call member functions concurrently on the same object without external synchronization. Also follow the per-object outstanding-operation limits described above.

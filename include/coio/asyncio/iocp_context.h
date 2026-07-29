@@ -141,10 +141,6 @@ namespace coio {
                         this->result.forward_to(std::move(this->rcvr_));
                     }
 
-                    COIO_ALWAYS_INLINE auto do_set_stopped() noexcept -> void {
-                        this->result.set_stopped();
-                    }
-
                     Rcvr rcvr_;
                 };
 
