@@ -66,7 +66,7 @@ namespace coio {
         }
     }
 
-    auto epoll_context::epoll_node::register_event(int event_type) noexcept -> bool {
+    auto epoll_context::epoll_node::register_event(int event_type) noexcept -> register_result {
         std::scoped_lock _{data->fd_lock};
         const bool in_op_registered = data->in_op;
         const bool out_op_registered = data->out_op;
@@ -77,6 +77,15 @@ namespace coio {
             COIO_ASSERT(not out_op_registered && "an asynchronous output operation shall be initiated after another output operation has completed.");
         }
         else unreachable();
+
+        // under EPOLLET an edge reported while no op claims it is recorded by do_one into
+        // `ready_events`; consume it here and make the caller retry the I/O, otherwise the
+        // edge would be lost forever whenever the unchanged mask lets us skip epoll_ctl below
+        const std::uint32_t interest = event_type | EPOLLERR | EPOLLHUP;
+        if (data->ready_events & interest) {
+            data->ready_events &= ~interest;
+            return register_result::ready;
+        }
 
         std::uint32_t ev = event_type | EPOLLET;
         int epoll_ctl_op = data->events == 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
@@ -103,8 +112,9 @@ namespace coio {
             else if (event_type == EPOLLOUT) {
                 data->out_op = this;
             }
+            return register_result::armed;
         }
-        return ok;
+        return register_result::failure;
     }
 
 
@@ -137,6 +147,8 @@ namespace coio {
 
     epoll_context::scheduler::io_object::~io_object() {
         cancel();
+        // contract: an io_object whose fd is still registered with epoll must be release()d before destruction
+        COIO_ASSERT(data_ == nullptr or data_->events == 0);
         ctx_.get().reclaim_epoll_data(data_);
     }
 
@@ -146,9 +158,10 @@ namespace coio {
         epoll_context& context = ctx_;
         cancel();
         {
-            std::scoped_lock _{context.mtx_, data_->fd_lock};
+            std::scoped_lock _{data_->fd_lock};
             if (data_->events != 0) {
-                detail::throw_last_error(::epoll_ctl(context.epoll_fd_, EPOLL_CTL_DEL, fd_, nullptr));
+                static_cast<void>(::epoll_ctl(context.epoll_fd_, EPOLL_CTL_DEL, fd_, nullptr));
+                data_->events = 0;
             }
         }
         context.reclaim_epoll_data(std::exchange(data_, nullptr));
@@ -198,8 +211,6 @@ namespace coio {
                 return true;
             }
 
-            std::unique_lock lock{mtx_};
-
             if (work_count_ == 0) break;
 
             int timeout = infinite ? -1 : 0;
@@ -226,7 +237,6 @@ namespace coio {
                     interrupter_.reset();
                     continue;
                 }
-
                 const auto fd_data = static_cast<per_fd_data*>(data.ptr);
                 std::scoped_lock _{fd_data->fd_lock};
                 std::array ops{
@@ -237,14 +247,16 @@ namespace coio {
                 for (auto [ev, op_ref] : ops) {
                     auto& op = op_ref.get();
                     if (event & (ev | EPOLLERR | EPOLLHUP)) {
-                        if (op == nullptr or not op->perform()) continue;
+                        if (op == nullptr) {
+                            fd_data->ready_events |= event & (ev | EPOLLERR | EPOLLHUP);
+                            continue;
+                        }
+                        if (not op->perform()) continue;
                         ready_io_ops.push_back(*op);
                         op = nullptr;
                     }
                 }
             }
-
-            lock.unlock();
 
             publish_pending(ready_time_ops.release());
             publish_pending(ready_io_ops.release());
@@ -257,23 +269,30 @@ namespace coio {
     }
 
     auto epoll_context::new_epoll_data() -> per_fd_data* {
-        return allocator_.new_object<per_fd_data>();
+        const auto data = data_pool_.acquire();
+        // serialize with straggling stale accessors before recycling the entry
+        std::scoped_lock _{data->fd_lock};
+        data->events = 0;
+        data->ready_events = 0;
+        data->in_op = nullptr;
+        data->out_op = nullptr;
+        data->next_free = nullptr;
+        return data;
     }
 
     auto epoll_context::reclaim_epoll_data(per_fd_data* data) noexcept -> void {
         if (data == nullptr) return;
-        return allocator_.delete_object(data);
+        data_pool_.release(*data);
     }
 
     auto epoll_context::cancel_op(int event, epoll_node* op) -> void {
         COIO_ASSERT(op != nullptr and op->data != nullptr);
         std::unique_lock fd_lock{op->data->fd_lock};
-        const auto registered_op = event == EPOLLIN ?
-            std::exchange(op->data->in_op, nullptr) :
-            std::exchange(op->data->out_op, nullptr);
-
-        if (registered_op != nullptr) {
-            COIO_ASSERT(op == registered_op);  // if there is a registered operation, it shall be `op`
+        auto& registered_op = event == EPOLLIN ? op->data->in_op : op->data->out_op;
+        // `data` may have been recycled for another fd, in which case the slot belongs
+        // to someone else's operation: only clear it when it is still ours
+        if (registered_op == op) {
+            registered_op = nullptr;
             fd_lock.unlock();
             op->publish();
         }
@@ -291,20 +310,26 @@ namespace coio {
                 result.set_value(0);
                 return start_result::completed;
             }
-            const ::ssize_t n = ::read(fd, buffer.data(), buffer.size());
-            if (n == -1) {
-                if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLIN)) [[unlikely]] {
-                        result.set_error(std::error_code{errno, std::system_category()});
-                        return start_result::completed;
+            while (true) {
+                const ::ssize_t n = ::read(fd, buffer.data(), buffer.size());
+                if (n == -1) {
+                    if (is_blocking_errno(errno)) {
+                        switch (register_event(EPOLLIN)) {
+                        case register_result::armed:
+                            return start_result::pending;
+                        case register_result::ready:
+                            continue; // consume a previously skipped edge, retry the I/O
+                        case register_result::failure:
+                            result.set_error(std::error_code{errno, std::system_category()});
+                            return start_result::completed;
+                        }
                     }
-                    return start_result::pending;
+                    result.set_error(std::error_code{errno, std::system_category()});
+                    return start_result::completed;
                 }
-                result.set_error(std::error_code{errno, std::system_category()});
+                result.set_value(n);
                 return start_result::completed;
             }
-            result.set_value(n);
-            return start_result::completed;
         }
 
         template<>
@@ -339,20 +364,26 @@ namespace coio {
                 result.set_value(0);
                 return start_result::completed;
             }
-            const ::ssize_t n = ::write(fd, buffer.data(), buffer.size());
-            if (n == -1) {
-                if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLOUT)) [[unlikely]] {
-                        result.set_error(std::error_code{errno, std::system_category()});
-                        return start_result::completed;
+            while (true) {
+                const ::ssize_t n = ::write(fd, buffer.data(), buffer.size());
+                if (n == -1) {
+                    if (is_blocking_errno(errno)) {
+                        switch (register_event(EPOLLOUT)) {
+                        case register_result::armed:
+                            return start_result::pending;
+                        case register_result::ready:
+                            continue; // consume a previously skipped edge, retry the I/O
+                        case register_result::failure:
+                            result.set_error(std::error_code{errno, std::system_category()});
+                            return start_result::completed;
+                        }
                     }
-                    return start_result::pending;
+                    result.set_error(std::error_code{errno, std::system_category()});
+                    return start_result::completed;
                 }
-                result.set_error(std::error_code{errno, std::system_category()});
+                result.set_value(n);
                 return start_result::completed;
             }
-            result.set_value(n);
-            return start_result::completed;
         }
 
         template<>
@@ -383,20 +414,26 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return start_result::completed;
             }
-            const ::ssize_t n = ::recv(fd, buffer.data(), buffer.size(), MSG_DONTWAIT);
-            if (n == -1) {
-                if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLIN)) [[unlikely]] {
-                        result.set_error(std::error_code{errno, std::system_category()});
-                        return start_result::completed;
+            while (true) {
+                const ::ssize_t n = ::recv(fd, buffer.data(), buffer.size(), MSG_DONTWAIT);
+                if (n == -1) {
+                    if (is_blocking_errno(errno)) {
+                        switch (register_event(EPOLLIN)) {
+                        case register_result::armed:
+                            return start_result::pending;
+                        case register_result::ready:
+                            continue; // consume a previously skipped edge, retry the I/O
+                        case register_result::failure:
+                            result.set_error(std::error_code{errno, std::system_category()});
+                            return start_result::completed;
+                        }
                     }
-                    return start_result::pending;
+                    result.set_error(std::error_code{errno, std::system_category()});
+                    return start_result::completed;
                 }
-                result.set_error(std::error_code{errno, std::system_category()});
+                result.set_value(n);
                 return start_result::completed;
             }
-            result.set_value(n);
-            return start_result::completed;
         }
 
         template<>
@@ -427,20 +464,26 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return start_result::completed;
             }
-            const ::ssize_t n = ::send(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
-            if (n == -1) {
-                if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLOUT)) [[unlikely]] {
-                        result.set_error(std::error_code{errno, std::system_category()});
-                        return start_result::completed;
+            while (true) {
+                const ::ssize_t n = ::send(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+                if (n == -1) {
+                    if (is_blocking_errno(errno)) {
+                        switch (register_event(EPOLLOUT)) {
+                        case register_result::armed:
+                            return start_result::pending;
+                        case register_result::ready:
+                            continue; // consume a previously skipped edge, retry the I/O
+                        case register_result::failure:
+                            result.set_error(std::error_code{errno, std::system_category()});
+                            return start_result::completed;
+                        }
                     }
-                    return start_result::pending;
+                    result.set_error(std::error_code{errno, std::system_category()});
+                    return start_result::completed;
                 }
-                result.set_error(std::error_code{errno, std::system_category()});
+                result.set_value(n);
                 return start_result::completed;
             }
-            result.set_value(n);
-            return start_result::completed;
         }
 
         template<>
@@ -471,24 +514,30 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return start_result::completed;
             }
-            ::socklen_t len = sizeof(peer);
-            const ::ssize_t n = ::recvfrom(
-                fd, buffer.data(), buffer.size(), MSG_DONTWAIT,
-                reinterpret_cast<::sockaddr*>(&peer), &len
-            );
-            if (n == -1) {
-                if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLIN)) [[unlikely]] {
-                        result.set_error(std::error_code{errno, std::system_category()});
-                        return start_result::completed;
+            while (true) {
+                ::socklen_t len = sizeof(peer);
+                const ::ssize_t n = ::recvfrom(
+                    fd, buffer.data(), buffer.size(), MSG_DONTWAIT,
+                    reinterpret_cast<::sockaddr*>(&peer), &len
+                );
+                if (n == -1) {
+                    if (is_blocking_errno(errno)) {
+                        switch (register_event(EPOLLIN)) {
+                        case register_result::armed:
+                            return start_result::pending;
+                        case register_result::ready:
+                            continue; // consume a previously skipped edge, retry the I/O
+                        case register_result::failure:
+                            result.set_error(std::error_code{errno, std::system_category()});
+                            return start_result::completed;
+                        }
                     }
-                    return start_result::pending;
+                    result.set_error(std::error_code{errno, std::system_category()});
+                    return start_result::completed;
                 }
-                result.set_error(std::error_code{errno, std::system_category()});
+                result.set_value(sockaddr_storage_to_endpoint(peer), n);
                 return start_result::completed;
             }
-            result.set_value(sockaddr_storage_to_endpoint(peer), n);
-            return start_result::completed;
         }
 
         template<>
@@ -523,22 +572,28 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return start_result::completed;
             }
-            auto sa = endpoint_to_sockaddr_in(peer);
-            auto [psa, len] = to_sockaddr(sa);
-            ::ssize_t n = ::sendto(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
-            if (n == -1) {
-                if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLOUT)) [[unlikely]] {
-                        result.set_error(std::error_code{errno, std::system_category()});
-                        return start_result::completed;
+            while (true) {
+                auto sa = endpoint_to_sockaddr_in(peer);
+                auto [psa, len] = to_sockaddr(sa);
+                ::ssize_t n = ::sendto(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_NOSIGNAL, psa, len);
+                if (n == -1) {
+                    if (is_blocking_errno(errno)) {
+                        switch (register_event(EPOLLOUT)) {
+                        case register_result::armed:
+                            return start_result::pending;
+                        case register_result::ready:
+                            continue; // consume a previously skipped edge, retry the I/O
+                        case register_result::failure:
+                            result.set_error(std::error_code{errno, std::system_category()});
+                            return start_result::completed;
+                        }
                     }
-                    return start_result::pending;
+                    result.set_error(std::error_code{errno, std::system_category()});
+                    return start_result::completed;
                 }
-                result.set_error(std::error_code{errno, std::system_category()});
+                result.set_value(n);
                 return start_result::completed;
             }
-            result.set_value(n);
-            return start_result::completed;
         }
 
         template<>
@@ -571,20 +626,26 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return start_result::completed;
             }
-            const int accepted = ::accept4(fd, nullptr, nullptr, SOCK_NONBLOCK);
-            if (accepted == -1) {
-                if (is_blocking_errno(errno)) {
-                    if (not register_event(EPOLLIN)) [[unlikely]] {
-                        result.set_error(std::error_code{errno, std::system_category()});
-                        return start_result::completed;
+            while (true) {
+                const int accepted = ::accept4(fd, nullptr, nullptr, SOCK_NONBLOCK);
+                if (accepted == -1) {
+                    if (is_blocking_errno(errno)) {
+                        switch (register_event(EPOLLIN)) {
+                        case register_result::armed:
+                            return start_result::pending;
+                        case register_result::ready:
+                            continue; // consume a previously skipped edge, retry the I/O
+                        case register_result::failure:
+                            result.set_error(std::error_code{errno, std::system_category()});
+                            return start_result::completed;
+                        }
                     }
-                    return start_result::pending;
+                    result.set_error(std::error_code{errno, std::system_category()});
+                    return start_result::completed;
                 }
-                result.set_error(std::error_code{errno, std::system_category()});
+                result.set_value(accepted);
                 return start_result::completed;
             }
-            result.set_value(accepted);
-            return start_result::completed;
         }
 
         template<>
@@ -615,39 +676,53 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return start_result::completed;
             }
-            const auto flags = ::fcntl(fd, F_GETFL);
-            if (flags == -1) [[unlikely]] {
-                result.set_error(std::error_code{errno, std::system_category()});
-                return start_result::completed;
-            }
-            if ((flags & O_NONBLOCK) == 0) {
-                if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) [[unlikely]] {
+            bool in_progress = false;
+            while (true) {
+                const auto flags = ::fcntl(fd, F_GETFL);
+                if (flags == -1) [[unlikely]] {
                     result.set_error(std::error_code{errno, std::system_category()});
                     return start_result::completed;
                 }
-            }
-            auto sa = endpoint_to_sockaddr_in(peer);
-            auto [psa, len] = to_sockaddr(sa);
-            const int ec = ::connect(fd, psa, len) == -1 ? errno : 0;
-            if ((flags & O_NONBLOCK) == 0) {
-                if (::fcntl(fd, F_SETFL, flags) == -1) [[unlikely]] {
-                    result.set_error(std::error_code{errno, std::system_category()});
-                    return start_result::completed;
-                }
-            }
-            if (ec != 0) {
-                if (ec == EINPROGRESS or ec == EAGAIN) {
-                    if (not register_event(EPOLLOUT)) [[unlikely]] {
+                if ((flags & O_NONBLOCK) == 0) {
+                    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) [[unlikely]] {
                         result.set_error(std::error_code{errno, std::system_category()});
                         return start_result::completed;
                     }
-                    return start_result::pending;
                 }
-                result.set_error(std::error_code{ec, std::system_category()});
+                auto sa = endpoint_to_sockaddr_in(peer);
+                auto [psa, len] = to_sockaddr(sa);
+                const int ec = ::connect(fd, psa, len) == -1 ? errno : 0;
+                if ((flags & O_NONBLOCK) == 0) {
+                    if (::fcntl(fd, F_SETFL, flags) == -1) [[unlikely]] {
+                        result.set_error(std::error_code{errno, std::system_category()});
+                        return start_result::completed;
+                    }
+                }
+                if (ec != 0) {
+                    // EISCONN on a retry means the connection we initiated completed in the meantime
+                    if (ec == EISCONN and in_progress) {
+                        result.set_value();
+                        return start_result::completed;
+                    }
+                    // a retried ::connect while the connection is still in progress reports EALREADY
+                    if (ec == EINPROGRESS or ec == EALREADY or ec == EAGAIN) {
+                        in_progress = true;
+                        switch (register_event(EPOLLOUT)) {
+                        case register_result::armed:
+                            return start_result::pending;
+                        case register_result::ready:
+                            continue; // consume a previously skipped edge, retry the I/O
+                        case register_result::failure:
+                            result.set_error(std::error_code{errno, std::system_category()});
+                            return start_result::completed;
+                        }
+                    }
+                    result.set_error(std::error_code{ec, std::system_category()});
+                    return start_result::completed;
+                }
+                result.set_value();
                 return start_result::completed;
             }
-            result.set_value();
-            return start_result::completed;
         }
 
         template<>

@@ -8,6 +8,7 @@
 #include <coio/execution_context.h>
 #include <coio/utils/async_result.h>
 #include <coio/detail/io_descriptions.h>
+#include <coio/detail/object_pool.h>
 #include <coio/utils/atomutex.h>
 
 namespace coio {
@@ -50,8 +51,10 @@ namespace coio {
         struct per_fd_data {
             atomutex fd_lock;
             std::uint32_t events{};
+            std::uint32_t ready_events{};
             epoll_node* in_op{nullptr};
             epoll_node* out_op{nullptr};
+            per_fd_data* next_free{nullptr};
         };
 
         class epoll_node : public node {
@@ -60,8 +63,14 @@ namespace coio {
             epoll_node(epoll_context& context, int fd, per_fd_data* data) noexcept : node(context), fd(fd), data(data) {}
 
         protected:
+            enum class register_result : unsigned char {
+                armed,
+                ready,
+                failure
+            };
+
             [[nodiscard]]
-            auto register_event(int event_type) noexcept -> bool;
+            auto register_event(int event_type) noexcept -> register_result;
 
         private:
             virtual auto perform() noexcept -> bool = 0;
@@ -205,7 +214,7 @@ namespace coio {
 
     private:
         explicit epoll_context(std::nullptr_t, std::pmr::memory_resource& memory_resource) noexcept :
-            loop_base(memory_resource), epoll_fd_(-1) {}
+            loop_base(memory_resource), epoll_fd_(-1), data_pool_(allocator_) {}
 
     public:
         explicit epoll_context(std::pmr::memory_resource& memory_resource = *std::pmr::get_default_resource());
@@ -228,7 +237,9 @@ namespace coio {
 
     private:
         int epoll_fd_;
-        atomutex mtx_;
+        // entries are recycled, never freed while the context lives, so straggling
+        // references (fetched event batches, stop callbacks) cannot dangle
+        detail::object_pool<per_fd_data, &per_fd_data::next_free, std::pmr::polymorphic_allocator<>> data_pool_;
         detail::reactor_interrupter interrupter_;
     };
 
