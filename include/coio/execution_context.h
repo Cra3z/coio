@@ -319,26 +319,6 @@ namespace coio {
             };
 
         private:
-            class consumer_guard {
-            public:
-                explicit consumer_guard(loop_base& context) noexcept : context_(context) {
-                    if (context_.consumer_active_.test_and_set(std::memory_order_acquire)) {
-                        std::terminate();
-                    }
-                }
-
-                consumer_guard(const consumer_guard&) = delete;
-
-                ~consumer_guard() {
-                    context_.consumer_active_.clear(std::memory_order_release);
-                }
-
-                auto operator=(const consumer_guard&) -> consumer_guard& = delete;
-
-            private:
-                loop_base& context_;
-            };
-
             class scheduler_base {
             public:
                 using scheduler_concept = execution::scheduler_tag;
@@ -436,13 +416,11 @@ namespace coio {
             }
 
             auto poll_one() -> bool {
-                consumer_guard guard{*this};
                 auto self = static_cast<Ctx*>(this);
                 return self->do_one(false);
             }
 
             auto poll() -> std::size_t {
-                consumer_guard guard{*this};
                 auto self = static_cast<Ctx*>(this);
                 std::size_t count = 0;
                 while (self->do_one(false)) {
@@ -452,13 +430,11 @@ namespace coio {
             }
 
             auto run_one() -> bool {
-                consumer_guard guard{*this};
                 auto self = static_cast<Ctx*>(this);
                 return self->do_one(true);
             }
 
             auto run() -> std::size_t {
-                consumer_guard guard{*this};
                 auto self = static_cast<Ctx*>(this);
                 std::size_t count = 0;
                 while (self->do_one(true)) {
@@ -493,7 +469,6 @@ namespace coio {
             op_queue op_queue_;
             timer_queue timer_queue_{allocator_};
             std::atomic<std::size_t> work_count_{0};
-            std::atomic_flag consumer_active_ = ATOMIC_FLAG_INIT;
         };
     }
 

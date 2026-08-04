@@ -199,6 +199,9 @@ namespace coio {
         struct uring_sexpr_wrapper<async_send_to_t> {
             struct type {
                 type(async_send_to_t s) noexcept;
+                // `msg` stores pointers into `peer`/`buffer`: the object must stay at its construction address
+                type(const type&) = delete;
+                auto operator= (const type&) -> type& = delete;
                 std::variant<::sockaddr_in, ::sockaddr_in6> peer;
                 ::iovec buffer;
                 ::msghdr msg;
@@ -209,6 +212,9 @@ namespace coio {
         struct uring_sexpr_wrapper<async_receive_from_t> {
             struct type {
                 type(async_receive_from_t s) noexcept;
+                // `msg` stores pointers into `peer`/`buffer`: the object must stay at its construction address
+                type(const type&) = delete;
+                auto operator= (const type&) -> type& = delete;
                 ::sockaddr_storage peer;
                 ::iovec buffer;
                 ::msghdr msg;

@@ -239,7 +239,6 @@ namespace coio {
 
     private:
         ::HANDLE iocp_;
-        atomutex bolt_;
     };
 
     namespace detail {

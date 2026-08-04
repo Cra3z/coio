@@ -1,8 +1,10 @@
 // ReSharper disable CppMemberFunctionMayBeConst
 #include <coio/detail/config.h>
 #if COIO_HAS_EPOLL
+#include <algorithm>
 #include <ranges>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/stat.h>
@@ -215,12 +217,11 @@ namespace coio {
 
             int timeout = infinite ? -1 : 0;
             if (infinite) {
-                using milliseconds = std::chrono::duration<int, std::milli>;
                 if (const auto earliest = timer_queue_.earliest()) {
                     const auto now = std::chrono::steady_clock::now();
-                    const auto msec = std::chrono::duration_cast<milliseconds>(*earliest - now).count();
-                    timeout = std::max(msec, 0);
-                    if (timeout > 0) timeout += 1;
+                    auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(*earliest - now).count();
+                    if (msec > 0) msec += 1; // round up so we never wake just before the deadline and spin
+                    timeout = static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(msec, 0, std::numeric_limits<int>::max()));
                 }
             }
             const int ready_count = ::epoll_wait(epoll_fd_, ready_events, detail::epoll_max_wait_count, timeout);
@@ -727,6 +728,14 @@ namespace coio {
 
         template<>
         auto epoll_state_base_for<async_connect_t>::do_perform() noexcept -> bool {
+            // SO_ERROR reads 0 both when connected and while the handshake is still in
+            // progress, so a stale event delivered to a recycled per_fd_data entry could
+            // complete the connect prematurely; ask a zero-timeout poll whether the
+            // connect has resolved at all before trusting the wakeup
+            ::pollfd pfd{.fd = fd, .events = POLLOUT, .revents = 0};
+            if (::poll(&pfd, 1, 0) == 0) [[unlikely]] {
+                return false;
+            }
             int ec = 0;
             ::socklen_t len = sizeof(ec);
             if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &ec, &len) == -1) {

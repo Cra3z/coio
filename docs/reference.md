@@ -133,12 +133,10 @@ auto fibonacci(std::size_t n) -> coio::generator<int> {
 
 ### 4.1 Thread-safety model
 
-All execution contexts (`time_loop`, `epoll_context`, `uring_context` and `iocp_context`) share these guarantees:
+All execution contexts (`time_loop`, `epoll_context`, `uring_context` and `iocp_context`) are **MPSC** (multi-producer, single-consumer):
 
-- At most one thread may be inside `run()`, `run_one()`, `poll()` or `poll_one()` for a context at a time. A concurrent consumer call terminates the process.
-- Other threads may concurrently start operations or request stop.
-- `get_scheduler()` is thread-safe.
-- `request_stop()` is thread-safe.
+- **Multi-producer**: any thread may concurrently start operations on a context (`schedule()`, `schedule_at()`/`schedule_after()`, `schedule_io()`), and `get_scheduler()`, `work_started()`/`work_finished()` and `request_stop()` are thread-safe.
+- **Single-consumer**: at most one thread may be inside `run()`, `run_one()`, `poll()` or `poll_one()` for a context at a time. This is a precondition and is not checked at runtime: concurrent consumer calls are undefined behavior. The consumer thread may change over the context's lifetime (e.g. `poll()` from one thread, later `run()` from another), provided the earlier call happens-before the later one (thread join, mutex, or similar synchronization).
 
 Work submitted to the context is completed by its active `run()`/`poll()` consumer thread.
 
@@ -349,7 +347,7 @@ These primitives suspend coroutines instead of blocking threads.
 
 ## 11. Thread safety (summary)
 
-- Execution contexts: one active `run/poll` consumer per context; `get_scheduler`, operation initiation, and `request_stop` may be used concurrently from other threads.
+- Execution contexts: **MPSC** — one active `run/poll` consumer per context; `get_scheduler`, operation initiation, and `request_stop` may be used concurrently from other threads.
 - Sync primitives: safe across coroutines potentially running on different threads.
 - `async_scope`: safe to `spawn()` from multiple threads.
 - Sockets/acceptors: **not thread-safe**; do not call member functions concurrently on the same object without external synchronization. Also follow the per-object outstanding-operation limits described above.

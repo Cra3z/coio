@@ -178,19 +178,13 @@ namespace coio {
                 return true;
             }
 
-            std::unique_lock lock{bolt_, std::try_to_lock};
-            if (not lock) {
-                return consume();
-            }
-
-            if (work_count_ == 0) break;
-
             long long timeout = infinite ? INFINITE : 0;
             if (infinite) {
                 if (const auto earliest = timer_queue_.earliest()) {
                     const auto duration = *earliest - std::chrono::steady_clock::now();
-                    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-                    timeout = std::clamp(ms, 0ll, 0xff'ff'ff'ffll);
+                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+                    if (ms > 0) ms += 1; // round up so we never wake just before the deadline and spin
+                    timeout = std::clamp(ms, 0ll, 0xff'ff'ff'fell); // 0xffffffff would be INFINITE
                 }
             }
 
@@ -200,10 +194,12 @@ namespace coio {
             const ::BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, static_cast<::DWORD>(timeout));
             const ::DWORD err = success ? 0 : ::GetLastError();
 
+            if (not success and overlapped == nullptr and err != WAIT_TIMEOUT) [[unlikely]] {
+                throw std::system_error{detail::to_error_code(err), "GetQueuedCompletionStatus"};
+            }
+
             detail::intrusive_list<node> ready_time_ops{&node::next_}, ready_io_ops{&node::next_};
             timer_queue_.take_ready_timers(ready_time_ops);
-
-            lock.unlock();
 
             if (overlapped and key != wake_completion_key) {
                 auto op = static_cast<iocp_node*>(overlapped);
@@ -671,13 +667,18 @@ namespace coio {
                 else result.set_error(to_error_code(error));
                 return;
             }
-            ::setsockopt(
+            if (::setsockopt(
                 accepted,
                 SOL_SOCKET,
                 SO_UPDATE_ACCEPT_CONTEXT,
                 reinterpret_cast<const char*>(&handle),
                 sizeof(handle)
-            );
+            ) == SOCKET_ERROR) [[unlikely]] {
+                const auto err = static_cast<::DWORD>(::WSAGetLastError());
+                ::closesocket(std::exchange(accepted, INVALID_SOCKET));
+                result.set_error(to_error_code(err));
+                return;
+            }
             result.set_value(accepted);
         }
 
@@ -770,13 +771,16 @@ namespace coio {
                 else result.set_error(to_error_code(error));
                 return;
             }
-            ::setsockopt(
+            if (::setsockopt(
                 std::bit_cast<::SOCKET>(handle),
                 SOL_SOCKET,
                 SO_UPDATE_CONNECT_CONTEXT,
                 nullptr,
                 0
-            );
+            ) == SOCKET_ERROR) [[unlikely]] {
+                result.set_error(to_error_code(static_cast<::DWORD>(::WSAGetLastError())));
+                return;
+            }
             result.set_value();
         }
     }

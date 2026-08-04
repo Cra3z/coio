@@ -19,6 +19,17 @@ namespace coio {
             if (const auto ec = ::io_uring_queue_init(entries, &uring, 0u); ec < 0) {
                 throw std::system_error{-ec, std::system_category()};
             }
+            // IORING_OP_SOCKET (opcode 45) shipped in Linux 5.19 together with
+            // IORING_ASYNC_CANCEL_FD/ALL, which fd-scoped cancellation relies on; probing it
+            // also implies IORING_FEAT_EXT_ARG (5.11), required for the lock-free CQ wait
+            ::io_uring_probe probe{};
+            if (::io_uring_register_probe(&uring, &probe, 0) < 0 or probe.last_op < ::IORING_OP_SOCKET) {
+                ::io_uring_queue_exit(&uring);
+                throw std::system_error{
+                    std::make_error_code(std::errc::operation_not_supported),
+                    "coio::uring_context requires Linux kernel 5.19 or newer"
+                };
+            }
         }
 
         [[noreturn]]
