@@ -17,6 +17,8 @@
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
 namespace coio::detail {
+    COIO_MSVC_SUPPRESS_PUSH()
+    COIO_MSVC_IGNORE(4324) // ignore C4324: structure was padded due to alignment specifier
     // Intrusive MPSC queue
     template<typename Op, auto NextAccessor> requires std::is_nothrow_invocable_r_v<Op*, decltype(NextAccessor), Op*>
     class op_queue {
@@ -97,10 +99,10 @@ namespace coio::detail {
         }
 
     private:
-        alignas(std::hardware_destructive_interference_size) std::atomic<Op*> incoming_{};
-        alignas(std::hardware_destructive_interference_size) Op* front_ = nullptr;
+        alignas(64) std::atomic<Op*> incoming_{};
+        alignas(64) Op* front_ = nullptr;
     };
-
+    COIO_MSVC_SUPPRESS_POP()
 
     template<typename Op, std::regular_invocable<const Op&> auto Proj, auto HeapIndexAccessor, typename Allocator = std::allocator<void>>
         requires std::three_way_comparable_with<

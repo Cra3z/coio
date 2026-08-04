@@ -88,9 +88,6 @@ namespace coio {
 
             class io_object {
                 friend scheduler;
-            private:
-                io_object(std::nullptr_t, epoll_context& ctx, int fd);
-
             public:
                 io_object(epoll_context& ctx, int fd);
 
@@ -135,7 +132,7 @@ namespace coio {
             private:
                 std::reference_wrapper<epoll_context> ctx_;
                 int fd_ = -1;
-                per_fd_data* data_;
+                per_fd_data* data_ = nullptr;
             };
 
             template<std::move_constructible Sexpr>
@@ -166,7 +163,7 @@ namespace coio {
 
                 template<execution::receiver Rcvr>
                 COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) && noexcept {
-                    COIO_ASSERT(context != nullptr and data != nullptr);
+                    COIO_ASSERT(context != nullptr);
                     return state<Rcvr>{
                         std::move(rcvr),
                         std::exchange(fd, -1),
@@ -212,10 +209,6 @@ namespace coio {
         template<typename T = void, typename Alloc = void>
         using task = coio::task<T, Alloc, scheduler>;
 
-    private:
-        explicit epoll_context(std::nullptr_t, std::pmr::memory_resource& memory_resource) noexcept :
-            loop_base(memory_resource), epoll_fd_(-1), data_pool_(allocator_) {}
-
     public:
         explicit epoll_context(std::pmr::memory_resource& memory_resource = *std::pmr::get_default_resource());
 
@@ -236,11 +229,11 @@ namespace coio {
         auto cancel_op(int event, epoll_node* op) -> void;
 
     private:
-        int epoll_fd_;
         // entries are recycled, never freed while the context lives, so straggling
         // references (fetched event batches, stop callbacks) cannot dangle
         detail::object_pool<per_fd_data, &per_fd_data::next_free, std::pmr::polymorphic_allocator<>> data_pool_;
         detail::reactor_interrupter interrupter_;
+        int epoll_fd_;
     };
 
     namespace detail {

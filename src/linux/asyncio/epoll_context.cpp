@@ -66,6 +66,14 @@ namespace coio {
                 return false;
             }
         }
+
+        namespace {
+            auto create_epoll() -> int {
+                const auto fd = ::epoll_create1(EPOLL_CLOEXEC);
+                detail::throw_last_error(fd);
+                return fd;
+            }
+        }
     }
 
     auto epoll_context::epoll_node::register_event(int event_type) noexcept -> register_result {
@@ -120,11 +128,7 @@ namespace coio {
     }
 
 
-    epoll_context::scheduler::io_object::io_object(
-        std::nullptr_t, epoll_context& ctx, int fd
-    ) : ctx_(ctx), fd_(fd), data_(ctx.new_epoll_data()) {}
-
-    epoll_context::scheduler::io_object::io_object(epoll_context& ctx, int fd) : io_object(nullptr, ctx, fd) {
+    epoll_context::scheduler::io_object::io_object(epoll_context& ctx, int fd) try : ctx_(ctx), fd_(fd) {
         if (fd == -1) return;
         struct ::stat st{};
         if (::fstat(fd, &st) == -1) [[unlikely]] {
@@ -145,6 +149,11 @@ namespace coio {
                 throw std::system_error{errno, std::system_category(), "fcntl(fd, F_SETFL, ...)"};
             }
         }
+        data_ = ctx_.get().new_epoll_data();
+    }
+    catch (...) {
+        ::close(fd);
+        throw;
     }
 
     epoll_context::scheduler::io_object::~io_object() {
@@ -185,17 +194,16 @@ namespace coio {
         }
     }
 
-    epoll_context::epoll_context(std::pmr::memory_resource& memory_resource): epoll_context(nullptr, memory_resource) {
-        {
-            epoll_fd_ = ::epoll_create1(EPOLL_CLOEXEC);
-            detail::throw_last_error(epoll_fd_);
-        }
-        {
-            ::epoll_event event {
-                .events = std::uint32_t(EPOLLIN | EPOLLET),
-                .data = {.ptr = &interrupter_}
-            };
-            detail::throw_last_error(::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, interrupter_.watcher(), &event));
+    epoll_context::epoll_context(std::pmr::memory_resource& memory_resource) :
+        loop_base(memory_resource), data_pool_(&memory_resource), epoll_fd_(detail::create_epoll())
+    {
+        ::epoll_event event {
+            .events = std::uint32_t(EPOLLIN | EPOLLET),
+            .data = {.ptr = &interrupter_}
+        };
+        if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, interrupter_.watcher(), &event) == -1) [[unlikely]] {
+            ::close(epoll_fd_);
+            throw std::system_error(errno, std::system_category());
         }
     }
 

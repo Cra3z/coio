@@ -155,6 +155,21 @@ namespace coio {
         return n;
     }
 
+    auto iocp_context::scheduler::make_io_object(HANDLE handle) const -> io_object try {
+        return io_object{*ctx_, handle};
+    }
+    catch (...) {
+        ::CloseHandle(handle);
+        throw;
+    }
+
+    auto iocp_context::scheduler::make_io_object(detail::socket_native_handle_type sock) const -> io_object try {
+        return io_object{*ctx_, std::bit_cast<::HANDLE>(sock)};
+    }
+    catch (...) {
+        ::closesocket(sock);
+        throw;
+    }
 
     iocp_context::iocp_context(std::pmr::memory_resource& memory_resource)
         : loop_base(memory_resource) {

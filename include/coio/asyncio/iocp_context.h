@@ -176,14 +176,10 @@ namespace coio {
             using scheduler_base::scheduler_base;
 
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto make_io_object(::HANDLE handle) const -> io_object {
-                return io_object{*ctx_, handle};
-            }
+            auto make_io_object(::HANDLE handle) const -> io_object;
 
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto make_io_object(detail::socket_native_handle_type sock) const -> io_object {
-                return io_object{*ctx_, std::bit_cast<::HANDLE>(sock)};
-            }
+            auto make_io_object(detail::socket_native_handle_type sock) const -> io_object;
 
             template<typename Sexpr>
             COIO_ALWAYS_INLINE static auto transform_sexpr(io_object& obj, Sexpr sexpr) noexcept {
