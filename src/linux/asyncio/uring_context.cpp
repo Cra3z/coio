@@ -279,7 +279,7 @@ namespace coio {
         }
 
         template<>
-        auto uring_state_base_for<async_receive_from_t>::complete(int cqe_res) -> void {
+        auto uring_state_base_for<async_receive_from_t>::complete(int cqe_res) noexcept -> void {
             if (cqe_res < 0) {
                 const std::error_code ec{-cqe_res, std::system_category()};
                 if (ec == std::errc::operation_canceled) {

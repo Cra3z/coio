@@ -28,7 +28,7 @@ namespace coio {
 
             auto do_cancel() -> void;
 
-            virtual auto complete(int cqe_res) -> void = 0;
+            virtual auto complete(int cqe_res) noexcept -> void = 0;
         };
 
     public:
@@ -260,7 +260,7 @@ namespace coio {
                 return start_result::pending;
             }
 
-            auto complete(int cqe_res) -> void override {
+            auto complete(int cqe_res) noexcept -> void override {
                 if (cqe_res < 0) {
                     const std::error_code ec{-cqe_res, std::system_category()};
                     if (ec == std::errc::operation_canceled) {
@@ -314,7 +314,7 @@ namespace coio {
         auto uring_state_base_for<async_receive_from_t>::prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         template<>
-        auto uring_state_base_for<async_receive_from_t>::complete(int cqe_res) -> void;
+        auto uring_state_base_for<async_receive_from_t>::complete(int cqe_res) noexcept -> void;
 
         /// async_send_to
         template<>
