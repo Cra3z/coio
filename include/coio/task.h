@@ -194,8 +194,14 @@ namespace coio {
             }
 
             template<typename... Args>
-            COIO_ALWAYS_INLINE auto await_suspend(std::coroutine_handle<task_promise<Args...>> this_coro) const noexcept -> std::coroutine_handle<> {
-                return this_coro.promise().state_->complete();
+            COIO_ALWAYS_INLINE static auto await_suspend(std::coroutine_handle<task_promise<Args...>> this_coro) noexcept {
+                std::coroutine_handle<> continuation = this_coro.promise().state_->complete();
+#if COIO_CXX_COMPILER_MSVC and _MSC_VER < 1950L
+                /// MSVC bug workaround: see https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric-/1659260
+                continuation.resume();
+#else
+                return continuation;
+#endif
             }
 
             COIO_ALWAYS_INLINE static auto await_resume() noexcept -> void {}
