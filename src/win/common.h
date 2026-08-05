@@ -3,7 +3,10 @@
 #include <WS2tcpip.h>
 #include <MSWSock.h> // IWYU pragma: keep
 #include <Windows.h>
+#include <cstddef>
+#include <span>
 #include <system_error>
+#include <utility>
 #include <variant>
 #include <coio/detail/error.h> // IWYU pragma: keep
 #include <coio/detail/config.h>
@@ -34,6 +37,22 @@ namespace coio::detail {
         else if (err == ERROR_PORT_UNREACHABLE) err = WSAECONNREFUSED;
         if (msg) throw std::system_error(err, std::system_category(), msg);
         throw std::system_error(err, std::system_category());
+    }
+
+    // data-path sync ops (defined in net/socket.cpp and asyncio/file.cpp),
+    // exposed publicly through the io_object member functions
+    auto file_read_at(void* handle, std::size_t offset, std::span<std::byte> buffer) -> std::size_t;
+
+    auto file_write_at(void* handle, std::size_t offset, std::span<const std::byte> buffer) -> std::size_t;
+
+    namespace socket {
+        auto receive(::UINT_PTR handle, std::span<std::byte> buffer) -> std::size_t;
+
+        auto send(::UINT_PTR handle, std::span<const std::byte> buffer) -> std::size_t;
+
+        auto receive_from(::UINT_PTR handle, std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t>;
+
+        auto send_to(::UINT_PTR handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
     }
 
     auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6>;

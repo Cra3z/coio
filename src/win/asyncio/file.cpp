@@ -147,27 +147,12 @@ namespace coio::detail {
         return handle;
     }
 
-    auto file_read(file_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
-        return sync_file_read(handle, buffer, 0, "read_some");
-    }
-
-    auto file_write(file_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
-        return sync_file_write(handle, buffer, 0, "write_some");
-    }
-
     auto file_read_at(file_native_handle_type handle, std::size_t offset, std::span<std::byte> buffer) -> std::size_t {
         return sync_file_read(handle, buffer, offset, "read_some_at");
     }
 
     auto file_write_at(file_native_handle_type handle, std::size_t offset, std::span<const std::byte> buffer) -> std::size_t {
         return sync_file_write(handle, buffer, offset, "write_some_at");
-    }
-
-    auto close_file(file_native_handle_type handle) -> void {
-        if (handle == invalid_file_handle) return;
-        if (not ::CloseHandle(handle)) {
-            throw std::system_error(to_error_code(::GetLastError()), "close");
-        }
     }
 
     auto file_size(file_native_handle_type handle) -> std::size_t {

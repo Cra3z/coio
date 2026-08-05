@@ -66,75 +66,12 @@ namespace coio {
         auto open_file(zstring_view path, open_mode mode, bool random_access) -> file_native_handle_type;
 
         /**
-         * \brief Read data from a file.
-         * \param handle The native file handle.
-         * \param buffer The buffer to receive the data.
-         * \return The number of bytes read.
-         * \throw std::system_error on failure.
-         */
-        auto file_read(file_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t;
-
-        /**
-         * \brief Write data to a file.
-         * \param handle The native file handle.
-         * \param buffer The data to write.
-         * \return The number of bytes written.
-         * \throw std::system_error on failure.
-         */
-        auto file_write(file_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t;
-
-        /**
-         * \brief Read data from a file at a specified offset.
-         * \param handle The native file handle.
-         * \param offset The offset at which to read.
-         * \param buffer The buffer to receive the data.
-         * \return The number of bytes read.
-         * \throw std::system_error on failure.
-         */
-        auto file_read_at(file_native_handle_type handle, std::size_t offset, std::span<std::byte> buffer) -> std::size_t;
-
-        /**
-         * \brief Write data to a file at a specified offset.
-         * \param handle The native file handle.
-         * \param offset The offset at which to write.
-         * \param buffer The data to write.
-         * \return The number of bytes written.
-         * \throw std::system_error on failure.
-         */
-        auto file_write_at(file_native_handle_type handle, std::size_t offset, std::span<const std::byte> buffer) -> std::size_t;
-
-        /**
-         * \brief Close a file.
-         * \param handle The native file handle to close.
-         * \throw std::system_error on failure.
-         */
-        auto close_file(file_native_handle_type handle) -> void;
-
-        /**
-         * \brief Seek to a position in a file.
-         * \param handle The native file handle.
-         * \param offset The offset to seek to.
-         * \param whence The position from which to calculate the new position.
-         * \return The new position from the beginning of the file.
-         * \throw std::system_error on failure.
-         */
-        auto file_seek(file_native_handle_type handle, std::size_t offset, seek_whence whence) -> std::size_t;
-
-        /**
          * \brief Get the size of a file.
          * \param handle The native file handle.
          * \return The size of the file in bytes.
          * \throw std::system_error on failure.
          */
         auto file_size(file_native_handle_type handle) -> std::size_t;
-
-        /**
-         * \brief Resize a file.
-         * \param handle The native file handle.
-         * \param new_size The new size of the file in bytes.
-         * \throw std::system_error on failure.
-         */
-        auto file_resize(file_native_handle_type handle, std::size_t new_size) -> void;
 
         /**
          * \brief Synchronize file data and metadata with the storage device.
@@ -168,9 +105,7 @@ namespace coio {
 
             file_base(file_base&& other) = default;
 
-            ~file_base() noexcept {
-                close();
-            }
+            ~file_base() noexcept = default;
 
             auto operator= (file_base other) noexcept -> file_base& {
                 std::ranges::swap(impl_, other.impl_);
@@ -193,19 +128,7 @@ namespace coio {
              * \throw std::system_error on failure.
              */
             COIO_ALWAYS_INLINE auto close() -> void {
-                close_file(release());
-            }
-
-            /**
-             * \brief Release ownership of the native file handle.
-             *
-             * This function causes all outstanding asynchronous operations to finish as soon as possible.
-             * The file object releases ownership of the native handle, which can then be managed externally.
-             * \return The native file handle.
-             */
-            [[nodiscard]]
-            COIO_ALWAYS_INLINE auto release() -> native_handle_type {
-                return impl_.release();
+                impl_.close();
             }
 
             /**
@@ -268,12 +191,7 @@ namespace coio {
              * \throw std::system_error on failure.
              */
             COIO_ALWAYS_INLINE auto read_some(std::span<std::byte> buffer) -> std::size_t {
-                if constexpr (requires { this->impl_.file_read(buffer); }) {
-                    return this->impl_.file_read(buffer);
-                }
-                else {
-                    return detail::file_read(this->native_handle(), buffer);
-                }
+                return this->impl_.read_some(buffer);
             }
 
             /**
@@ -284,10 +202,7 @@ namespace coio {
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
                 return let_value(
-                    this->get_io_scheduler().schedule_io(
-                        this->impl_,
-                        detail::async_read_some_t{buffer}
-                    ),
+                    this->impl_.async_read_some(buffer),
                     [total = buffer.size()](std::size_t bytes_transferred) noexcept {
                         async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                         if (bytes_transferred == 0 and total > 0) [[unlikely]] {
@@ -311,12 +226,7 @@ namespace coio {
              * \throw std::system_error on failure.
              */
             COIO_ALWAYS_INLINE auto write_some(std::span<const std::byte> buffer) -> std::size_t {
-                if constexpr (requires { this->impl_.file_write(buffer); }) {
-                    return this->impl_.file_write(buffer);
-                }
-                else {
-                    return detail::file_write(this->native_handle(), buffer);
-                }
+                return this->impl_.write_some(buffer);
             }
 
             /**
@@ -326,7 +236,7 @@ namespace coio {
              */
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) {
-                return this->get_io_scheduler().schedule_io(this->impl_, detail::async_write_some_t{buffer});
+                return this->impl_.async_write_some(buffer);
             }
         };
 
@@ -349,7 +259,7 @@ namespace coio {
              * \throw std::system_error on failure.
              */
             COIO_ALWAYS_INLINE auto read_some_at(std::size_t offset, std::span<std::byte> buffer) -> std::size_t {
-                return detail::file_read_at(this->native_handle(), offset, buffer);
+                return this->impl_.read_some_at(offset, buffer);
             }
 
             /**
@@ -361,15 +271,9 @@ namespace coio {
              * \param buffer A buffer to receive the data read from the file.
              * \return a sender of `std::size_t` representing the number of bytes read.
              */
-            COIO_ALWAYS_INLINE auto async_read_some_at(
-                std::size_t offset,
-                std::span<std::byte> buffer
-            ) {
+            COIO_ALWAYS_INLINE auto async_read_some_at(std::size_t offset, std::span<std::byte> buffer) {
                 return let_value(
-                    this->get_io_scheduler().schedule_io(
-                        this->impl_,
-                        detail::async_read_some_at_t{offset, buffer}
-                    ),
+                    this->impl_.async_read_some_at(offset, buffer),
                     [total = buffer.size()](std::size_t bytes_transferred) noexcept {
                         async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                         if (bytes_transferred == 0 and total > 0) [[unlikely]] {
@@ -394,7 +298,7 @@ namespace coio {
              * \throw std::system_error on failure.
              */
             COIO_ALWAYS_INLINE auto write_some_at(std::size_t offset, std::span<const std::byte> buffer) -> std::size_t {
-                return detail::file_write_at(this->native_handle(), offset, buffer);
+                return this->impl_.write_some_at(offset, buffer);
             }
 
             /**
@@ -407,10 +311,7 @@ namespace coio {
              * \return a sender of `std::size_t` representing the number of bytes written.
              */
             COIO_ALWAYS_INLINE auto async_write_some_at(std::size_t offset, std::span<const std::byte> buffer) {
-                return this->get_io_scheduler().schedule_io(
-                    this->impl_,
-                    detail::async_write_some_at_t{offset, buffer}
-                );
+                return this->impl_.async_write_some_at(offset, buffer);
             }
         };
     }
@@ -480,12 +381,7 @@ namespace coio {
          * \throw std::system_error on failure.
          */
         COIO_ALWAYS_INLINE auto resize(std::size_t new_size) -> void {
-            if constexpr (requires { this->impl_.file_resize(new_size); }) {
-                return this->impl_.file_resize(new_size);
-            }
-            else {
-                return detail::file_resize(this->native_handle(), new_size);
-            }
+            this->impl_.resize(new_size);
         }
 
         /**
@@ -509,12 +405,7 @@ namespace coio {
          * \throw std::system_error on failure.
          */
         COIO_ALWAYS_INLINE auto seek(std::size_t offset, detail::seek_whence whence) -> std::size_t {
-            if constexpr (requires { this->impl_.file_seek(offset, whence); }) {
-                return this->impl_.file_seek(offset, whence);
-            }
-            else {
-                return detail::file_seek(this->native_handle(), offset, whence);
-            }
+            return this->impl_.seek(offset, whence);
         }
 
         /**
@@ -607,12 +498,7 @@ namespace coio {
          * \throw std::system_error on failure.
          */
         COIO_ALWAYS_INLINE auto resize(std::size_t new_size) -> void {
-            if constexpr (requires { this->impl_.file_resize(new_size); }) {
-                return this->impl_.file_resize(new_size);
-            }
-            else {
-                return detail::file_resize(this->native_handle(), new_size);
-            }
+            this->impl_.resize(new_size);
         }
 
         /**

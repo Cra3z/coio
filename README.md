@@ -25,7 +25,7 @@ A C++ **asynchronous I/O** library based on [sender/receiver model](https://wg21
 - **Utilities** — Timers, concurrent queues, signal handling
 
 > [!NOTE]
-> Some network and async-io facilities are currently only implemented using epoll and io_uring on Linux, and IOCP on Windows.
+> Some network and async-io facilities are currently only implemented using epoll and io_uring on Linux (the io_uring backend requires kernel 5.19 or newer), and IOCP on Windows.
 
 ## Build and Install
 

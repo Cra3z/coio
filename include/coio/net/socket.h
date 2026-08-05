@@ -20,11 +20,7 @@ namespace coio {
             linger_integral l_linger;
         };
 
-        enum class shutdown_type : short {
-            shutdown_send,
-            shutdown_receive,
-            shutdown_both,
-        };
+        using shutdown_type = detail::shutdown_type;
 
         auto set_sockopt(socket_native_handle_type handle, int level, int option_name, std::span<const std::byte> value) -> void;
 
@@ -208,8 +204,6 @@ namespace coio {
         [[nodiscard]]
         auto open(int family, int type, int protocol_id) -> socket_native_handle_type;
 
-        auto close(socket_native_handle_type handle) -> void;
-
         [[nodiscard]]
         auto max_backlog() noexcept -> std::size_t;
 
@@ -228,14 +222,6 @@ namespace coio {
         auto connect(socket_native_handle_type handle, const endpoint& peer) -> void;
 
         auto accept(socket_native_handle_type handle) -> socket_native_handle_type;
-
-        auto receive(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t;
-
-        auto send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t;
-
-        auto receive_from(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::pair<endpoint, size_t>;
-
-        auto send_to(socket_native_handle_type handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
     }
 
     template<typename Protocol, io_scheduler IoScheduler>
@@ -281,9 +267,7 @@ namespace coio {
 
         basic_socket(basic_socket&& other) = default;
 
-        ~basic_socket() noexcept {
-            close();
-        }
+        ~basic_socket() = default;
 
         auto operator= (basic_socket other) noexcept -> basic_socket& {
             std::ranges::swap(impl_, other.impl_);
@@ -317,15 +301,7 @@ namespace coio {
          * \brief close the socket. Any asynchronous send, receive or connect operations will be cancelled immediately.
          */
         COIO_ALWAYS_INLINE auto close() -> void {
-            detail::socket::close(release());
-        }
-
-        /**
-         * \brief release the ownership of the native handle. Any asynchronous send, receive or connect operations will be cancelled immediately.
-         */
-        [[nodiscard]]
-        COIO_ALWAYS_INLINE auto release() -> native_handle_type {
-            return impl_.release();
+            impl_.close();
         }
 
         /**
@@ -343,7 +319,7 @@ namespace coio {
          * \throw std::system_error on failure.
          */
         COIO_ALWAYS_INLINE auto shutdown(shutdown_type how) -> void {
-            return detail::socket::shutdown(native_handle(), how);
+            detail::socket::shutdown(native_handle(), how);
         }
 
         /**
@@ -419,8 +395,10 @@ namespace coio {
          * \return a sender of `void`.
         */
         COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) {
-            if (not is_open()) open();
-            return get_io_scheduler().schedule_io(impl_, detail::async_connect_t{peer});
+            return execution::just() | execution::let_value([this, peer] {
+                if (not is_open()) open();
+                return impl_.async_connect(peer);
+            });
         }
 
     protected:
@@ -519,8 +497,8 @@ namespace coio {
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_accept(protocol_socket_<OtherScheduler>& peer) {
             return then(
-                this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}),
-                [&peer](native_handle_type handle) noexcept {
+                this->impl_.async_accept(),
+                [&peer](native_handle_type handle) {
                     peer = protocol_socket_<OtherScheduler>(peer.get_io_scheduler(), handle);
                 }
             );
@@ -539,8 +517,8 @@ namespace coio {
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_accept(OtherScheduler other_scheduler) {
             return then(
-                this->get_io_scheduler().schedule_io(this->impl_, detail::async_accept_t{}),
-                [other_scheduler](native_handle_type handle) noexcept {
+                this->impl_.async_accept(),
+                [other_scheduler](native_handle_type handle) {
                     return protocol_socket_<OtherScheduler>(other_scheduler, handle);
                 }
             );
@@ -585,8 +563,10 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto read_some(std::span<std::byte> buffer) -> std::size_t {
-            const auto bytes_transferred = detail::socket::receive(this->native_handle(), buffer);
-            if (bytes_transferred == 0 and not buffer.empty()) [[unlikely]] throw std::system_error{error::eof, "read_some"};
+            const auto bytes_transferred = this->impl_.receive(buffer);
+            if (bytes_transferred == 0 and not buffer.empty()) [[unlikely]] {
+                throw std::system_error{error::eof, "read_some"};
+            }
             return bytes_transferred;
         }
 
@@ -599,7 +579,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto write_some(std::span<const std::byte> buffer) -> std::size_t {
-            return detail::socket::send(this->native_handle(), buffer);
+            return this->impl_.send(buffer);
         }
 
         /**
@@ -632,10 +612,7 @@ namespace coio {
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
             return let_value(
-                this->get_io_scheduler().schedule_io(
-                    this->impl_,
-                    detail::async_receive_t{buffer}
-                ),
+                this->impl_.async_receive(buffer),
                 [total = buffer.size()](std::size_t bytes_transferred) noexcept {
                     async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
                     if (bytes_transferred == 0 and total > 0) [[unlikely]] {
@@ -662,7 +639,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) {
-            return this->get_io_scheduler().schedule_io(this->impl_, detail::async_send_t{buffer});
+            return this->impl_.async_send(buffer);
         }
 
         /**
@@ -705,7 +682,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto receive(std::span<std::byte> buffer) -> std::size_t {
-            return detail::socket::receive(this->native_handle(), buffer);
+            return this->impl_.receive(buffer);
         }
 
         /**
@@ -716,7 +693,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto send(std::span<const std::byte> buffer) -> std::size_t {
-            return detail::socket::send(this->native_handle(), buffer);
+            return this->impl_.send(buffer);
         }
 
         /**
@@ -727,7 +704,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto receive_from(std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t> {
-            return detail::socket::receive_from(this->native_handle(), buffer);
+            return this->impl_.receive_from(buffer);
         }
 
         /**
@@ -739,7 +716,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto send_to(std::span<const std::byte> buffer, const endpoint& peer) -> std::size_t {
-            return detail::socket::send_to(this->native_handle(), buffer, peer);
+            return this->impl_.send_to(buffer, peer);
         }
 
         /**
@@ -755,10 +732,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) {
-            return this->get_io_scheduler().schedule_io(
-                this->impl_,
-                detail::async_receive_t{buffer}
-            );
+            return this->impl_.async_receive(buffer);
         }
 
         /**
@@ -773,10 +747,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer) {
-            return this->get_io_scheduler().schedule_io(
-                this->impl_,
-                detail::async_send_t{buffer}
-            );
+            return this->impl_.async_send(buffer);
         }
 
         /**
@@ -791,10 +762,7 @@ namespace coio {
          */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_receive_from(std::span<std::byte> buffer) {
-            return this->get_io_scheduler().schedule_io(
-                this->impl_,
-                detail::async_receive_from_t{buffer}
-            );
+            return this->impl_.async_receive_from(buffer);
         }
 
         /**
@@ -810,10 +778,7 @@ namespace coio {
          */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_send_to(std::span<const std::byte> buffer, const endpoint& peer) {
-            return this->get_io_scheduler().schedule_io(
-                this->impl_,
-                detail::async_send_to_t{buffer, peer}
-            );
+            return this->impl_.async_send_to(buffer, peer);
         }
     };
 

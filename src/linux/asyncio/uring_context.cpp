@@ -50,9 +50,14 @@ namespace coio {
         context_.submit_sqes();
     }
 
-    auto uring_context::scheduler::io_object::release() -> int {
+    uring_context::scheduler::io_object::~io_object() {
+        close();
+    }
+
+    auto uring_context::scheduler::io_object::close() -> void {
+        if (fd_ == -1) return;
         cancel();
-        return std::exchange(fd_, -1);
+        detail::throw_last_error(::close(std::exchange(fd_, -1)), "close");
     }
 
     auto uring_context::scheduler::io_object::cancel() -> void {
@@ -65,6 +70,46 @@ namespace coio {
         ::io_uring_prep_cancel_fd(sqe, fd_, IORING_ASYNC_CANCEL_ALL);
         ::io_uring_sqe_set_data(sqe, nullptr);
         ctx_->submit_sqes();
+    }
+
+    auto uring_context::scheduler::io_object::receive(std::span<std::byte> buffer) -> std::size_t {
+        return detail::socket::receive(fd_, buffer);
+    }
+
+    auto uring_context::scheduler::io_object::send(std::span<const std::byte> buffer) -> std::size_t {
+        return detail::socket::send(fd_, buffer);
+    }
+
+    auto uring_context::scheduler::io_object::receive_from(std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t> {
+        return detail::socket::receive_from(fd_, buffer);
+    }
+
+    auto uring_context::scheduler::io_object::send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
+        return detail::socket::send_to(fd_, buffer, dest);
+    }
+
+    auto uring_context::scheduler::io_object::read_some(std::span<std::byte> buffer) -> std::size_t {
+        return detail::file_read(fd_, buffer);
+    }
+
+    auto uring_context::scheduler::io_object::write_some(std::span<const std::byte> buffer) -> std::size_t {
+        return detail::file_write(fd_, buffer);
+    }
+
+    auto uring_context::scheduler::io_object::read_some_at(std::size_t offset, std::span<std::byte> buffer) -> std::size_t {
+        return detail::file_read_at(fd_, offset, buffer);
+    }
+
+    auto uring_context::scheduler::io_object::write_some_at(std::size_t offset, std::span<const std::byte> buffer) -> std::size_t {
+        return detail::file_write_at(fd_, offset, buffer);
+    }
+
+    auto uring_context::scheduler::io_object::seek(std::size_t offset, detail::seek_whence whence) -> std::size_t {
+        return detail::file_seek(fd_, offset, whence);
+    }
+
+    auto uring_context::scheduler::io_object::resize(std::size_t new_size) -> void {
+        detail::file_resize(fd_, new_size);
     }
 
     uring_context::uring_context(std::size_t entries, std::pmr::memory_resource& memory_resource) : loop_base(memory_resource) {
@@ -211,75 +256,62 @@ namespace coio {
     }
 
     namespace detail {
-        uring_sexpr_wrapper<async_send_to_t>::type::type(async_send_to_t s) noexcept {
-            peer = endpoint_to_sockaddr_in(s.peer);
-            auto [psa, len] = to_sockaddr(peer);
-            buffer = {
-                .iov_base = const_cast<std::byte*>(s.buffer.data()),
-                .iov_len = s.buffer.size()
+        /// async_read_some
+        auto uring_state_base_for<read_some_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            ::io_uring_prep_read(sqe, fd, buffer_.data(), buffer_.size(), -1);
+        }
+
+
+        /// async_write_some
+        auto uring_state_base_for<write_some_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            ::io_uring_prep_write(sqe, fd, buffer_.data(), buffer_.size(), -1);
+        }
+
+
+        /// async_read_some_at
+        auto uring_state_base_for<read_some_at_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            ::io_uring_prep_read(sqe, fd, buffer_.data(), buffer_.size(), offset_);
+        }
+
+
+        /// async_write_some_at
+        auto uring_state_base_for<write_some_at_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            ::io_uring_prep_write(sqe, fd, buffer_.data(), buffer_.size(), offset_);
+        }
+
+
+        /// async_receive
+        auto uring_state_base_for<receive_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            ::io_uring_prep_recv(sqe, fd, buffer_.data(), buffer_.size(), 0);
+        }
+
+
+        /// async_send
+        auto uring_state_base_for<send_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            ::io_uring_prep_send(sqe, fd, buffer_.data(), buffer_.size(), MSG_NOSIGNAL);
+        }
+
+
+        /// async_receive_from
+        uring_state_base_for<receive_from_tag>::uring_state_base_for(int fd, uring_context& context, std::span<std::byte> buffer) noexcept :
+            uring_node_for(fd, context) {
+            buffer_ = {
+                .iov_base = buffer.data(),
+                .iov_len = buffer.size()
             };
-            msg = {
-                .msg_name = psa,
-                .msg_namelen = len,
-                .msg_iov = &buffer,
+            msg_ = {
+                .msg_name = &peer_,
+                .msg_namelen = sizeof(peer_),
+                .msg_iov = &buffer_,
                 .msg_iovlen = 1
             };
         }
 
-        uring_sexpr_wrapper<async_receive_from_t>::type::type(async_receive_from_t s) noexcept {
-            buffer = {
-                .iov_base = s.buffer.data(),
-                .iov_len = s.buffer.size()
-            };
-            msg = {
-                .msg_name = &peer,
-                .msg_namelen = sizeof(peer),
-                .msg_iov = &buffer,
-                .msg_iovlen = 1
-            };
+        auto uring_state_base_for<receive_from_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            ::io_uring_prep_recvmsg(sqe, fd, &msg_, 0);
         }
 
-        uring_sexpr_wrapper<async_connect_t>::type::type(async_connect_t s) noexcept : peer(endpoint_to_sockaddr_in(s.peer)) {}
-
-
-        template<>
-        auto uring_state_base_for<async_read_some_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            ::io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), -1);
-        }
-
-        template<>
-        auto uring_state_base_for<async_write_some_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            ::io_uring_prep_write(sqe, fd, buffer.data(), buffer.size(), -1);
-        }
-
-        template<>
-        auto uring_state_base_for<async_read_some_at_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            ::io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), offset);
-        }
-
-        template<>
-        auto uring_state_base_for<async_write_some_at_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            ::io_uring_prep_write(sqe, fd, buffer.data(), buffer.size(), offset);
-        }
-
-        template<>
-        auto uring_state_base_for<async_receive_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            ::io_uring_prep_recv(sqe, fd, buffer.data(), buffer.size(), 0);
-        }
-
-
-        template<>
-        auto uring_state_base_for<async_send_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            ::io_uring_prep_send(sqe, fd, buffer.data(), buffer.size(), MSG_NOSIGNAL);
-        }
-
-        template<>
-        auto uring_state_base_for<async_receive_from_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            ::io_uring_prep_recvmsg(sqe, fd, &msg, 0);
-        }
-
-        template<>
-        auto uring_state_base_for<async_receive_from_t>::complete(int cqe_res) noexcept -> void {
+        auto uring_state_base_for<receive_from_tag>::complete(int cqe_res) noexcept -> void {
             if (cqe_res < 0) {
                 const std::error_code ec{-cqe_res, std::system_category()};
                 if (ec == std::errc::operation_canceled) {
@@ -290,26 +322,46 @@ namespace coio {
                 }
             }
             else {
-                result.set_value(sockaddr_storage_to_endpoint(peer), cqe_res);
+                result.set_value(sockaddr_storage_to_endpoint(peer_), cqe_res);
             }
         }
 
 
-        template<>
-        auto uring_state_base_for<async_send_to_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            ::io_uring_prep_sendmsg(sqe, fd, &msg, MSG_NOSIGNAL);
+        /// async_send_to
+        uring_state_base_for<send_to_tag>::uring_state_base_for(int fd, uring_context& context, std::span<const std::byte> buffer, const endpoint& dest) noexcept :
+            uring_node_for(fd, context),
+            peer_(endpoint_to_sockaddr_in(dest)) {
+            auto [psa, len] = to_sockaddr(peer_);
+            buffer_ = {
+                .iov_base = const_cast<std::byte*>(buffer.data()),
+                .iov_len = buffer.size()
+            };
+            msg_ = {
+                .msg_name = psa,
+                .msg_namelen = len,
+                .msg_iov = &buffer_,
+                .msg_iovlen = 1
+            };
+        }
+
+        auto uring_state_base_for<send_to_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            ::io_uring_prep_sendmsg(sqe, fd, &msg_, MSG_NOSIGNAL);
         }
 
 
-        template<>
-        auto uring_state_base_for<async_accept_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+        /// async_accept
+        auto uring_state_base_for<accept_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
             ::io_uring_prep_accept(sqe, fd, nullptr, nullptr, 0);
         }
 
 
-        template<>
-        auto uring_state_base_for<async_connect_t>::prepare(::io_uring_sqe* sqe) noexcept -> void {
-            auto [psa, len] = to_sockaddr(peer);
+        /// async_connect
+        uring_state_base_for<connect_tag>::uring_state_base_for(int fd, uring_context& context, const endpoint& peer) noexcept :
+            uring_node_for(fd, context),
+            peer_(endpoint_to_sockaddr_in(peer)) {}
+
+        auto uring_state_base_for<connect_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
+            auto [psa, len] = to_sockaddr(peer_);
             ::io_uring_prep_connect(sqe, fd, psa, len);
         }
     }

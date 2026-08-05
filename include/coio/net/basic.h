@@ -21,6 +21,12 @@ namespace coio {
         using socket_native_handle_type = ::UINT_PTR;
 #endif
         inline constexpr socket_native_handle_type invalid_socket_handle = socket_native_handle_type(-1);
+
+        enum class shutdown_type : short {
+            shutdown_send,
+            shutdown_receive,
+            shutdown_both,
+        };
     }
 
     class ipv4_address {

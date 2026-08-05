@@ -1,7 +1,10 @@
 #pragma once
+#include <cstddef>
 #include <cstdio>
 #include <cerrno>
 #include <exception>
+#include <span>
+#include <utility>
 #include <variant>
 #include <system_error>
 #include <netinet/in.h>
@@ -51,6 +54,32 @@ namespace coio::detail {
             throw_last_error(rc, msg);
             return;
         }
+    }
+
+    // data-path sync ops (defined in net/socket.cpp and asyncio/file.cpp),
+    // exposed publicly through the io_object member functions
+    enum class seek_whence;
+
+    auto file_read(int handle, std::span<std::byte> buffer) -> std::size_t;
+
+    auto file_write(int handle, std::span<const std::byte> buffer) -> std::size_t;
+
+    auto file_read_at(int handle, std::size_t offset, std::span<std::byte> buffer) -> std::size_t;
+
+    auto file_write_at(int handle, std::size_t offset, std::span<const std::byte> buffer) -> std::size_t;
+
+    auto file_seek(int handle, std::size_t offset, seek_whence whence) -> std::size_t;
+
+    auto file_resize(int handle, std::size_t new_size) -> void;
+
+    namespace socket {
+        auto receive(int handle, std::span<std::byte> buffer) -> std::size_t;
+
+        auto send(int handle, std::span<const std::byte> buffer) -> std::size_t;
+
+        auto receive_from(int handle, std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t>;
+
+        auto send_to(int handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
     }
 
     auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6>;

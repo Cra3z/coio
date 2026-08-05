@@ -152,11 +152,6 @@ namespace coio::detail::socket {
         return fd;
     }
 
-    auto close(socket_native_handle_type handle) -> void {
-        if (handle == invalid_socket_handle) return;
-        throw_last_error(::close(handle), "close");
-    }
-
     auto max_backlog() noexcept -> std::size_t {
         return SOMAXCONN;
     }

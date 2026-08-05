@@ -135,7 +135,7 @@ auto fibonacci(std::size_t n) -> coio::generator<int> {
 
 All execution contexts (`time_loop`, `epoll_context`, `uring_context` and `iocp_context`) are **MPSC** (multi-producer, single-consumer):
 
-- **Multi-producer**: any thread may concurrently start operations on a context (`schedule()`, `schedule_at()`/`schedule_after()`, `schedule_io()`), and `get_scheduler()`, `work_started()`/`work_finished()` and `request_stop()` are thread-safe.
+- **Multi-producer**: any thread may concurrently start operations on a context (`schedule()`, `schedule_at()`/`schedule_after()`, and the `async_*` operations of its io objects), and `get_scheduler()`, `work_started()`/`work_finished()` and `request_stop()` are thread-safe.
 - **Single-consumer**: at most one thread may be inside `run()`, `run_one()`, `poll()` or `poll_one()` for a context at a time. This is a precondition and is not checked at runtime: concurrent consumer calls are undefined behavior. The consumer thread may change over the context's lifetime (e.g. `poll()` from one thread, later `run()` from another), provided the earlier call happens-before the later one (thread join, mutex, or similar synchronization).
 
 Work submitted to the context is completed by its active `run()`/`poll()` consumer thread.

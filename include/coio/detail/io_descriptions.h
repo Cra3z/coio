@@ -1,57 +1,45 @@
-﻿#pragma once
+#pragma once
 #include <coio/detail/execution.h>
 #include <coio/net/basic.h>
 
 namespace coio::detail {
-    struct async_read_some_t {
+    struct read_some_tag {
         using value_signature = execution::set_value_t(std::size_t);
-        std::span<std::byte> buffer;
     };
 
-    struct async_write_some_t {
+    struct write_some_tag {
         using value_signature = execution::set_value_t(std::size_t);
-        std::span<const std::byte> buffer;
     };
 
-    struct async_read_some_at_t {
+    struct read_some_at_tag {
         using value_signature = execution::set_value_t(std::size_t);
-        std::size_t offset = 0;
-        std::span<std::byte> buffer;
     };
 
-    struct async_write_some_at_t {
+    struct write_some_at_tag {
         using value_signature = execution::set_value_t(std::size_t);
-        std::size_t offset = 0;
-        std::span<const std::byte> buffer;
     };
 
-    struct async_receive_t {
+    struct receive_tag {
         using value_signature = execution::set_value_t(std::size_t);
-        std::span<std::byte> buffer;
     };
 
-    struct async_send_t {
+    struct send_tag {
         using value_signature = execution::set_value_t(std::size_t);
-        std::span<const std::byte> buffer;
     };
 
-    struct async_receive_from_t {
+    struct receive_from_tag {
         using value_signature = execution::set_value_t(endpoint, std::size_t);
-        std::span<std::byte> buffer;
     };
 
-    struct async_send_to_t {
+    struct send_to_tag {
         using value_signature = execution::set_value_t(std::size_t);
-        std::span<const std::byte> buffer;
-        endpoint peer;
     };
 
-    struct async_accept_t {
+    struct accept_tag {
         using value_signature = execution::set_value_t(socket_native_handle_type);
     };
 
-    struct async_connect_t {
+    struct connect_tag {
         using value_signature = execution::set_value_t();
-        endpoint peer;
     };
 }

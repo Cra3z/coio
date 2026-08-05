@@ -99,11 +99,6 @@ namespace coio::detail {
         }
     }
 
-    auto close_file(file_native_handle_type handle) -> void {
-        if (handle == -1) return;
-        throw_last_error(::close(handle), "close");
-    }
-
     auto file_seek(file_native_handle_type handle, std::size_t offset, seek_whence whence) -> std::size_t {
         if (offset > std::numeric_limits<::off_t>::max()) [[unlikely]] {
             throw std::system_error{std::make_error_code(std::errc::value_too_large), "seek"};
