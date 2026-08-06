@@ -337,7 +337,8 @@ namespace coio {
         template<typename Tag>
         class uring_state_base_for : public uring_node_for<Tag> {
         public:
-            uring_state_base_for(int fd, uring_context& context) noexcept : uring_node_for<Tag>(fd, context) {}
+            template<typename... Args>
+            uring_state_base_for(int fd, uring_context& context, const Args&...) noexcept : uring_node_for<Tag>(fd, context) {}
 
             auto prepare(::io_uring_sqe*) noexcept -> void {
                 static_assert(always_false<Tag>, "this operation isn't supported");

@@ -8,6 +8,7 @@
 
 #include <basetsd.h>
 #include <WinSock2.h>
+#include <algorithm>
 #include <span>
 #include <tuple>
 #include <coio/execution_context.h>
@@ -204,12 +205,14 @@ namespace coio {
 
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) noexcept {
-                    return async_initiate<detail::read_some_at_tag>(std::exchange(offset_, offset_ + buffer.size()), buffer);
+                    const auto length = std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu);
+                    return async_initiate<detail::read_some_at_tag>(std::exchange(offset_, offset_ + length), buffer);
                 }
 
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) noexcept {
-                    return async_initiate<detail::write_some_at_tag>(std::exchange(offset_, offset_ + buffer.size()), buffer);
+                    const auto length = std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu);
+                    return async_initiate<detail::write_some_at_tag>(std::exchange(offset_, offset_ + length), buffer);
                 }
 
                 [[nodiscard]]

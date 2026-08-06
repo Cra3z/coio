@@ -74,8 +74,7 @@ namespace coio {
         const auto handle = std::exchange(handle_, INVALID_HANDLE_VALUE);
         offset_ = 0;
         if (handle == INVALID_HANDLE_VALUE or handle == nullptr) return;
-        cancel();
-        // closing the handle also dissociates it from the completion port
+        ::CancelIoEx(handle, nullptr);
         detail::throw_win_error(::CloseHandle(handle), "close");
     }
 
@@ -144,8 +143,7 @@ namespace coio {
     auto iocp_context::scheduler::socket_object::close() -> void {
         const auto handle = std::exchange(handle_, INVALID_HANDLE_VALUE);
         if (handle == INVALID_HANDLE_VALUE or handle == nullptr) return;
-        cancel();
-        // closing the socket also dissociates it from the completion port
+        ::CancelIoEx(handle, nullptr);
         detail::throw_wsa_error(::closesocket(std::bit_cast<::SOCKET>(handle)), "close");
     }
 
@@ -191,7 +189,6 @@ namespace coio {
     }
 
     iocp_context::~iocp_context() {
-        request_stop();
         ::CloseHandle(iocp_);
     }
 
@@ -298,7 +295,7 @@ namespace coio {
         auto iocp_state_base_for<read_some_at_tag>::complete(::DWORD bytes_transferred, ::DWORD error) noexcept -> void {
             if (error) {
                 if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
-                else if (error == ERROR_HANDLE_EOF) result.set_value(0);
+                else if (error == ERROR_HANDLE_EOF or error == ERROR_BROKEN_PIPE) result.set_value(0);
                 else result.set_error(to_error_code(error));
             }
             else {

@@ -244,7 +244,6 @@ namespace coio {
     }
 
     epoll_context::~epoll_context() {
-        request_stop();
         ::close(epoll_fd_);
     }
 
@@ -722,13 +721,12 @@ namespace coio {
                     }
                 }
                 if (ec != 0) {
-                    // EISCONN on a retry means the connection we initiated completed in the meantime
                     if (ec == EISCONN and in_progress) {
                         result.set_value();
                         return start_result::completed;
                     }
-                    // a retried ::connect while the connection is still in progress reports EALREADY
-                    if (ec == EINPROGRESS or ec == EALREADY or ec == EAGAIN) {
+
+                    if (ec == EINPROGRESS or ec == EALREADY) {
                         in_progress = true;
                         switch (register_event(EPOLLOUT)) {
                         case register_result::armed:

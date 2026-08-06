@@ -56,12 +56,13 @@ namespace coio::detail {
                     if (err == ERROR_IO_PENDING) {
                         if (not ::GetOverlappedResult(handle, &overlapped, &n, TRUE)) {
                             err = ::GetLastError();
-                            if (err == ERROR_HANDLE_EOF) throw std::system_error{coio::error::eof, msg};
+                            // ERROR_BROKEN_PIPE is how a pipe reports its writer closing: map it to EOF like POSIX read() == 0
+                            if (err == ERROR_HANDLE_EOF or err == ERROR_BROKEN_PIPE) throw std::system_error{coio::error::eof, msg};
                             throw std::system_error{static_cast<int>(err), std::system_category(), msg};
                         }
                     }
                     else if (err == ERROR_OPERATION_ABORTED) continue;
-                    else if (err == ERROR_HANDLE_EOF) throw std::system_error{coio::error::eof, msg};
+                    else if (err == ERROR_HANDLE_EOF or err == ERROR_BROKEN_PIPE) throw std::system_error{coio::error::eof, msg};
                     else throw std::system_error{static_cast<int>(err), std::system_category(), msg};
                 }
                 break;

@@ -295,6 +295,13 @@ The async interface supports the following **outstanding-operation** limits (Asi
 - **Not allowed**: two reads outstanding simultaneously; likewise for writes.
 - **Acceptors**: at most one outstanding `accept` / `async_accept` per acceptor.
 
+**Lifetime**: an I/O object must outlive all of its operations. A sender obtained from an
+I/O object (`async_read_some`, `async_receive`, ...) must be connected and started **before**
+the object is closed or destroyed; starting it afterwards is undefined behavior. On
+`epoll_context` in particular, `close()` returns the object's per-descriptor bookkeeping
+entry to an internal pool, so a stale start may silently corrupt the state of an unrelated
+I/O object that has since reused the entry, rather than failing cleanly with `EBADF`.
+
 Example: the following is **malformed** because it starts two reads without waiting for the first to complete:
 
 ```cpp

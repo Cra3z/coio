@@ -169,7 +169,7 @@ namespace coio::detail::socket {
         if (rc == 0) return;
 
         const int ec = errno;
-        if (ec != EINPROGRESS and ec != EAGAIN) {
+        if (ec != EINPROGRESS) {
             throw std::system_error{ec, std::system_category(), "connect"};
         }
 

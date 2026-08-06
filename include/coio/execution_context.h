@@ -185,28 +185,31 @@ namespace coio {
                 friend Ctx;
             private:
                 template<typename Rcvr>
-                struct state_base : node {
-                    state_base(Ctx& context, Rcvr rcvr) noexcept : node(context), rcvr_(std::move(rcvr)) {}
+                struct state : node {
+                    state(Ctx& context, Rcvr rcvr) noexcept : node(context), rcvr_(std::move(rcvr)) {}
 
-                    COIO_ALWAYS_INLINE static auto do_start() noexcept -> start_result {
-                        return start_result::completed;
+                    COIO_ALWAYS_INLINE auto start() noexcept -> void {
+                        this->context_.work_started();
+                        this->immediately_post();
                     }
 
-                    COIO_ALWAYS_INLINE auto do_finish() noexcept -> void {
+                    auto finish() noexcept -> void override {
+                        this->context_.work_finished();
+                        if constexpr (not unstoppable_token<stop_token_of_t<execution::env_of_t<Rcvr>>>) {
+                            auto stop_token = get_stop_token(execution::get_env(rcvr_));
+                            if (stop_token.stop_requested()) {
+                                execution::set_stopped(std::move(rcvr_));
+                                return;
+                            }
+                        }
                         execution::set_value(std::move(rcvr_));
                     }
-
-                    COIO_ALWAYS_INLINE static auto do_cancel() noexcept -> void {}
 
                     Rcvr rcvr_;
                 };
 
-                template<typename Rcvr>
-                using state = operation_state<state_base<Rcvr>>;
-
             public:
                 using sender_concept = execution::sender_tag;
-                using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
 
             public:
                 explicit schedule_sender(Ctx& context) noexcept : ctx_(&context) {}
@@ -215,9 +218,14 @@ namespace coio {
                     return env{*ctx_};
                 }
 
-                template<similar_to<schedule_sender>, typename...>
-                static consteval auto get_completion_signatures() noexcept -> completion_signatures {
-                    return {};
+                template<similar_to<schedule_sender>, typename Env>
+                static consteval auto get_completion_signatures() noexcept {
+                    if constexpr (unstoppable_token<stop_token_of_t<Env>>) {
+                        return execution::completion_signatures<execution::set_value_t()>{};
+                    }
+                    else {
+                        return execution::completion_signatures<execution::set_value_t(), execution::set_stopped_t()>{};
+                    }
                 }
 
                 template<execution::receiver Rcvr>
@@ -245,7 +253,7 @@ namespace coio {
                 struct timer_node : node {
                     timer_node(Ctx& context, time_point_type deadline) noexcept: node(context), deadline(deadline) {}
                     time_point_type deadline;
-                    std::size_t heap_index = static_cast<std::size_t>(-1);
+                    detail::timer_heap_links<timer_node> heap_links;
                 };
 
                 template<typename Rcvr>
@@ -376,8 +384,7 @@ namespace coio {
             using timer_queue = detail::timer_queue<
                 typename sleep_sender::timer_node,
                 &sleep_sender::timer_node::deadline,
-                &sleep_sender::timer_node::heap_index,
-                std::pmr::polymorphic_allocator<>
+                &sleep_sender::timer_node::heap_links
             >;
 
             using op_queue = detail::op_queue<node, &node::next_>;
@@ -386,6 +393,12 @@ namespace coio {
             loop_base() = default;
 
             explicit loop_base(std::pmr::memory_resource& memory_resource) noexcept : allocator_(&memory_resource) {}
+
+            ~loop_base() {
+                if (work_count_.load(std::memory_order_acquire) != 0) [[unlikely]] {
+                    std::terminate();
+                }
+            }
 
         public:
             loop_base(const loop_base&) = delete;
@@ -467,7 +480,7 @@ namespace coio {
             std::pmr::polymorphic_allocator<> allocator_;
             inplace_stop_source stop_source_;
             op_queue op_queue_;
-            timer_queue timer_queue_{allocator_};
+            timer_queue timer_queue_;
             std::atomic<std::size_t> work_count_{0};
         };
     }

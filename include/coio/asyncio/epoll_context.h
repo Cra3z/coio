@@ -342,7 +342,8 @@ namespace coio {
         template<typename Tag>
         class epoll_state_base_for : public epoll_node_for<Tag> {
         public:
-            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data) noexcept :
+            template<typename... Args>
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, const Args&...) noexcept :
                 epoll_node_for<Tag>(fd, context, data) {}
 
         protected:

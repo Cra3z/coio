@@ -268,7 +268,7 @@ namespace coio::detail::socket {
             const int n = ::recv(
                 handle,
                 reinterpret_cast<char*>(buffer.data()),
-                static_cast<int>(buffer.size()), 0
+                static_cast<int>(std::min<std::size_t>(buffer.size(), INT_MAX)), 0
             );
             if (n == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
@@ -288,7 +288,7 @@ namespace coio::detail::socket {
             const int n = ::send(
                 handle,
                 reinterpret_cast<const char*>(buffer.data()),
-                static_cast<int>(buffer.size()), 0
+                static_cast<int>(std::min<std::size_t>(buffer.size(), INT_MAX)), 0
             );
             if (n == SOCKET_ERROR) {
                 const int err = ::WSAGetLastError();
