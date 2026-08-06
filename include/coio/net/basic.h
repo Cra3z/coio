@@ -272,6 +272,9 @@ struct std::formatter<coio::ip_address> : coio::no_specification_formatter {
 template<>
 struct std::formatter<coio::endpoint> : coio::no_specification_formatter {
     auto format(const coio::endpoint& ep, std::format_context& ctx) const {
+        if (ep.ip().is_v6()) {
+            return std::format_to(ctx.out(), "[{}]:{}", ep.ip().to_string(), ep.port());
+        }
         return std::format_to(ctx.out(), "{}:{}", ep.ip().to_string(), ep.port());
     }
 };

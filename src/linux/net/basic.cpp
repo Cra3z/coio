@@ -14,7 +14,7 @@ namespace coio {
     ipv4_address::ipv4_address(std::uint32_t host_u32) noexcept : net_u32_(::htonl(host_u32)) {}
 
     ipv4_address::ipv4_address(const std::string& str) {
-        if (::inet_pton(AF_INET, str.c_str(), &net_u32_) == -1) {
+        if (::inet_pton(AF_INET, str.c_str(), &net_u32_) != 1) {
             throw std::invalid_argument{"invalid ipv4 network address in dotted-decimal format."};
         }
     }
@@ -33,7 +33,7 @@ namespace coio {
     }
 
     ipv6_address::ipv6_address(const std::string& str) {
-        if (::inet_pton(AF_INET6, str.c_str(), val_) == -1) {
+        if (::inet_pton(AF_INET6, str.c_str(), val_) != 1) {
             throw std::invalid_argument{"invalid format for ipv6 network address."};
         }
     }

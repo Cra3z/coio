@@ -135,7 +135,7 @@ namespace coio {
              * \brief Cancel all asynchronous operations associated with the file.
              *
              * Any asynchronous read or write operations will be cancelled immediately and
-             * will complete with an operation_aborted error.
+             * complete on the stopped channel (`set_stopped`).
              */
             COIO_ALWAYS_INLINE auto cancel() -> void {
                 impl_.cancel();

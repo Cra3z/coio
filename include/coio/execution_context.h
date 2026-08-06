@@ -10,9 +10,11 @@
 #include <limits>
 #include <queue>
 #include <semaphore>
+#include <thread>
 #include <utility>
 #include <coio/detail/execution.h>
 #include <coio/detail/op_queue.h>
+#include <coio/utils/scope_exit.h>
 #include <coio/utils/stop_token.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 
@@ -52,7 +54,7 @@ namespace coio {
                     COIO_ASSERT(next_ == nullptr);
                     auto& context = context_;
                     context.op_queue_.enqueue(*this);
-                    context.interrupt();
+                    context.wakeup_consumer();
                 }
 
                 auto publish() noexcept -> void {
@@ -170,7 +172,8 @@ namespace coio {
             };
 
             struct env {
-                auto query(execution::get_completion_scheduler_t<execution::set_value_t>) const noexcept {
+                template<typename Tag>
+                auto query(execution::get_completion_scheduler_t<Tag>) const noexcept {
                     return ctx_.get_scheduler();
                 }
 
@@ -262,7 +265,7 @@ namespace coio {
 
                     auto do_start() noexcept -> start_result {
                         auto& context = this->context_;
-                        if (context.timer_queue_.add(*this)) context.interrupt();
+                        if (context.timer_queue_.add(*this)) context.wakeup_consumer();
                         return start_result::pending;
                     }
 
@@ -430,11 +433,15 @@ namespace coio {
 
             auto poll_one() -> bool {
                 auto self = static_cast<Ctx*>(this);
+                consumer_id_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+                scope_exit _{[this]() noexcept { consumer_id_.store({}, std::memory_order_relaxed); }};
                 return self->do_one(false);
             }
 
             auto poll() -> std::size_t {
                 auto self = static_cast<Ctx*>(this);
+                consumer_id_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+                scope_exit _{[this]() noexcept { consumer_id_.store({}, std::memory_order_relaxed); }};
                 std::size_t count = 0;
                 while (self->do_one(false)) {
                     if (count < std::numeric_limits<std::size_t>::max()) ++count;
@@ -444,11 +451,15 @@ namespace coio {
 
             auto run_one() -> bool {
                 auto self = static_cast<Ctx*>(this);
+                consumer_id_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+                scope_exit _{[this]() noexcept { consumer_id_.store({}, std::memory_order_relaxed); }};
                 return self->do_one(true);
             }
 
             auto run() -> std::size_t {
                 auto self = static_cast<Ctx*>(this);
+                consumer_id_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+                scope_exit _{[this]() noexcept { consumer_id_.store({}, std::memory_order_relaxed); }};
                 std::size_t count = 0;
                 while (self->do_one(true)) {
                     if (count < std::numeric_limits<std::size_t>::max()) ++count;
@@ -471,9 +482,13 @@ namespace coio {
                 return op;
             }
 
+            COIO_ALWAYS_INLINE auto wakeup_consumer() -> void {
+                if (consumer_id_.load(std::memory_order_relaxed) == std::this_thread::get_id()) return;
+                static_cast<Ctx*>(this)->interrupt();
+            }
+
             COIO_ALWAYS_INLINE auto shutdown() -> void {
-                auto self = static_cast<Ctx*>(this);
-                self->interrupt();
+                wakeup_consumer();
             }
 
         protected:
@@ -482,6 +497,7 @@ namespace coio {
             op_queue op_queue_;
             timer_queue timer_queue_;
             std::atomic<std::size_t> work_count_{0};
+            std::atomic<std::thread::id> consumer_id_{};
         };
     }
 
@@ -531,7 +547,7 @@ namespace coio {
         using task = coio::task<T, Alloc, scheduler>;
 
     public:
-        using loop_base::loop_base;
+        explicit time_loop(std::pmr::memory_resource& resource = *std::pmr::get_default_resource()) noexcept : loop_base(resource) {}
 
         ~time_loop() = default;
 

@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <format>
 #include <doctest/doctest.h>
 #include <coio/net/basic.h>
 
@@ -27,4 +28,15 @@ TEST_CASE("endpoint and byte-order helpers round-trip and compare") {
     CHECK_EQ(ep6.port(), 443);
     CHECK(ep6.get<0>().is_v6());
     CHECK_EQ(ep6.get<1>(), 443);
+}
+
+TEST_CASE("endpoint formatting brackets IPv6 addresses") {
+    const coio::endpoint ep4{coio::ipv4_address::loopback(), 8080};
+    CHECK_EQ(std::format("{}", ep4), "127.0.0.1:8080");
+
+    const coio::endpoint ep6{coio::ipv6_address::loopback(), 443};
+    CHECK_EQ(std::format("{}", ep6), "[::1]:443");
+
+    const coio::endpoint ep6_any{coio::ipv6_address::any(), 0};
+    CHECK_EQ(std::format("{}", ep6_any), "[::]:0");
 }
