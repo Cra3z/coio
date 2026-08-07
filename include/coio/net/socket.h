@@ -386,7 +386,7 @@ namespace coio {
         */
         COIO_ALWAYS_INLINE auto connect(const endpoint& peer) -> void {
             if (not is_open()) open();
-            detail::socket::connect(native_handle(), peer);
+            impl_.connect(peer);
         }
 
         /**
@@ -471,7 +471,7 @@ namespace coio {
         template<io_scheduler OtherScheduler>
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto accept(OtherScheduler peer_scheduler) -> protocol_socket_<OtherScheduler> {
-            return protocol_socket_<OtherScheduler>(peer_scheduler, detail::socket::accept(this->native_handle()));
+            return protocol_socket_<OtherScheduler>(peer_scheduler, this->impl_.accept());
         }
 
         /**
@@ -563,11 +563,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto read_some(std::span<std::byte> buffer) -> std::size_t {
-            const auto bytes_transferred = this->impl_.receive(buffer);
-            if (bytes_transferred == 0 and not buffer.empty()) [[unlikely]] {
-                throw std::system_error{error::eof, "read_some"};
-            }
-            return bytes_transferred;
+            return this->impl_.receive(buffer);
         }
 
         /**
@@ -611,19 +607,7 @@ namespace coio {
         */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
-            return let_value(
-                this->impl_.async_receive(buffer),
-                [total = buffer.size()](std::size_t bytes_transferred) noexcept {
-                    async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
-                    if (bytes_transferred == 0 and total > 0) [[unlikely]] {
-                        result.set_error(error::eof);
-                    }
-                    else {
-                        result.set_value(bytes_transferred);
-                    }
-                    return result;
-                }
-            );
+            return this->impl_.async_receive(buffer);
         }
 
         /**

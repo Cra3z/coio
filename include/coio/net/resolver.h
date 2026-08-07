@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <functional>
 #include <string>
 #include <coio/net/basic.h>
 #include <coio/generator.h>
@@ -44,7 +45,7 @@ COIO_CLANG_SUPPRESS_POP()
 
         auto resolve_impl(resolve_query_t query, int family, int socktype, int protocol_id) -> generator<resolve_result_t>;
 
-        auto resolve_impl(resolve_query_t query, int sock_type, int protocol_id) -> generator<resolve_result_t>;
+        auto resolve_unspec_impl(resolve_query_t query, int sock_type, int protocol_id) -> generator<resolve_result_t>;
 
     }
 
@@ -72,7 +73,7 @@ COIO_CLANG_SUPPRESS_POP()
          */
         [[nodiscard]]
         COIO_ALWAYS_INLINE static auto resolve(query_t query) -> generator<result_t> {
-            return detail::resolve_impl(std::move(query), protocol_type::type(), protocol_type::protocol_id());
+            return detail::resolve_unspec_impl(std::move(query), protocol_type::type(), protocol_type::protocol_id());
         }
 
         /**
@@ -93,9 +94,13 @@ COIO_CLANG_SUPPRESS_POP()
          */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_resolve(query_t query) const {
-            return execution::schedule(sched_) | execution::then([=] {
-                return resolve(std::move(query));
-            });
+            auto do_resolve = std::bind_front(
+                detail::resolve_unspec_impl,
+                std::move(query),
+                protocol_type::type(),
+                protocol_type::protocol_id()
+            );
+            return execution::schedule(sched_) | execution::then(std::move(do_resolve));
         }
 
         /**
@@ -103,9 +108,14 @@ COIO_CLANG_SUPPRESS_POP()
          */
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_resolve(protocol_type protocol, query_t query) const {
-            return execution::schedule(sched_) | execution::then([=] {
-                 return resolve(std::move(protocol), std::move(query));
-             });
+            auto do_resolve = std::bind_front(
+                detail::resolve_impl,
+                std::move(query),
+                protocol.family(),
+                protocol_type::type(),
+                protocol_type::protocol_id()
+            );
+            return execution::schedule(sched_) | execution::then(std::move(do_resolve));
         }
 
     private:

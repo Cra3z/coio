@@ -77,7 +77,9 @@ namespace coio {
     }
 
     auto epoll_context::epoll_node::register_event(int event_type) noexcept -> register_result {
-        std::scoped_lock _{data->fd_lock};
+        int epoll_ctl_errno = 0;
+
+        std::unique_lock guard{data->fd_lock};
         const bool in_op_registered = data->in_op;
         const bool out_op_registered = data->out_op;
         if (event_type == EPOLLIN /* or event_type == EPOLLPRI */) {
@@ -113,6 +115,7 @@ namespace coio {
         if (not ok) {
             ::epoll_event event{.events = ev, .data = {.ptr = data}};
             ok = ::epoll_ctl(context_.epoll_fd_, epoll_ctl_op, fd, &event) == 0;
+            if (not ok) epoll_ctl_errno = errno; // capture before unlocking below
         }
         if (ok) [[likely]] {
             data->events = ev;
@@ -124,11 +127,14 @@ namespace coio {
             }
             return register_result::armed;
         }
+
+        guard.unlock();
+        errno = epoll_ctl_errno;
         return register_result::failure;
     }
 
 
-    epoll_context::scheduler::io_object::io_object(epoll_context& ctx, int fd) try : ctx_(&ctx), fd_(fd) {
+    epoll_context::scheduler::io_object::io_object(epoll_context& ctx, int fd) try : ctx_(&ctx), fd_(fd), stream_oriented_(detail::is_stream_oriented_(fd)) {
         if (fd == -1) return;
         struct ::stat st{};
         if (::fstat(fd, &st) == -1) [[unlikely]] {
@@ -191,7 +197,7 @@ namespace coio {
     }
 
     auto epoll_context::scheduler::io_object::receive(std::span<std::byte> buffer) -> std::size_t {
-        return detail::socket::receive(fd_, buffer);
+        return detail::socket::receive(fd_, buffer, stream_oriented_);
     }
 
     auto epoll_context::scheduler::io_object::send(std::span<const std::byte> buffer) -> std::size_t {
@@ -204,6 +210,14 @@ namespace coio {
 
     auto epoll_context::scheduler::io_object::send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
         return detail::socket::send_to(fd_, buffer, dest);
+    }
+
+    auto epoll_context::scheduler::io_object::connect(const endpoint& peer) -> void {
+        detail::socket::connect(fd_, peer);
+    }
+
+    auto epoll_context::scheduler::io_object::accept() -> detail::socket_native_handle_type {
+        return detail::socket::accept(fd_);
     }
 
     auto epoll_context::scheduler::io_object::read_some(std::span<std::byte> buffer) -> std::size_t {
@@ -370,7 +384,13 @@ namespace coio {
                     result.set_error(std::error_code{errno, std::system_category()});
                     return start_result::completed;
                 }
-                result.set_value(n);
+
+                if (n == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(n);
+                }
                 return start_result::completed;
             }
         }
@@ -384,7 +404,12 @@ namespace coio {
                 result.set_error(std::error_code{errno, std::system_category()});
             }
             else {
-                result.set_value(n);
+                if (n == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(n);
+                }
             }
             return true;
         }
@@ -452,6 +477,10 @@ namespace coio {
                 return start_result::completed;
             }
             while (true) {
+                if (stream_oriented_ and buffer_.empty()) [[unlikely]] {
+                    result.set_value(0);
+                    return start_result::completed;
+                }
                 const ::ssize_t n = ::recv(fd, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
                 if (n == -1) {
                     if (is_blocking_errno(errno)) {
@@ -468,12 +497,21 @@ namespace coio {
                     result.set_error(std::error_code{errno, std::system_category()});
                     return start_result::completed;
                 }
-                result.set_value(n);
+                if (stream_oriented_ and n == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(n);
+                }
                 return start_result::completed;
             }
         }
 
         auto epoll_state_base_for<receive_tag>::perform() noexcept -> bool {
+            if (stream_oriented_ and buffer_.empty()) [[unlikely]] {
+                result.set_value(0);
+                return true;
+            }
             const ::ssize_t n = ::recv(fd, buffer_.data(), buffer_.size(), MSG_DONTWAIT);
             if (n == -1) {
                 if (is_blocking_errno(errno)) [[unlikely]] {
@@ -482,7 +520,12 @@ namespace coio {
                 result.set_error(std::error_code{errno, std::system_category()});
             }
             else {
-                result.set_value(n);
+                if (stream_oriented_ and n == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(n);
+                }
             }
             return true;
         }

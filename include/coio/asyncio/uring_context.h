@@ -53,13 +53,14 @@ namespace coio {
 
             class io_object {
             public:
-                io_object(uring_context& ctx, int fd) noexcept : ctx_(&ctx), fd_(fd) {}
+                io_object(uring_context& ctx, int fd);
 
                 io_object(const io_object&) = delete;
 
                 io_object(io_object&& other) noexcept :
                     ctx_(other.ctx_),
-                    fd_(std::exchange(other.fd_, -1)) {}
+                    fd_(std::exchange(other.fd_, -1)),
+                    stream_oriented_(std::exchange(other.stream_oriented_, false)) {}
 
                 ~io_object();
 
@@ -71,6 +72,7 @@ namespace coio {
                 auto swap(io_object& other) noexcept -> void {
                     std::ranges::swap(ctx_, other.ctx_);
                     std::ranges::swap(fd_, other.fd_);
+                    std::ranges::swap(stream_oriented_, other.stream_oriented_);
                 }
 
                 friend auto swap(io_object& lhs, io_object& rhs) noexcept -> void {
@@ -104,6 +106,11 @@ namespace coio {
                 [[nodiscard]]
                 auto send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
 
+                auto connect(const endpoint& peer) -> void;
+
+                [[nodiscard]]
+                auto accept() -> detail::socket_native_handle_type;
+
                 auto read_some(std::span<std::byte> buffer) -> std::size_t;
 
                 auto write_some(std::span<const std::byte> buffer) -> std::size_t;
@@ -130,7 +137,7 @@ namespace coio {
             public:
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) noexcept {
-                    return async_initiate<detail::receive_tag>(buffer);
+                    return async_initiate<detail::receive_tag>(buffer, stream_oriented_);
                 }
 
                 [[nodiscard]]
@@ -181,6 +188,7 @@ namespace coio {
             private:
                 uring_context* ctx_;
                 int fd_ = -1;
+                bool stream_oriented_ = false;
             };
 
             template<typename Tag, typename... Args>
@@ -243,9 +251,7 @@ namespace coio {
             using scheduler_base::scheduler_base;
 
             [[nodiscard]]
-            COIO_ALWAYS_INLINE auto make_io_object(int fd) const -> io_object {
-                return io_object{*ctx_, fd};
-            }
+            auto make_io_object(int fd) const -> io_object ;
         };
 
         template<typename T = void, typename Alloc = void>
@@ -291,14 +297,27 @@ namespace coio {
         public:
             uring_node_for(int fd, uring_context& context) noexcept : uring_node(context, fd) {}
 
+        protected:
             auto do_start() noexcept -> start_result {
+                if (fd == -1) [[unlikely]] {
+                    result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
+                    return start_result::completed;
+                }
+
+                auto derived = static_cast<uring_state_base_for<Tag>*>(this);
+                if constexpr (requires { derived->try_complete(); }) {
+                    if (derived->try_complete()) {
+                        return start_result::completed;
+                    }
+                }
+
                 std::scoped_lock _{context_.uring_mtx_};
                 auto sqe = context_.allocate_sqe();
                 if (sqe == nullptr) {
                     result.set_error(std::make_error_code(std::errc::no_buffer_space));
                     return start_result::completed;
                 }
-                static_cast<uring_state_base_for<Tag>*>(this)->prepare(sqe);
+                derived->prepare(sqe);
                 ::io_uring_sqe_set_data(sqe, static_cast<uring_node*>(this));
                 // TODO: To suppress TSAN false positives, we need to add more TSAN annotations! see https://github.com/axboe/liburing/issues/1514
                 COIO_TSAN_RELEASE(static_cast<uring_node*>(this));
@@ -356,6 +375,9 @@ namespace coio {
             auto prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         private:
+            auto complete(int cqe_res) noexcept -> void override;
+
+        private:
             std::span<std::byte> buffer_;
         };
 
@@ -387,6 +409,9 @@ namespace coio {
             auto prepare(::io_uring_sqe* sqe) noexcept -> void;
 
         private:
+            auto complete(int cqe_res) noexcept -> void override;
+
+        private:
             std::size_t offset_;
             std::span<std::byte> buffer_;
         };
@@ -413,14 +438,21 @@ namespace coio {
         template<>
         class uring_state_base_for<receive_tag> : public uring_node_for<receive_tag> {
         public:
-            uring_state_base_for(int fd, uring_context& context, std::span<std::byte> buffer) noexcept :
+            uring_state_base_for(int fd, uring_context& context, std::span<std::byte> buffer, bool stream_oriented) noexcept :
                 uring_node_for(fd, context),
-                buffer_(buffer) {}
+                buffer_(buffer),
+                stream_oriented_(stream_oriented) {}
 
             auto prepare(::io_uring_sqe* sqe) noexcept -> void;
 
+            auto try_complete() noexcept -> bool;
+
+        private:
+            auto complete(int cqe_res) noexcept -> void override;
+
         private:
             std::span<std::byte> buffer_;
+            bool stream_oriented_;
         };
 
 

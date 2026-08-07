@@ -39,4 +39,10 @@ foreach(COIO_TEST_SOURCE IN LISTS COIO_TEST_SOURCES)
         NAME ${COIO_TEST_NAME}
         COMMAND $<TARGET_FILE:${COIO_TEST_NAME}>
     )
+
+    set_tests_properties(
+        ${COIO_TEST_NAME}
+        PROPERTIES
+        TIMEOUT 120
+    )
 endforeach()

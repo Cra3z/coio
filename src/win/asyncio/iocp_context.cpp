@@ -35,6 +35,17 @@ namespace coio {
             auto wsa_init_library() -> void {
                 static wsa_init_guard _{};
             }
+
+            auto is_stream_socket(::SOCKET socket) -> bool {
+                if (socket == INVALID_SOCKET) return false;
+                int type = 0;
+                int len = sizeof(type);
+                throw_wsa_error(
+                    ::getsockopt(socket, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &len),
+                    "make_io_object"
+                );
+                return type == SOCK_STREAM;
+            }
         }
     }
 
@@ -100,6 +111,9 @@ namespace coio {
             break;
         case detail::seek_whence::seek_cur:
             method = FILE_BEGIN;
+            if (offset > static_cast<std::size_t>(std::numeric_limits<::LONGLONG>::max()) - offset_) {
+                throw std::system_error{std::make_error_code(std::errc::value_too_large), "seek"};
+            }
             offset = offset_ + offset;
             break;
         case detail::seek_whence::seek_end:
@@ -134,7 +148,7 @@ namespace coio {
     }
 
     iocp_context::scheduler::socket_object::socket_object(iocp_context& ctx, detail::socket_native_handle_type sock)
-        : io_object(ctx, std::bit_cast<::HANDLE>(sock)) {}
+        : io_object(ctx, std::bit_cast<::HANDLE>(sock)), stream_oriented_(detail::is_stream_socket(sock)) {}
 
     iocp_context::scheduler::socket_object::~socket_object() {
         close();
@@ -148,11 +162,11 @@ namespace coio {
     }
 
     auto iocp_context::scheduler::socket_object::receive(std::span<std::byte> buffer) -> std::size_t {
-        return detail::socket::receive(std::bit_cast<::SOCKET>(handle_), buffer);
+        return detail::socket::receive(std::bit_cast<::SOCKET>(handle_), buffer, stream_oriented_);
     }
 
     auto iocp_context::scheduler::socket_object::send(std::span<const std::byte> buffer) -> std::size_t {
-        return detail::socket::send(std::bit_cast<::SOCKET>(handle_), buffer);
+        return detail::socket::send(std::bit_cast<::SOCKET>(handle_), buffer, stream_oriented_);
     }
 
     auto iocp_context::scheduler::socket_object::receive_from(std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t> {
@@ -161,6 +175,14 @@ namespace coio {
 
     auto iocp_context::scheduler::socket_object::send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
         return detail::socket::send_to(std::bit_cast<::SOCKET>(handle_), buffer, dest);
+    }
+
+    auto iocp_context::scheduler::socket_object::connect(const endpoint& peer) -> void {
+        detail::socket::connect(std::bit_cast<::SOCKET>(handle_), peer);
+    }
+
+    auto iocp_context::scheduler::socket_object::accept() -> detail::socket_native_handle_type {
+        return detail::socket::accept(std::bit_cast<::SOCKET>(handle_));
     }
 
     auto iocp_context::scheduler::make_io_object(HANDLE handle) const -> file_object try {
@@ -295,11 +317,16 @@ namespace coio {
         auto iocp_state_base_for<read_some_at_tag>::complete(::DWORD bytes_transferred, ::DWORD error) noexcept -> void {
             if (error) {
                 if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
-                else if (error == ERROR_HANDLE_EOF or error == ERROR_BROKEN_PIPE) result.set_value(0);
+                else if (error == ERROR_HANDLE_EOF or error == ERROR_BROKEN_PIPE) result.set_error(error::eof);
                 else result.set_error(to_error_code(error));
             }
             else {
-                result.set_value(bytes_transferred);
+                if (bytes_transferred == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(bytes_transferred);
+                }
             }
         }
 
@@ -349,7 +376,7 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return start_result::completed;
             }
-            if (buffer_.empty()) [[unlikely]] {
+            if (stream_oriented_ and buffer_.empty()) [[unlikely]] {
                 result.set_value(0);
                 return start_result::completed;
             }
@@ -386,7 +413,12 @@ namespace coio {
                 result.set_error(to_error_code(error));
             }
             else {
-                result.set_value(bytes_transferred);
+                if (stream_oriented_ and bytes_transferred == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(bytes_transferred);
+                }
             }
         }
 
@@ -396,7 +428,7 @@ namespace coio {
                 result.set_error(std::make_error_code(std::errc::bad_file_descriptor));
                 return start_result::completed;
             }
-            if (buffer_.empty()) [[unlikely]] {
+            if (buffer_.empty() and stream_oriented_) [[unlikely]] {
                 result.set_value(0);
                 return start_result::completed;
             }
@@ -683,8 +715,18 @@ namespace coio {
 
         auto iocp_state_base_for<connect_tag>::complete(::DWORD, ::DWORD error) noexcept -> void {
             if (error) {
-                if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
-                else result.set_error(to_error_code(error));
+                if (error == ERROR_OPERATION_ABORTED) {
+                    result.set_stopped();
+                    return;
+                }
+                switch (error) {
+                case ERROR_CONNECTION_REFUSED: error = WSAECONNREFUSED; break;
+                case ERROR_NETWORK_UNREACHABLE: error = WSAENETUNREACH; break;
+                case ERROR_HOST_UNREACHABLE: error = WSAEHOSTUNREACH; break;
+                case ERROR_SEM_TIMEOUT: error = WSAETIMEDOUT; break;
+                default: break;
+                }
+                result.set_error(to_error_code(error));
                 return;
             }
             if (::setsockopt(

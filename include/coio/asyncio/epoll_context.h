@@ -102,6 +102,7 @@ namespace coio {
                 io_object(io_object&& other) noexcept :
                     ctx_(other.ctx_),
                     fd_(std::exchange(other.fd_, -1)),
+                    stream_oriented_(std::exchange(other.stream_oriented_, false)),
                     data_(std::exchange(other.data_, {})) {}
 
                 ~io_object();
@@ -114,6 +115,7 @@ namespace coio {
                 auto swap(io_object& other) noexcept -> void {
                     std::ranges::swap(ctx_, other.ctx_);
                     std::ranges::swap(fd_, other.fd_);
+                    std::ranges::swap(stream_oriented_, other.stream_oriented_);
                     std::ranges::swap(data_, other.data_);
                 }
 
@@ -147,6 +149,11 @@ namespace coio {
                 [[nodiscard]]
                 auto send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
 
+                auto connect(const endpoint& peer) -> void;
+
+                [[nodiscard]]
+                auto accept() -> detail::socket_native_handle_type;
+
                 auto read_some(std::span<std::byte> buffer) -> std::size_t;
 
                 auto write_some(std::span<const std::byte> buffer) -> std::size_t;
@@ -173,7 +180,7 @@ namespace coio {
             public:
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) noexcept {
-                    return async_initiate<detail::receive_tag>(buffer);
+                    return async_initiate<detail::receive_tag>(buffer, stream_oriented_);
                 }
 
                 [[nodiscard]]
@@ -224,6 +231,7 @@ namespace coio {
             private:
                 epoll_context* ctx_;
                 int fd_ = -1;
+                bool stream_oriented_ = false;
                 per_fd_data* data_ = nullptr;
             };
 
@@ -409,9 +417,10 @@ namespace coio {
         template<>
         class epoll_state_base_for<receive_tag> : public epoll_node_for<receive_tag> {
         public:
-            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, std::span<std::byte> buffer) noexcept :
+            epoll_state_base_for(int fd, epoll_context& context, epoll_context::per_fd_data* data, std::span<std::byte> buffer, bool stream_oriented) noexcept :
                 epoll_node_for(fd, context, data),
-                buffer_(buffer) {}
+                buffer_(buffer),
+                stream_oriented_(stream_oriented) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -423,6 +432,7 @@ namespace coio {
 
         private:
             std::span<std::byte> buffer_;
+            bool stream_oriented_;
         };
 
         /// async_send

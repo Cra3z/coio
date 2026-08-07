@@ -33,8 +33,9 @@ namespace coio {
             impl_.close();
         }
 
-        COIO_ALWAYS_INLINE auto spawn(execution::sender auto sndr) noexcept -> void {
-            execution::spawn(execution::upon_error(std::move(sndr), terminate_on_error), get_token());
+        template<execution::sender Sndr, typename Env = execution::env<>>
+        COIO_ALWAYS_INLINE auto spawn(Sndr sndr, Env env = {}) noexcept -> void {
+            execution::spawn(execution::upon_error(std::move(sndr), terminate_on_error), get_token(), std::move(env));
         }
 
         COIO_ALWAYS_INLINE auto spawn_on(execution::scheduler auto sched, execution::sender auto sndr) noexcept -> void {
@@ -45,9 +46,10 @@ namespace coio {
             );
         }
 
+        template<execution::sender Sndr, typename Env = execution::env<>>
         [[nodiscard]]
-        COIO_ALWAYS_INLINE auto spawn_future(execution::sender auto sndr) noexcept {
-            return execution::spawn_future(execution::upon_error(std::move(sndr), terminate_on_error), get_token());
+        COIO_ALWAYS_INLINE auto spawn_future(Sndr sndr, Env env = {}) noexcept {
+            return execution::spawn_future(execution::upon_error(std::move(sndr), terminate_on_error), get_token(), std::move(env));
         }
 
         [[nodiscard]]

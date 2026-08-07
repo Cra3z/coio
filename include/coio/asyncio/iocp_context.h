@@ -234,7 +234,9 @@ namespace coio {
             public:
                 socket_object(iocp_context& ctx, detail::socket_native_handle_type sock);
 
-                socket_object(socket_object&& other) noexcept : io_object(std::move(other)) {}
+                socket_object(socket_object&& other) noexcept :
+                    io_object(std::move(other)),
+                    stream_oriented_(std::exchange(other.stream_oriented_, false)) {}
 
                 ~socket_object();
 
@@ -245,6 +247,7 @@ namespace coio {
 
                 auto swap(socket_object& other) noexcept -> void {
                     swap_handle(other);
+                    std::ranges::swap(stream_oriented_, other.stream_oriented_);
                 }
 
                 friend auto swap(socket_object& lhs, socket_object& rhs) noexcept -> void {
@@ -270,14 +273,19 @@ namespace coio {
                 [[nodiscard]]
                 auto send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
 
+                auto connect(const endpoint& peer) -> void;
+
+                [[nodiscard]]
+                auto accept() -> detail::socket_native_handle_type;
+
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_receive(std::span<std::byte> buffer) noexcept {
-                    return async_initiate<detail::receive_tag>(buffer);
+                    return async_initiate<detail::receive_tag>(buffer, stream_oriented_);
                 }
 
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_send(std::span<const std::byte> buffer) noexcept {
-                    return async_initiate<detail::send_tag>(buffer);
+                    return async_initiate<detail::send_tag>(buffer, stream_oriented_);
                 }
 
                 [[nodiscard]]
@@ -299,6 +307,9 @@ namespace coio {
                 COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) noexcept {
                     return async_initiate<detail::connect_tag>(peer);
                 }
+
+            private:
+                bool stream_oriented_;
             };
 
         public:
@@ -379,8 +390,8 @@ namespace coio {
         template<>
         class iocp_state_base_for<receive_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::span<std::byte> buffer) noexcept
-                : iocp_node(ctx, handle_), buffer_(buffer) {}
+            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::span<std::byte> buffer, bool stream_oriented_) noexcept
+                : iocp_node(ctx, handle_), buffer_(buffer), stream_oriented_(stream_oriented_) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -392,14 +403,15 @@ namespace coio {
 
         private:
             std::span<std::byte> buffer_;
+            bool stream_oriented_;
         };
 
         /// async_send
         template<>
         class iocp_state_base_for<send_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::span<const std::byte> buffer) noexcept
-                : iocp_node(ctx, handle_), buffer_(buffer) {}
+            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::span<const std::byte> buffer, bool stream_oriented_) noexcept
+                : iocp_node(ctx, handle_), buffer_(buffer), stream_oriented_(stream_oriented_) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -411,6 +423,7 @@ namespace coio {
 
         private:
             std::span<const std::byte> buffer_;
+            bool stream_oriented_;
         };
 
         /// async_receive_from

@@ -46,13 +46,17 @@ namespace coio::detail {
     auto file_write_at(void* handle, std::size_t offset, std::span<const std::byte> buffer) -> std::size_t;
 
     namespace socket {
-        auto receive(::UINT_PTR handle, std::span<std::byte> buffer) -> std::size_t;
+        auto receive(::UINT_PTR handle, std::span<std::byte> buffer, bool stream_oriented) -> std::size_t;
 
-        auto send(::UINT_PTR handle, std::span<const std::byte> buffer) -> std::size_t;
+        auto send(::UINT_PTR handle, std::span<const std::byte> buffer, bool stream_oriented) -> std::size_t;
 
         auto receive_from(::UINT_PTR handle, std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t>;
 
         auto send_to(::UINT_PTR handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
+
+        auto connect(::UINT_PTR handle, const endpoint& peer) -> void;
+
+        auto accept(::UINT_PTR handle) -> ::UINT_PTR;
     }
 
     auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6>;

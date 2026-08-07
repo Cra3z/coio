@@ -1,11 +1,24 @@
 #include <netdb.h>
 #include <coio/net/resolver.h>
-#include <coio/utils/scope_exit.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
 #include "../common.h"
 
 namespace coio {
     namespace detail {
+        namespace {
+            struct addrinfo_deleter {
+                COIO_STATIC_CALL_OP auto operator() (::addrinfo* ai_head) COIO_STATIC_CALL_OP_CONST noexcept -> void {
+                    ::freeaddrinfo(ai_head);
+                }
+            };
+
+            auto foreach_addrinfo(std::unique_ptr<::addrinfo, addrinfo_deleter> ai_head) -> generator<resolve_result_t> {
+                for (auto ai_node = ai_head.get(); ai_node != nullptr; ai_node = ai_node->ai_next) {
+                    co_yield {sockaddr_to_endpoint(ai_node->ai_addr), ai_node->ai_canonname ? ai_node->ai_canonname : ""};
+                }
+            }
+        }
+
         auto ai_canonname_v() noexcept -> int {
             return AI_CANONNAME;
         }
@@ -34,7 +47,7 @@ namespace coio {
             return AI_ADDRCONFIG;
         }
 
-        auto resolve_impl(resolve_query_t query, int socktype, int protocol_id) -> generator<resolve_result_t> {
+        auto resolve_unspec_impl(resolve_query_t query, int socktype, int protocol_id) -> generator<resolve_result_t> {
             return resolve_impl(std::move(query), AF_UNSPEC, socktype, protocol_id);
         }
 
@@ -51,12 +64,8 @@ namespace coio {
                 query.service_name.empty() ? nullptr : query.service_name.c_str(),
                 &hints, &ai_head
             )) throw std::system_error(ec, error::gai_category());
-            scope_exit _{[ai_head]() noexcept {
-                ::freeaddrinfo(ai_head);
-            }};
-            for (auto ai_node = ai_head; ai_node != nullptr; ai_node = ai_node->ai_next) {
-                co_yield {sockaddr_to_endpoint(ai_node->ai_addr), ai_node->ai_canonname ? ai_node->ai_canonname : ""};
-            }
+
+            return foreach_addrinfo(std::unique_ptr<::addrinfo, addrinfo_deleter>{ai_head});
         }
     }
 

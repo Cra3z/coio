@@ -50,6 +50,8 @@ namespace coio {
         context_.submit_sqes();
     }
 
+    uring_context::scheduler::io_object::io_object(uring_context& ctx, int fd) : ctx_(&ctx), fd_(fd), stream_oriented_(detail::is_stream_oriented_(fd)) {}
+
     uring_context::scheduler::io_object::~io_object() {
         close();
     }
@@ -73,7 +75,7 @@ namespace coio {
     }
 
     auto uring_context::scheduler::io_object::receive(std::span<std::byte> buffer) -> std::size_t {
-        return detail::socket::receive(fd_, buffer);
+        return detail::socket::receive(fd_, buffer, stream_oriented_);
     }
 
     auto uring_context::scheduler::io_object::send(std::span<const std::byte> buffer) -> std::size_t {
@@ -86,6 +88,14 @@ namespace coio {
 
     auto uring_context::scheduler::io_object::send_to(std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t {
         return detail::socket::send_to(fd_, buffer, dest);
+    }
+
+    auto uring_context::scheduler::io_object::connect(const endpoint& peer) -> void {
+        detail::socket::connect(fd_, peer);
+    }
+
+    auto uring_context::scheduler::io_object::accept() -> detail::socket_native_handle_type {
+        return detail::socket::accept(fd_);
     }
 
     auto uring_context::scheduler::io_object::read_some(std::span<std::byte> buffer) -> std::size_t {
@@ -110,6 +120,14 @@ namespace coio {
 
     auto uring_context::scheduler::io_object::resize(std::size_t new_size) -> void {
         detail::file_resize(fd_, new_size);
+    }
+
+    auto uring_context::scheduler::make_io_object(int fd) const -> io_object try {
+        return io_object{*ctx_, fd};
+    }
+    catch (...) {
+        ::close(fd);
+        throw;
     }
 
     uring_context::uring_context(std::size_t entries, std::pmr::memory_resource& memory_resource) : loop_base(memory_resource) {
@@ -261,6 +279,26 @@ namespace coio {
             ::io_uring_prep_read(sqe, fd, buffer_.data(), buffer_.size(), -1);
         }
 
+        auto uring_state_base_for<read_some_tag>::complete(int cqe_res) noexcept -> void {
+            if (cqe_res < 0) {
+                const std::error_code ec{-cqe_res, std::system_category()};
+                if (ec == std::errc::operation_canceled) {
+                    result.set_stopped();
+                }
+                else {
+                    result.set_error(ec);
+                }
+            }
+            else {
+                if (cqe_res == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(cqe_res);
+                }
+            }
+        }
+
 
         /// async_write_some
         auto uring_state_base_for<write_some_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
@@ -273,6 +311,25 @@ namespace coio {
             ::io_uring_prep_read(sqe, fd, buffer_.data(), buffer_.size(), offset_);
         }
 
+        auto uring_state_base_for<read_some_at_tag>::complete(int cqe_res) noexcept -> void {
+            if (cqe_res < 0) {
+                const std::error_code ec{-cqe_res, std::system_category()};
+                if (ec == std::errc::operation_canceled) {
+                    result.set_stopped();
+                }
+                else {
+                    result.set_error(ec);
+                }
+            }
+            else {
+                if (cqe_res == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(cqe_res);
+                }
+            }
+        }
 
         /// async_write_some_at
         auto uring_state_base_for<write_some_at_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {
@@ -285,6 +342,31 @@ namespace coio {
             ::io_uring_prep_recv(sqe, fd, buffer_.data(), buffer_.size(), 0);
         }
 
+        auto uring_state_base_for<receive_tag>::try_complete() noexcept -> bool {
+            if (not stream_oriented_ or not buffer_.empty()) return false;
+            result.set_value(0);
+            return true;
+        }
+
+        auto uring_state_base_for<receive_tag>::complete(int cqe_res) noexcept -> void {
+            if (cqe_res < 0) {
+                const std::error_code ec{-cqe_res, std::system_category()};
+                if (ec == std::errc::operation_canceled) {
+                    result.set_stopped();
+                }
+                else {
+                    result.set_error(ec);
+                }
+            }
+            else {
+                if (stream_oriented_ and cqe_res == 0 and not buffer_.empty()) [[unlikely]] {
+                    result.set_error(error::eof);
+                }
+                else {
+                    result.set_value(cqe_res);
+                }
+            }
+        }
 
         /// async_send
         auto uring_state_base_for<send_tag>::prepare(::io_uring_sqe* sqe) noexcept -> void {

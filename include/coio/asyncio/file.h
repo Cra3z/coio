@@ -201,19 +201,7 @@ namespace coio {
              */
             [[nodiscard]]
             COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) {
-                return let_value(
-                    this->impl_.async_read_some(buffer),
-                    [total = buffer.size()](std::size_t bytes_transferred) noexcept {
-                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
-                        if (bytes_transferred == 0 and total > 0) [[unlikely]] {
-                            result.set_error(error::eof);
-                        }
-                        else {
-                            result.set_value(bytes_transferred);
-                        }
-                        return result;
-                    }
-                );
+                return this->impl_.async_read_some(buffer);
             }
 
             /**
@@ -272,19 +260,7 @@ namespace coio {
              * \return a sender of `std::size_t` representing the number of bytes read.
              */
             COIO_ALWAYS_INLINE auto async_read_some_at(std::size_t offset, std::span<std::byte> buffer) {
-                return let_value(
-                    this->impl_.async_read_some_at(offset, buffer),
-                    [total = buffer.size()](std::size_t bytes_transferred) noexcept {
-                        async_result<execution::set_value_t(std::size_t), execution::set_error_t(std::error_code)> result;
-                        if (bytes_transferred == 0 and total > 0) [[unlikely]] {
-                            result.set_error(error::eof);
-                        }
-                        else {
-                            result.set_value(bytes_transferred);
-                        }
-                        return result;
-                    }
-                );
+                return this->impl_.async_read_some_at(offset, buffer);
             }
 
             /**

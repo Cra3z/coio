@@ -10,6 +10,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h> // IWYU pragma: keep
 #include <coio/detail/error.h> // IWYU pragma: keep
 
@@ -60,6 +61,22 @@ namespace coio::detail {
     // exposed publicly through the io_object member functions
     enum class seek_whence;
 
+    COIO_ALWAYS_INLINE auto is_stream_oriented_(int fd) -> bool {
+        if (fd == -1) [[unlikely]] return false;
+        struct ::stat st{};
+        if (::fstat(fd, &st) == -1) [[unlikely]] {
+            throw std::system_error{errno, std::system_category(), "fstat"};
+        }
+        if (not S_ISSOCK(st.st_mode)) return true;
+        int type = 0;
+        ::socklen_t len = sizeof(type);
+        throw_last_error(
+            ::getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len),
+            "make_io_object"
+        );
+        return type == SOCK_STREAM;
+    }
+
     auto file_read(int handle, std::span<std::byte> buffer) -> std::size_t;
 
     auto file_write(int handle, std::span<const std::byte> buffer) -> std::size_t;
@@ -73,13 +90,17 @@ namespace coio::detail {
     auto file_resize(int handle, std::size_t new_size) -> void;
 
     namespace socket {
-        auto receive(int handle, std::span<std::byte> buffer) -> std::size_t;
+        auto receive(int handle, std::span<std::byte> buffer, bool stream_oriented) -> std::size_t;
 
         auto send(int handle, std::span<const std::byte> buffer) -> std::size_t;
 
         auto receive_from(int handle, std::span<std::byte> buffer) -> std::pair<endpoint, std::size_t>;
 
         auto send_to(int handle, std::span<const std::byte> buffer, const endpoint& dest) -> std::size_t;
+
+        auto connect(int handle, const endpoint& peer) -> void;
+
+        auto accept(int handle) -> int;
     }
 
     auto endpoint_to_sockaddr_in(const endpoint& addr) noexcept -> std::variant<::sockaddr_in, ::sockaddr_in6>;

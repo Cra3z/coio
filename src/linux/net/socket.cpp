@@ -196,8 +196,11 @@ namespace coio::detail::socket {
         }
     }
 
-    auto receive(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
+    auto receive(socket_native_handle_type handle, std::span<std::byte> buffer, bool stream_oriented) -> std::size_t {
         check_fd(handle);
+        if (stream_oriented and buffer.empty()) [[unlikely]] {
+            return 0;
+        }
         while (true) {
             ::ssize_t n = ::recv(handle, buffer.data(), buffer.size(), 0);
             if (n == -1 and is_blocking_errno(errno)) {
@@ -205,6 +208,9 @@ namespace coio::detail::socket {
                 continue;
             }
             throw_last_error(n, "receive");
+            if (stream_oriented and n == 0 and not buffer.empty()) [[unlikely]] {
+                throw std::system_error{error::eof, "receive"};
+            }
             return n;
         }
     }

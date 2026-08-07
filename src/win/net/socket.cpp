@@ -262,8 +262,11 @@ namespace coio::detail::socket {
         }
     }
 
-    auto receive(socket_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
+    auto receive(socket_native_handle_type handle, std::span<std::byte> buffer, bool stream_oriented) -> std::size_t {
         check_handle(handle);
+        if (stream_oriented and buffer.empty()) [[unlikely]] {
+            return 0;
+        }
         while (true) {
             const int n = ::recv(
                 handle,
@@ -278,12 +281,18 @@ namespace coio::detail::socket {
                 }
                 throw_wsa_error_value(err, "receive");
             }
+            if (stream_oriented and n == 0 and not buffer.empty()) [[unlikely]] {
+               throw std::system_error{error::eof, "receive"};
+            }
             return static_cast<std::size_t>(n);
         }
     }
 
-    auto send(socket_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
+    auto send(socket_native_handle_type handle, std::span<const std::byte> buffer, bool stream_oriented) -> std::size_t {
         check_handle(handle);
+        if (stream_oriented and buffer.empty()) [[unlikely]] {
+            return 0;
+        }
         while (true) {
             const int n = ::send(
                 handle,
