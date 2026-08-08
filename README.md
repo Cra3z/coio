@@ -95,5 +95,5 @@ target_link_libraries(<your-target> coio::coio)
 
 ### Usage & Document
 
-- [API Reference](docs/reference.md)
+- [API Reference](https://cra3z.github.io/coio/)
 - [Examples](examples/)

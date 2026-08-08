@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+    <path d="M 50,10
+           A 80,80 0 0,1 90,79.3
+           A 80,80 0 0,1 10,79.3
+           A 80,80 0 0,1 50,10 Z"
+          fill="rgb(250, 253, 253)" />
+
+    <text x="50" y="55"
+          fill="rgb(64, 81, 181)"
+          font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+          font-size="28"
+          font-style="italic"
+          font-weight="bold"
+          text-anchor="middle"
+          dominant-baseline="central"
+          letter-spacing="-0.5px">coio</text>
+</svg>

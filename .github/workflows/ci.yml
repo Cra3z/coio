@@ -1,0 +1,128 @@
+name: Continuous Integration Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - docs/**
+      - mkdocs.yml
+      - "**/*.md"
+      - "*.md"
+      - README*
+      - Dockerfile
+      - LICENSE.txt
+      - .github/workflows/docs.yml
+      - .gitignore
+      - .dockerignore
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - docs/**
+      - mkdocs.yml
+      - "**/*.md"
+      - "*.md"
+      - README*
+      - Dockerfile
+      - LICENSE.txt
+      - .github/workflows/docs.yml
+      - .gitignore
+      - .dockerignore
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+
+jobs:
+  linux:
+    name: linux (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: GCC | Debug (ASan),          cc: gcc-14,   cxx: g++-14,     build_type: Debug,   asan: "ON",  ubsan: "OFF", tsan: "OFF", examples: "OFF" }
+          - { name: GCC | Debug (TSan),          cc: gcc-14,   cxx: g++-14,     build_type: Debug,   asan: "OFF", ubsan: "OFF", tsan: "ON",  examples: "OFF" }
+          - { name: GCC | Release,               cc: gcc-14,   cxx: g++-14,     build_type: Release, asan: "OFF", ubsan: "OFF", tsan: "OFF", examples: "OFF" }
+          - { name: Clang | Debug (ASan, UBSan), cc: clang-18, cxx: clang++-18, build_type: Debug,   asan: "ON",  ubsan: "ON",  tsan: "OFF", examples: "OFF" }
+          - { name: Clang | Debug (TSan),        cc: clang-18, cxx: clang++-18, build_type: Debug,   asan: "OFF", ubsan: "OFF", tsan: "ON",  examples: "OFF" }
+          - { name: Clang | Release,             cc: clang-18, cxx: clang++-18, build_type: Release, asan: "OFF", ubsan: "OFF", tsan: "OFF", examples: "OFF" }
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build liburing-dev
+
+      - name: Cache CPM packages
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-linux-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+          restore-keys: cpm-linux-
+
+      - name: Configure
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCOIO_BUILD_TESTS=ON
+          -DCOIO_BUILD_EXAMPLES=${{ matrix.examples }}
+          -DCOIO_BUILD_WITH_ASAN=${{ matrix.asan }}
+          -DCOIO_BUILD_WITH_UBSAN=${{ matrix.ubsan }}
+          -DCOIO_BUILD_WITH_TSAN=${{ matrix.tsan }}
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: windows (${{ matrix.name }})
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: MSVC | Debug (ASan), build_type: Debug,   asan: "ON",  examples: "OFF" }
+          - { name: MSVC | Release,      build_type: Release, asan: "OFF", examples: "OFF" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CPM packages
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-windows-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+          restore-keys: cpm-windows-
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCOIO_BUILD_TESTS=ON
+          -DCOIO_BUILD_EXAMPLES=${{ matrix.examples }}
+          -DCOIO_BUILD_WITH_ASAN=${{ matrix.asan }}
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }}
+
+      - name: Add ASan runtime to PATH
+        if: matrix.asan == 'ON'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $bin = Get-ChildItem -Directory "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64" | Select-Object -Last 1
+          Add-Content $env:GITHUB_PATH $bin.FullName
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure

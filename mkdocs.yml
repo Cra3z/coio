@@ -1,0 +1,76 @@
+site_name: coio
+site_description: A C++ asynchronous I/O library based on the sender/receiver model
+site_url: https://cra3z.github.io/coio/
+repo_url: https://github.com/Cra3z/coio
+repo_name: Cra3z/coio
+docs_dir: docs
+
+theme:
+  name: material
+  favicon: favicon.svg
+  logo: favicon.svg
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Concepts: concepts.md
+  - Coroutine Types:
+      - task: coroutines/task.md
+      - generator: coroutines/generator.md
+  - Execution Contexts:
+      - Overview & Thread Safety: execution/contexts.md
+      - time_loop: execution/time-loop.md
+      - epoll_context: execution/epoll.md
+      - uring_context: execution/uring.md
+      - iocp_context: execution/iocp.md
+      - work_guard: execution/work-guard.md
+      - polymorphic_scheduler: execution/polymorphic-scheduler.md
+  - Asynchronous I/O:
+      - I/O Model & Lifetime: io/model.md
+      - Files: io/files.md
+      - Pipes: io/pipes.md
+      - Read/Write Algorithms: io/algorithms.md
+  - Networking:
+      - Addresses & Endpoints: net/addresses.md
+      - Protocols: net/protocols.md
+      - Sockets: net/sockets.md
+      - Resolver: net/resolver.md
+  - Utilities:
+      - Sender Algorithms: utils/algorithms.md
+      - Synchronization Primitives: utils/synchronization.md
+      - async_scope: utils/async-scope.md
+      - Timers: utils/timer.md
+      - Signal Handling: utils/signal-wait.md
+      - Buffers & Queues: utils/buffers.md
+      - Miscellaneous Utilities: utils/misc.md
+  - Error Handling: error-handling.md
+  - Thread Safety Summary: thread-safety.md
