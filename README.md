@@ -93,7 +93,73 @@ CPMFindPackage(
 target_link_libraries(<your-target> coio::coio)
 ```
 
+### Example
+Implement a TCP echo server:
+```c++
+#include <iostream>
+#include <coio/core.h>
+#include <coio/asyncio/io.h>
+#include <coio/net/socket.h>
+#include <coio/net/tcp.h>
+
+#if COIO_OS_LINUX
+#if COIO_HAS_IO_URING
+#include <coio/asyncio/uring_context.h>
+using io_context = coio::uring_context;
+#else
+#include <coio/asyncio/epoll_context.h>
+using io_context = coio::epoll_context;
+#endif
+#elif COIO_OS_WINDOWS
+#include <coio/asyncio/iocp_context.h>
+using io_context = coio::iocp_context;
+#else
+#error "unsupported!"
+#endif
+
+using tcp_socket = coio::tcp::socket<io_context::scheduler>;
+using tcp_acceptor = coio::tcp::acceptor<io_context::scheduler>;
+
+auto handle_connection(tcp_socket socket) -> io_context::task<> try {
+    char buffer[1024];
+    while (true) {
+        const auto length = co_await socket.async_read_some(coio::as_writable_bytes(buffer));
+        auto [ec, n] = co_await coio::async_write(socket, coio::as_bytes(buffer, length));
+        if (ec) {
+            if (ec == std::errc::operation_canceled) {
+                co_await coio::just_stopped();
+            }
+            else {
+                co_await coio::just_error(ec);
+            }
+        }
+    }
+}
+catch (const std::system_error& e) {
+    std::cerr << "connetion error: " << e.what() << '\n';
+}
+
+auto start_server(coio::async_scope& scope) -> io_context::task<> try {
+    io_context::scheduler sched = co_await coio::read_scheduler();
+    tcp_acceptor acceptor{sched, coio::endpoint{coio::ipv4_address::any(), 8086}};
+    while (true) {
+        scope.spawn_on(sched, handle_connection(co_await acceptor.async_accept()));
+    }
+}
+catch (const std::system_error& e) {
+    std::cerr << "acceptor error: " << e.what() << '\n';
+}
+
+auto main() -> int {
+    io_context context;
+    coio::async_scope scope;
+    scope.spawn_on(context.get_scheduler(), start_server(scope));
+    context.run();
+    coio::this_thread::sync_wait(scope.join());
+}
+```
+
 ### Usage & Document
 
 - [API Reference](https://cra3z.github.io/coio/)
-- [Examples](examples/)
+- [More Examples](examples)
