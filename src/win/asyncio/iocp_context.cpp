@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <coio/asyncio/iocp_context.h>
 #include <coio/asyncio/file.h>
 #include <coio/detail/suppress_push.h> // IWYU pragma: keep
@@ -46,6 +47,33 @@ namespace coio {
                 );
                 return type == SOCK_STREAM;
             }
+
+            // When enabled, operations that complete synchronously do not queue a completion
+            // packet, so `do_start` must invoke `complete` inline instead of waiting for one.
+            COIO_ALWAYS_INLINE auto try_skip_completion_port_on_success(::HANDLE handle) noexcept -> bool {
+                return ::SetFileCompletionNotificationModes(handle, FILE_SKIP_COMPLETION_PORT_ON_SUCCESS | FILE_SKIP_SET_EVENT_ON_HANDLE);
+            }
+
+            // FILE_SKIP_COMPLETION_PORT_ON_SUCCESS is silently broken for sockets when a
+            // non-IFS layered service provider is installed.
+            auto sockets_support_skip_completion_port() noexcept -> bool {
+                static const bool supported = []() noexcept {
+                    ::DWORD buffer_size = 0;
+                    if (::WSAEnumProtocolsW(nullptr, nullptr, &buffer_size) != SOCKET_ERROR) return true;
+                    if (::WSAGetLastError() != WSAENOBUFS) return false;
+                    auto buffer = std::make_unique_for_overwrite<std::byte[]>(buffer_size);
+                    const auto protocols = reinterpret_cast<::WSAPROTOCOL_INFOW*>(buffer.get());
+                    const int count = ::WSAEnumProtocolsW(nullptr, protocols, &buffer_size);
+                    if (count == SOCKET_ERROR) return false;
+                    for (int i = 0; i < count; ++i) {
+                        if (not (protocols[i].dwServiceFlags1 & XP1_IFS_HANDLES)) return false;
+                    }
+                    return true;
+                }();
+                return supported;
+            }
+
+            constexpr std::size_t iocp_max_wait_count = 16;
         }
     }
 
@@ -71,6 +99,7 @@ namespace coio {
     iocp_context::scheduler::file_object::file_object(iocp_context& ctx, ::HANDLE handle)
         : io_object(ctx, handle) {
         if (handle != INVALID_HANDLE_VALUE and handle != nullptr) {
+            skip_cp_on_success_ = detail::try_skip_completion_port_on_success(handle);
             if (::LARGE_INTEGER current{}; ::SetFilePointerEx(handle, {}, &current, FILE_CURRENT)) {
                 offset_ = static_cast<std::size_t>(current.QuadPart);
             }
@@ -148,7 +177,11 @@ namespace coio {
     }
 
     iocp_context::scheduler::socket_object::socket_object(iocp_context& ctx, detail::socket_native_handle_type sock)
-        : io_object(ctx, std::bit_cast<::HANDLE>(sock)), stream_oriented_(detail::is_stream_socket(sock)) {}
+        : io_object(ctx, std::bit_cast<::HANDLE>(sock)), stream_oriented_(detail::is_stream_socket(sock)) {
+        if (sock != detail::invalid_socket_handle and detail::sockets_support_skip_completion_port()) {
+            skip_cp_on_success_ = detail::try_skip_completion_port_on_success(std::bit_cast<::HANDLE>(sock));
+        }
+    }
 
     iocp_context::scheduler::socket_object::~socket_object() {
         close();
@@ -231,22 +264,39 @@ namespace coio {
                 }
             }
 
-            ::OVERLAPPED* overlapped = nullptr;
-            ::ULONG_PTR key = 0;
-            ::DWORD bytes = 0;
-            const ::BOOL success = ::GetQueuedCompletionStatus(iocp_, &bytes, &key, &overlapped, static_cast<::DWORD>(timeout));
-            const ::DWORD err = success ? 0 : ::GetLastError();
-
-            if (not success and overlapped == nullptr and err != WAIT_TIMEOUT) [[unlikely]] {
-                throw std::system_error{detail::to_error_code(err), "GetQueuedCompletionStatus"};
+            ::OVERLAPPED_ENTRY entries[detail::iocp_max_wait_count];
+            ::ULONG ready_count = 0;
+            const ::BOOL success = ::GetQueuedCompletionStatusEx(
+                iocp_,
+                entries,
+                detail::iocp_max_wait_count,
+                &ready_count,
+                static_cast<::DWORD>(timeout),
+                FALSE
+            );
+            if (not success) {
+                const ::DWORD err = ::GetLastError();
+                if (err != WAIT_TIMEOUT) [[unlikely]] {
+                    throw std::system_error{detail::to_error_code(err), "GetQueuedCompletionStatusEx"};
+                }
+                ready_count = 0;
             }
 
             detail::intrusive_list<node> ready_time_ops{&node::next_}, ready_io_ops{&node::next_};
             timer_queue_.take_ready_timers(ready_time_ops);
 
-            if (overlapped and key != wake_completion_key) {
-                auto op = static_cast<iocp_node*>(overlapped);
-                op->complete(bytes, err);
+            for (::ULONG i = 0; i < ready_count; ++i) {
+                const auto& entry = entries[i];
+                if (entry.lpOverlapped == nullptr or entry.lpCompletionKey == wake_completion_key) continue;
+                const auto op = static_cast<iocp_node*>(entry.lpOverlapped);
+                ::DWORD error = 0;
+                if (entry.lpOverlapped->Internal != 0) { // `Internal` holds the operation's NTSTATUS
+                    ::DWORD unused = 0;
+                    if (not ::GetOverlappedResult(op->handle, entry.lpOverlapped, &unused, FALSE)) {
+                        error = ::GetLastError();
+                    }
+                }
+                op->complete(entry.dwNumberOfBytesTransferred, error);
                 ready_io_ops.push_back(*op);
             }
 
@@ -280,8 +330,6 @@ namespace coio {
             }
         }
 
-        // TODO: Support asynchronous operations for files which use `FILE_SKIP_COMPLETION_PORT_ON_SUCCESS` as notification mode
-
         /// async_read_some_at
         auto iocp_state_base_for<read_some_at_tag>::do_start() noexcept -> start_result {
             if (handle == INVALID_HANDLE_VALUE) [[unlikely]] {
@@ -310,6 +358,10 @@ namespace coio {
                     complete(0, err);
                     return start_result::completed;
                 }
+            }
+            if (skip_cp_on_success) {
+                complete(bytes_read, 0);
+                return start_result::completed;
             }
             return start_result::pending;
         }
@@ -357,6 +409,10 @@ namespace coio {
                 complete(0, err);
                 return start_result::completed;
             }
+            if (skip_cp_on_success) {
+                complete(bytes_written, 0);
+                return start_result::completed;
+            }
             return start_result::pending;
         }
 
@@ -397,6 +453,10 @@ namespace coio {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
+                return start_result::completed;
+            }
+            if (skip_cp_on_success) {
+                complete(bytes_received, 0);
                 return start_result::completed;
             }
             return start_result::pending;
@@ -450,6 +510,10 @@ namespace coio {
                 complete(0, static_cast<::DWORD>(err));
                 return start_result::completed;
             }
+            if (skip_cp_on_success) {
+                complete(bytes_sent, 0);
+                return start_result::completed;
+            }
             return start_result::pending;
         }
 
@@ -497,6 +561,10 @@ namespace coio {
                 complete(0, static_cast<::DWORD>(err));
                 return start_result::completed;
             }
+            if (skip_cp_on_success) {
+                complete(bytes_received, 0);
+                return start_result::completed;
+            }
             return start_result::pending;
         }
 
@@ -541,6 +609,10 @@ namespace coio {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
+                return start_result::completed;
+            }
+            if (skip_cp_on_success) {
+                complete(bytes_sent, 0);
                 return start_result::completed;
             }
             return start_result::pending;
@@ -605,6 +677,10 @@ namespace coio {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
+                return start_result::completed;
+            }
+            if (skip_cp_on_success) {
+                complete(bytes_received, 0);
                 return start_result::completed;
             }
             return start_result::pending;
@@ -708,6 +784,10 @@ namespace coio {
                 const int err = ::WSAGetLastError();
                 if (err == WSA_IO_PENDING) return start_result::pending;
                 complete(0, static_cast<::DWORD>(err));
+                return start_result::completed;
+            }
+            if (skip_cp_on_success) {
+                complete(0, 0);
                 return start_result::completed;
             }
             return start_result::pending;

@@ -36,7 +36,8 @@ namespace coio {
         struct iocp_node : ::OVERLAPPED, node {
             friend iocp_context;
         public:
-            explicit iocp_node(iocp_context& context, ::HANDLE handle) noexcept : ::OVERLAPPED{}, node(context), handle(handle) {}
+            explicit iocp_node(iocp_context& context, ::HANDLE handle, bool skip_cp_on_success) noexcept :
+                ::OVERLAPPED{}, node(context), handle(handle), skip_cp_on_success(skip_cp_on_success) {}
 
         protected:
             virtual auto complete(::DWORD bytes_transferred, ::DWORD error) noexcept -> void = 0;
@@ -45,6 +46,7 @@ namespace coio {
 
         protected:
             ::HANDLE handle;
+            bool skip_cp_on_success;
         };
 
     public:
@@ -88,6 +90,7 @@ namespace coio {
                             return state<Rcvr>{
                                 std::move(rcvr),
                                 std::exchange(handle, INVALID_HANDLE_VALUE),
+                                std::exchange(skip_cp_on_success, false),
                                 *std::exchange(context, nullptr),
                                 std::forward<FwdArgs>(fwd_args)...
                             };
@@ -105,8 +108,9 @@ namespace coio {
                     return env{*context};
                 }
 
-                ::HANDLE handle;
                 iocp_context* context;
+                ::HANDLE handle;
+                bool skip_cp_on_success;
                 std::tuple<Args...> args;
             };
 
@@ -128,7 +132,8 @@ namespace coio {
 
                 io_object(io_object&& other) noexcept :
                     ctx_(other.ctx_),
-                    handle_(std::exchange(other.handle_, INVALID_HANDLE_VALUE))
+                    handle_(std::exchange(other.handle_, INVALID_HANDLE_VALUE)),
+                    skip_cp_on_success_(std::exchange(other.skip_cp_on_success_, false))
                 {}
 
                 ~io_object() = default;
@@ -141,13 +146,19 @@ namespace coio {
                 auto swap_handle(io_object& other) noexcept -> void {
                     std::ranges::swap(ctx_, other.ctx_);
                     std::ranges::swap(handle_, other.handle_);
+                    std::ranges::swap(skip_cp_on_success_, other.skip_cp_on_success_);
                 }
 
                 template<typename Tag, typename... Args>
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_initiate(Args... args) noexcept {
                     return stop_when(
-                        io_sender<Tag, Args...>{handle_, ctx_, std::tuple<Args...>{std::move(args)...}},
+                        io_sender<Tag, Args...>{
+                            ctx_,
+                            handle_,
+                            skip_cp_on_success_,
+                            std::tuple<Args...>{std::move(args)...}
+                        },
                         ctx_->stop_source_.get_token()
                     );
                 }
@@ -155,6 +166,7 @@ namespace coio {
             protected:
                 iocp_context* ctx_;
                 ::HANDLE handle_ = INVALID_HANDLE_VALUE;
+                bool skip_cp_on_success_ = false;
             };
 
             class file_object final : public io_object {
@@ -175,8 +187,7 @@ namespace coio {
                 }
 
                 auto swap(file_object& other) noexcept -> void {
-                    std::ranges::swap(ctx_, other.ctx_);
-                    std::ranges::swap(handle_, other.handle_);
+                    swap_handle(other);
                     std::ranges::swap(offset_, other.offset_);
                 }
 
@@ -350,8 +361,9 @@ namespace coio {
         template<>
         class iocp_state_base_for<read_some_at_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::size_t offset, std::span<std::byte> buffer) noexcept
-                : iocp_node(ctx, handle_), offset_(offset), buffer_(buffer) {}
+            iocp_state_base_for(
+                ::HANDLE handle, bool skip_cp_on_success, iocp_context& ctx, std::size_t offset, std::span<std::byte> buffer
+            ) noexcept : iocp_node(ctx, handle, skip_cp_on_success), offset_(offset), buffer_(buffer) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -370,8 +382,9 @@ namespace coio {
         template<>
         class iocp_state_base_for<write_some_at_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::size_t offset, std::span<const std::byte> buffer) noexcept
-                : iocp_node(ctx, handle_), offset_(offset), buffer_(buffer) {}
+            iocp_state_base_for(
+                ::HANDLE handle, bool skip_cp_on_success, iocp_context& ctx, std::size_t offset, std::span<const std::byte> buffer
+            ) noexcept : iocp_node(ctx, handle, skip_cp_on_success), offset_(offset), buffer_(buffer) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -390,8 +403,9 @@ namespace coio {
         template<>
         class iocp_state_base_for<receive_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::span<std::byte> buffer, bool stream_oriented_) noexcept
-                : iocp_node(ctx, handle_), buffer_(buffer), stream_oriented_(stream_oriented_) {}
+            iocp_state_base_for(
+                ::HANDLE handle, bool skip_cp_on_success, iocp_context& ctx, std::span<std::byte> buffer, bool stream_oriented
+            ) noexcept : iocp_node(ctx, handle, skip_cp_on_success), buffer_(buffer), stream_oriented_(stream_oriented) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -410,8 +424,9 @@ namespace coio {
         template<>
         class iocp_state_base_for<send_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::span<const std::byte> buffer, bool stream_oriented_) noexcept
-                : iocp_node(ctx, handle_), buffer_(buffer), stream_oriented_(stream_oriented_) {}
+            iocp_state_base_for(
+                ::HANDLE handle, bool skip_cp_on_success, iocp_context& ctx, std::span<const std::byte> buffer, bool stream_oriented
+            ) noexcept : iocp_node(ctx, handle, skip_cp_on_success), buffer_(buffer), stream_oriented_(stream_oriented) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -430,8 +445,9 @@ namespace coio {
         template<>
         class iocp_state_base_for<receive_from_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::span<std::byte> buffer) noexcept
-                : iocp_node(ctx, handle_), buffer_(buffer) {}
+            iocp_state_base_for(
+                ::HANDLE handle, bool skip_cp_on_success, iocp_context& ctx, std::span<std::byte> buffer
+            ) noexcept : iocp_node(ctx, handle, skip_cp_on_success), buffer_(buffer) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -451,8 +467,9 @@ namespace coio {
         template<>
         class iocp_state_base_for<send_to_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, std::span<const std::byte> buffer, endpoint dest) noexcept
-                : iocp_node(ctx, handle_), buffer_(buffer), dest_(dest) {}
+            iocp_state_base_for(
+                ::HANDLE handle, bool skip_cp_on_success, iocp_context& ctx, std::span<const std::byte> buffer, endpoint dest
+            ) noexcept : iocp_node(ctx, handle, skip_cp_on_success), buffer_(buffer), dest_(dest) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -471,7 +488,7 @@ namespace coio {
         template<>
         class iocp_state_base_for<accept_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx) noexcept : iocp_node(ctx, handle_) {}
+            iocp_state_base_for(::HANDLE handle, bool skip_cp_on_success, iocp_context& ctx) noexcept : iocp_node(ctx, handle, skip_cp_on_success) {}
 
         protected:
             auto do_start() noexcept -> start_result;
@@ -490,8 +507,8 @@ namespace coio {
         template<>
         class iocp_state_base_for<connect_tag> : public iocp_context::iocp_node {
         public:
-            iocp_state_base_for(::HANDLE handle_, iocp_context& ctx, endpoint peer) noexcept
-                : iocp_node(ctx, handle_), peer_(peer) {}
+            iocp_state_base_for(::HANDLE handle, bool skip_cp_on_success, iocp_context& ctx, endpoint peer) noexcept
+                : iocp_node(ctx, handle, skip_cp_on_success), peer_(peer) {}
 
         protected:
             auto do_start() noexcept -> start_result;
