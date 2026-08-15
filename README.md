@@ -31,7 +31,7 @@ A C++ **asynchronous I/O** library based on [sender/receiver model](https://wg21
 
 ### Requirements
 - **C++20**/**C++23** compatible compiler
-- CMake 3.26+
+- CMake 3.30+
 
 ### Build Options
 - `COIO_BUILD_EXAMPLES` (`ON`/`OFF`, default `OFF`) - Build example programs

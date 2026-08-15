@@ -5,7 +5,7 @@ This page walks through building coio, integrating it into a CMake project, and 
 ## Requirements
 
 - A **C++20**/**C++23** compatible compiler (recent GCC, Clang, or MSVC).
-- **CMake 3.26+**.
+- **CMake 3.30+**.
 - Platform backends:
     - Linux: `epoll_context` works on any modern kernel; `uring_context` additionally needs [liburing](https://github.com/axboe/liburing) and a **5.19+ kernel at runtime** (probed at context construction).
     - Windows: `iocp_context` uses I/O Completion Ports.

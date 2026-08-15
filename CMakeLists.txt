@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.30)
 
 project(coio)
 
@@ -164,7 +164,8 @@ if (COIO_SENDERS_BACKEND STREQUAL "NVIDIA")
     CPMFindPackage(
         NAME stdexec
         GITHUB_REPOSITORY NVIDIA/stdexec
-        GIT_TAG main
+        GIT_TAG nvhpc-26.05
+        GIT_SHALLOW TRUE
         EXCLUDE_FROM_ALL YES
         SYSTEM YES
         OPTIONS
@@ -181,11 +182,11 @@ elseif (COIO_SENDERS_BACKEND STREQUAL "BEMAN")
     CPMFindPackage(
         NAME beman.execution
         GITHUB_REPOSITORY bemanproject/execution
-        GIT_TAG main
+        GIT_TAG 8f2b420634eb08ad2c6c224aff2298ea4ab5d1d6
         EXCLUDE_FROM_ALL YES
         SYSTEM YES
         OPTIONS
-        "BEMAN_EXECUTION_ENABLE_TESTING OFF"
+        "BEMAN_EXECUTION_BUILD_TESTS OFF"
         "BEMAN_EXECUTION_BUILD_EXAMPLES OFF"
         "BEMAN_USE_MODULES OFF"
     )

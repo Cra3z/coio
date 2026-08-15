@@ -40,18 +40,21 @@ env:
 jobs:
   linux:
     name: linux (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: GCC | Debug (ASan),          cc: gcc-14,   cxx: g++-14,     build_type: Debug,   asan: "ON",  ubsan: "OFF", tsan: "OFF", examples: "OFF" }
-          - { name: GCC | Debug (TSan),          cc: gcc-14,   cxx: g++-14,     build_type: Debug,   asan: "OFF", ubsan: "OFF", tsan: "ON",  examples: "OFF" }
-          - { name: GCC | Release,               cc: gcc-14,   cxx: g++-14,     build_type: Release, asan: "OFF", ubsan: "OFF", tsan: "OFF", examples: "OFF" }
-          - { name: Clang | Debug (ASan, UBSan), cc: clang-18, cxx: clang++-18, build_type: Debug,   asan: "ON",  ubsan: "ON",  tsan: "OFF", examples: "OFF" }
-          - { name: Clang | Debug (TSan),        cc: clang-18, cxx: clang++-18, build_type: Debug,   asan: "OFF", ubsan: "OFF", tsan: "ON",  examples: "OFF" }
-          - { name: Clang | Release,             cc: clang-18, cxx: clang++-18, build_type: Release, asan: "OFF", ubsan: "OFF", tsan: "OFF", examples: "OFF" }
+          - { name: stdexec | GCC | Debug | ASan,                   cc: gcc-14,   cxx: g++-14,     backend: NVIDIA, build_type: Debug,   asan: "ON",  ubsan: "OFF", tsan: "OFF", examples: "OFF" }
+          - { name: stdexec | GCC | Debug | TSan,                   cc: gcc-14,   cxx: g++-14,     backend: NVIDIA, build_type: Debug,   asan: "OFF", ubsan: "OFF", tsan: "ON",  examples: "OFF" }
+          - { name: stdexec | GCC | Release,                        cc: gcc-14,   cxx: g++-14,     backend: NVIDIA, build_type: Release, asan: "OFF", ubsan: "OFF", tsan: "OFF", examples: "OFF" }
+          - { name: stdexec | Clang | Debug | ASan + UBSan,         cc: clang-19, cxx: clang++-19, backend: NVIDIA, build_type: Debug,   asan: "ON",  ubsan: "ON",  tsan: "OFF", examples: "OFF" }
+          - { name: stdexec | Clang | Debug | TSan,                 cc: clang-19, cxx: clang++-19, backend: NVIDIA, build_type: Debug,   asan: "OFF", ubsan: "OFF", tsan: "ON",  examples: "OFF" }
+          - { name: stdexec | Clang | Release,                      cc: clang-19, cxx: clang++-19, backend: NVIDIA, build_type: Release, asan: "OFF", ubsan: "OFF", tsan: "OFF", examples: "OFF" }
+          - { name: beman.execution | Clang | Debug | ASan + UBSan, cc: clang-19, cxx: clang++-19, backend: BEMAN,  build_type: Debug,   asan: "ON",  ubsan: "ON",  tsan: "OFF", examples: "OFF" }
+          - { name: beman.execution | Clang | Debug | TSan,         cc: clang-19, cxx: clang++-19, backend: BEMAN,  build_type: Debug,   asan: "OFF", ubsan: "OFF", tsan: "ON",  examples: "OFF" }
+          - { name: beman.execution | Clang | Release,              cc: clang-19, cxx: clang++-19, backend: BEMAN,  build_type: Release, asan: "OFF", ubsan: "OFF", tsan: "OFF", examples: "OFF" }
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -61,7 +64,22 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build liburing-dev
+          sudo apt-get install -y ca-certificates curl gpg ninja-build liburing-dev
+
+      - name: Cache Clang APT packages
+        if: startsWith(matrix.cc, 'clang-')
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: llvm-apt-${{ runner.arch }}-noble-clang-19-v1
+
+      - name: Install Clang 19
+        if: startsWith(matrix.cc, 'clang-')
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get -o APT::Keep-Downloaded-Packages=true install -y clang-19
 
       - name: Cache CPM packages
         uses: actions/cache@v4
@@ -76,6 +94,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCOIO_BUILD_TESTS=ON
           -DCOIO_BUILD_EXAMPLES=${{ matrix.examples }}
+          -DCOIO_SENDERS_BACKEND=${{ matrix.backend }}
           -DCOIO_BUILD_WITH_ASAN=${{ matrix.asan }}
           -DCOIO_BUILD_WITH_UBSAN=${{ matrix.ubsan }}
           -DCOIO_BUILD_WITH_TSAN=${{ matrix.tsan }}
@@ -94,8 +113,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: MSVC | Debug (ASan), build_type: Debug,   asan: "ON",  examples: "OFF" }
-          - { name: MSVC | Release,      build_type: Release, asan: "OFF", examples: "OFF" }
+          - { name: stdexec | MSVC | Debug | ASan,         build_type: Debug,   backend: NVIDIA, asan: "ON",  examples: "OFF" }
+          - { name: stdexec | MSVC | Release,              build_type: Release, backend: NVIDIA, asan: "OFF", examples: "OFF" }
+          - { name: beman.execution | MSVC | Debug | ASan, build_type: Debug,   backend: BEMAN,  asan: "ON",  examples: "OFF" }
+          - { name: beman.execution | MSVC | Release,      build_type: Release, backend: BEMAN,  asan: "OFF", examples: "OFF" }
     steps:
       - uses: actions/checkout@v4
 
@@ -111,6 +132,7 @@ jobs:
           cmake -B build
           -DCOIO_BUILD_TESTS=ON
           -DCOIO_BUILD_EXAMPLES=${{ matrix.examples }}
+          -DCOIO_SENDERS_BACKEND=${{ matrix.backend }}
           -DCOIO_BUILD_WITH_ASAN=${{ matrix.asan }}
 
       - name: Build
