@@ -29,10 +29,17 @@ foreach(COIO_TEST_SOURCE IN LISTS COIO_TEST_SOURCES)
         doctest::doctest
         coio
     )
+
     target_compile_definitions(
         ${COIO_TEST_NAME}
         PRIVATE
         -DDOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+    )
+
+    target_compile_options(
+        ${COIO_TEST_NAME}
+        PRIVATE
+        "$<$<CXX_COMPILER_ID:MSVC>:/bigobj>"
     )
 
     add_test(

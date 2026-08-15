@@ -189,6 +189,8 @@ namespace coio {
             private:
                 template<typename Rcvr>
                 struct state : node {
+                    using operation_state_concept = execution::operation_state_tag;
+
                     state(Ctx& context, Rcvr rcvr) noexcept : node(context), rcvr_(std::move(rcvr)) {}
 
                     COIO_ALWAYS_INLINE auto start() noexcept -> void {
