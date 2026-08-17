@@ -84,6 +84,30 @@ The open mode is a flag enum; combine flags with `|`. The enumerators are re-exp
 | `truncate` | Truncate an existing file to zero length |
 | `sync_all_on_write` | Synchronize all writes to disk immediately |
 
+#### Combining flags
+
+Not every combination is meaningful. The rules:
+
+| Group | Flags | Rule |
+|-------|-------|------|
+| Access — **pick exactly one** | `read_only`, `write_only`, `read_write` | Exactly one access flag must be present. Combining two is invalid and platform-divergent: POSIX `O_RDONLY` is `0`, so e.g. `read_only \| write_only` silently degenerates to write-only on Linux while granting full read-write on Windows. |
+| Position | `append` | Requires write access (`write_only` or `read_write`). |
+| Creation | `create` | Creates the file if missing, opens the existing file otherwise. |
+| | `exclusive` | Only valid together with `create`: the open fails if the file already exists. Without `create`, behavior is undefined (POSIX `O_EXCL` semantics). |
+| | `truncate` | Requires write access. With `create`: create-or-truncate. Without `create`: the file must already exist, or the open fails. |
+| Durability | `sync_all_on_write` | Freely combinable; meaningful only with write access. |
+
+Common recipes (matching `fopen` modes):
+
+| Intent | Combination |
+|--------|-------------|
+| Read an existing file (`"r"`) | `read_only` |
+| Overwrite or create (`"w"`) | `write_only \| create \| truncate` |
+| Append or create (`"a"`) | `write_only \| create \| append` |
+| Create a brand-new file, fail if it exists (`"wx"`) | `write_only \| create \| exclusive` |
+| Read and write an existing file (`"r+"`) | `read_write` |
+| Read and write, create-or-truncate (`"w+"`) | `read_write \| create \| truncate` |
+
 ### Common members (both classes)
 
 #### `explicit stream_file(scheduler_type scheduler) noexcept`
@@ -100,7 +124,7 @@ Constructs and opens; equivalent to default construction followed by `open(path,
 Opens the file at `path`. Throws `std::system_error` with `coio::error::already_open` if the file is already open, or with an OS error code on failure (including the `epoll_context` regular-file rejection described above).
 
 #### `close() -> void`
-Cancels any outstanding asynchronous operations on the file (they complete with `set_stopped()`), then releases the handle. Throws `std::system_error` on OS failure. The destructor closes implicitly. See [close semantics per backend](model.md#close).
+Releases the handle and resets the object to the not-open state. **Precondition: no outstanding asynchronous operations** — every operation must have completed before the call (`cancel()` first and await the completions if needed). Throws `std::system_error` on OS failure. The destructor closes implicitly, under the same precondition. See [close semantics per backend](model.md#close).
 
 #### `cancel() -> void`
 Cancels outstanding asynchronous read/write operations on this file; they complete with `set_stopped()`.

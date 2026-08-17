@@ -99,7 +99,9 @@ namespace coio {
     iocp_context::scheduler::file_object::file_object(iocp_context& ctx, ::HANDLE handle)
         : io_object(ctx, handle) {
         if (handle != INVALID_HANDLE_VALUE and handle != nullptr) {
-            skip_cp_on_success_ = detail::try_skip_completion_port_on_success(handle);
+            if (::GetFileType(handle) == FILE_TYPE_DISK) {
+                skip_cp_on_success_ = detail::try_skip_completion_port_on_success(handle);
+            }
             if (::LARGE_INTEGER current{}; ::SetFilePointerEx(handle, {}, &current, FILE_CURRENT)) {
                 offset_ = static_cast<std::size_t>(current.QuadPart);
             }
@@ -114,7 +116,6 @@ namespace coio {
         const auto handle = std::exchange(handle_, INVALID_HANDLE_VALUE);
         offset_ = 0;
         if (handle == INVALID_HANDLE_VALUE or handle == nullptr) return;
-        ::CancelIoEx(handle, nullptr);
         detail::throw_win_error(::CloseHandle(handle), "close");
     }
 
@@ -190,7 +191,6 @@ namespace coio {
     auto iocp_context::scheduler::socket_object::close() -> void {
         const auto handle = std::exchange(handle_, INVALID_HANDLE_VALUE);
         if (handle == INVALID_HANDLE_VALUE or handle == nullptr) return;
-        ::CancelIoEx(handle, nullptr);
         detail::throw_wsa_error(::closesocket(std::bit_cast<::SOCKET>(handle)), "close");
     }
 
@@ -237,7 +237,7 @@ namespace coio {
     iocp_context::iocp_context(std::pmr::memory_resource& memory_resource)
         : loop_base(memory_resource) {
         detail::wsa_init_library();
-        iocp_ = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
+        iocp_ = ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
         if (iocp_ == nullptr) {
             throw std::system_error(detail::to_error_code(::GetLastError()));
         }

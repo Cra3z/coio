@@ -25,7 +25,7 @@ namespace coio {
         template<typename Rep, typename Period>
         [[nodiscard]]
         COIO_ALWAYS_INLINE auto async_wait(std::chrono::duration<Rep, Period> duration) const noexcept {
-            return stop_when(sched_.schedule_after(std::chrono::duration_cast<timer::duration>(duration)), stop_source_.get_token());
+            return stop_when(sched_.schedule_after(std::chrono::ceil<timer::duration>(duration)), stop_source_.get_token());
         }
 
         [[nodiscard]]

@@ -58,7 +58,6 @@ namespace coio {
 
     auto uring_context::scheduler::io_object::close() -> void {
         if (fd_ == -1) return;
-        cancel();
         detail::throw_last_error(::close(std::exchange(fd_, -1)), "close");
     }
 
@@ -169,7 +168,7 @@ namespace coio {
                 using microseconds = std::chrono::duration<std::int64_t, std::micro>;
                 if (const auto earliest = timer_queue_.earliest()) {
                     const auto now = std::chrono::steady_clock::now();
-                    const auto usec = std::max(std::chrono::duration_cast<microseconds>(*earliest - now).count(), {});
+                    const auto usec = std::max(std::chrono::ceil<microseconds>(*earliest - now).count(), {});
                     ::__kernel_timespec timeout{
                         .tv_sec = usec / 1000'000,
                         .tv_nsec = (usec % 1000'000) * 1'000

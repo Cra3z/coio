@@ -385,7 +385,7 @@ namespace coio {
          * \throw std::system_error on failure.
         */
         COIO_ALWAYS_INLINE auto connect(const endpoint& peer) -> void {
-            if (not is_open()) open();
+            if (not is_open()) open(peer.ip().is_v4() ? protocol_type::v4() : protocol_type::v6());
             impl_.connect(peer);
         }
 
@@ -396,7 +396,7 @@ namespace coio {
         */
         COIO_ALWAYS_INLINE auto async_connect(const endpoint& peer) {
             return execution::just() | execution::let_value([this, peer] {
-                if (not is_open()) open();
+                if (not is_open()) open(peer.ip().is_v4() ? protocol_type::v4() : protocol_type::v6());
                 return impl_.async_connect(peer);
             });
         }

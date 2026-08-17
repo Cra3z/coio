@@ -17,7 +17,7 @@ namespace coio::detail {
         using pointer = T*;
         using const_pointer = const T*;
         using reference = T&;
-        using const_reference = T&;
+        using const_reference = const T&;
 
     public:
         explicit atomic_intrusive_stack(pointer T::* next) noexcept : head_(this), next_(next) {}

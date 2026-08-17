@@ -352,7 +352,7 @@ namespace coio {
                 template<typename Rep, typename Period>
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto schedule_after(std::chrono::duration<Rep, Period> duration) const noexcept {
-                    return this->schedule_at(now() + duration);
+                    return this->schedule_at(now() + std::chrono::ceil<std::chrono::steady_clock::duration>(duration));
                 }
 
                 [[nodiscard]]

@@ -126,10 +126,10 @@ Synchronous members throw `std::system_error` on failure. Asynchronous members r
 Creates the OS socket with the protocol's `family()`/`type()`/`protocol_id()`. Throws `std::system_error` with `coio::error::already_open` if already open, or an OS error.
 
 #### `close() -> void`
-Cancels any outstanding asynchronous send, receive, connect or accept operations (they complete with `set_stopped()`), then closes the OS socket. Throws `std::system_error` on failure. The destructor closes implicitly. See [`close()` per backend](../io/model.md#close) and the lifetime rules below.
+Closes the OS socket and resets the object to the not-open state. **Precondition: no outstanding asynchronous operations** — every operation must have completed before the call (`cancel()` first and await the completions if needed). Throws `std::system_error` on failure. The destructor closes implicitly, under the same precondition. See [`close()` per backend](../io/model.md#close) and the lifetime rules below.
 
 #### `cancel() -> void`
-Cancels outstanding asynchronous operations on this socket; they complete with `set_stopped()`. The socket stays open.
+Requests cancellation of the outstanding asynchronous operations on this socket; cancelled operations complete with `set_stopped()` (an operation that has already produced its result still delivers `set_value`/`set_error`). The socket stays open.
 
 #### `shutdown(shutdown_type how) -> void`
 Disables sends (`shutdown_send`), receives (`shutdown_receive`), or both (`shutdown_both`) at the protocol level. Unlike `close()`, the descriptor stays valid; a TCP peer sees FIN. Throws `std::system_error` on failure.
@@ -144,10 +144,10 @@ The locally bound / connected peer address. Throw `std::system_error` on failure
 Binds to a local address/port. Throws `std::system_error` on failure.
 
 #### `connect(const endpoint& peer) -> void`
-Blocking connect. If the socket is not open, it is first opened with a default-constructed protocol (the **IPv4** descriptor) — open explicitly first for IPv6. Throws `std::system_error` on failure.
+Blocking connect. If the socket is not open, it is first opened with the protocol matching `peer`'s address family (`protocol_type::v4()` or `protocol_type::v6()`). Throws `std::system_error` on failure.
 
 #### `async_connect(const endpoint& peer)`
-Returns a sender of `void`. When started, opens the socket first if necessary (default protocol, as above), then connects. Completes with `set_value()`, `set_error(std::error_code)`, or `set_stopped()`.
+Returns a sender of `void`. When started, opens the socket first if necessary (protocol derived from `peer`'s family, as above), then connects. Completes with `set_value()`, `set_error(std::error_code)`, or `set_stopped()`.
 
 #### `set_option(const SocketOption&)` / `get_option(SocketOption&) const`
 Set/query a socket option; any type with `level()`, `name()` and `data()` members works, normally one of the types below. Throw `std::system_error` on failure.

@@ -57,7 +57,7 @@ Creates the completion port. The first `iocp_context` constructed in a process a
 
 ### I/O: files, pipes and sockets
 
-In addition to the [common scheduler operations](contexts.md#scheduler-operations), the scheduler hosts I/O: [file](../io/files.md), [pipe](../io/pipes.md) and [socket](../net/sockets.md) types parameterized on it perform their operations through this context. When such an object opens — or adopts — a native handle or socket, the handle is associated with the completion port and the object **takes ownership**: the handle is closed by the object's destructor or `close()` (outstanding operations are cancelled first), and is closed immediately if association fails before the exception propagates.
+In addition to the [common scheduler operations](contexts.md#scheduler-operations), the scheduler hosts I/O: [file](../io/files.md), [pipe](../io/pipes.md) and [socket](../net/sockets.md) types parameterized on it perform their operations through this context. When such an object opens — or adopts — a native handle or socket, the handle is associated with the completion port and the object **takes ownership**: the handle is closed by the object's destructor or `close()` (which require all outstanding operations to have completed first), and is closed immediately if association fails before the exception propagates.
 
 **Throws:** `std::system_error` if associating the handle with the port fails.
 

@@ -51,7 +51,7 @@ Every io object provides (modulo backend-specific subsets) the following surface
 // common to all backends
 auto get_io_scheduler() const noexcept -> scheduler;
 auto native_handle() const noexcept -> /* platform handle type */;
-auto close() -> void;             // cancel + release the handle
+auto close() -> void;             // release the handle (precondition: no outstanding operations)
 auto cancel() -> void;            // cancel outstanding async operations
 
 // synchronous data path (blocking; throw std::system_error on failure)
@@ -102,32 +102,36 @@ Completions are always delivered on the context's consumer thread (the thread in
 
 ### Cancellation
 
-Three mechanisms cancel outstanding asynchronous operations; all of them complete the affected operations with `set_stopped()`:
+Two mechanisms cancel outstanding asynchronous operations; both complete the affected operations with `set_stopped()`:
 
 1. **Context stop token.** Every `async_*` sender an io object returns is wrapped in `stop_when(op, context_stop_token)` at construction. `context.request_stop()` therefore cancels all in-flight I/O on that context. A stop request also propagates from the receiver's environment as usual (`stop_when` composes).
 2. **`cancel()`** on the io object / wrapper: cancels the operations currently outstanding on that one object (`CancelIoEx(handle, nullptr)` on IOCP, `IORING_ASYNC_CANCEL_ALL` for the fd on io_uring, unhooking the registered in/out waiters on epoll).
-3. **`close()`**, which performs `cancel()` first (see below).
 
-A stop request never overwrites a real result: if the target operation completes successfully (or with an ordinary error) before the cancellation wins, the receiver still gets `set_value`/`set_error`.
+`close()` does **not** cancel: it requires that no operation is outstanding (see below).
+
+A stop request never overwrites a real result: if the target operation completes successfully (or with an ordinary error) before the cancellation wins, the receiver still gets `set_value`/`set_error`. Cancellation is a *request*, not a guarantee of `set_stopped`.
 
 ### `close()`
 
-`close()` cancels outstanding operations, releases the native handle back to the OS, and resets the object to the not-open state. It throws `std::system_error` if the OS close fails. Per backend:
+`close()` releases the native handle back to the OS and resets the object to the not-open state. It throws `std::system_error` if the OS close fails. **Precondition: no outstanding operations.** Every operation started on the object must have *completed* (delivered `set_value`/`set_error`/`set_stopped`) before `close()` is called — if operations may still be in flight, `cancel()` first and wait for their completions. Closing with operations outstanding is undefined behavior. Per backend:
 
 | Backend | What `close()` does |
 |---------|---------------------|
-| `epoll_context` | Cancels the registered in/out operations (they complete with `set_stopped`), removes the fd from the epoll set (`EPOLL_CTL_DEL`), returns the per-descriptor bookkeeping entry to an internal pool, then `close(fd)`. |
-| `uring_context` | Submits an `IORING_ASYNC_CANCEL_ALL` cancellation for the fd, then `close(fd)`. |
-| `iocp_context` | `CancelIoEx(handle, nullptr)`, then `CloseHandle` (files/pipes) or `closesocket` (sockets). |
+| `epoll_context` | Removes the fd from the epoll set (`EPOLL_CTL_DEL`), returns the per-descriptor bookkeeping entry to an internal pool, then `close(fd)`. |
+| `uring_context` | `close(fd)`. |
+| `iocp_context` | `CloseHandle` (files/pipes) or `closesocket` (sockets). |
 
-Destroying a wrapper object implicitly closes it.
+Destroying a wrapper object implicitly closes it, under the same precondition.
+
+!!! note "Descriptor ownership — `dup` is out of scope"
+    coio assumes each io object is the **sole owner** of its native handle; descriptors duplicated with `dup`/`dup2`/`fcntl(F_DUPFD)`/`DuplicateHandle` are not accounted for. In particular, `cancel()` on `uring_context` is matched by fd *number* (`IORING_ASYNC_CANCEL_ALL`), so operations initiated through a duplicate of the descriptor, or a descriptor that later reuses the number, are outside the model. Do not share an io object's descriptor via duplication.
 
 ### Lifetime
 
-An I/O object must outlive all of its operations. A sender obtained from an I/O object (`async_read_some`, `async_receive`, ...) must be connected and started **before** the object is closed or destroyed; starting it afterwards is undefined behavior. On `epoll_context` in particular, `close()` returns the object's per-descriptor bookkeeping entry to an internal pool, so a stale start may silently corrupt the state of an unrelated I/O object that has since reused the entry, rather than failing cleanly with `EBADF`.
+An I/O object must outlive all of its operations, and every operation must **complete before** the object is closed or destroyed. A sender obtained from an I/O object (`async_read_some`, `async_receive`, ...) must be connected and started before the object is closed or destroyed, and its completion (`set_value`/`set_error`/`set_stopped`) must happen-before the `close()`/destruction; violating either is undefined behavior. On `epoll_context` in particular, `close()` returns the object's per-descriptor bookkeeping entry to an internal pool, so a stale start may silently corrupt the state of an unrelated I/O object that has since reused the entry, rather than failing cleanly with `EBADF`.
 
 !!! warning
-    "Started before close" is a hard precondition, not a checked error. Keep the wrapper alive until every sender obtained from it has completed (structured concurrency — `co_await`, `when_all`, `async_scope::join()` — makes this automatic).
+    "Completed before close" is a hard precondition, not a checked error. Keep the wrapper alive — and un-`close()`d — until every sender obtained from it has completed (structured concurrency — `co_await`, `when_all`, `async_scope::join()` — makes this automatic). To tear down early, `cancel()` (or `context.request_stop()`), then await the completions, then close.
 
 ### Outstanding-operation limits
 
@@ -181,7 +185,7 @@ auto client() -> io_context::task<> {
     const std::size_t n = co_await socket.async_read_some(coio::as_writable_bytes(buffer));
     // `socket` stays alive until the operation completes: lifetime rule satisfied
     co_await socket.async_write_some(coio::as_bytes(buffer, n));
-}   // ~tcp_socket: cancels outstanding ops, closes the handle
+}   // ~tcp_socket closes the handle (all operations completed above — precondition satisfied)
 
 auto main() -> int {
     io_context context;

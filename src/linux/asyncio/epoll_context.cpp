@@ -169,7 +169,6 @@ namespace coio {
     auto epoll_context::scheduler::io_object::close() -> void {
         if (fd_ == -1) return;
         COIO_ASSERT(data_ != nullptr);
-        cancel();
         {
             std::scoped_lock _{data_->fd_lock};
             if (data_->events != 0) {
