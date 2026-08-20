@@ -39,6 +39,10 @@ namespace coio::detail {
             return *std::launder(reinterpret_cast<T*>(storage_));
         }
 
+        COIO_ALWAYS_INLINE auto get() const & noexcept -> const T& {
+            return *std::launder(reinterpret_cast<const T*>(storage_));
+        }
+
     private:
         alignas(T) std::byte storage_[sizeof(T)];
     };

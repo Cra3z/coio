@@ -7,6 +7,7 @@
 #include <coio/detail/concepts.h>
 #include <coio/detail/co_memory.h>
 #include <coio/detail/execution.h>
+#include <coio/detail/manual_lifetime.h>
 #include <coio/utils/allocator_resource.h>
 #include <coio/utils/polymorphic_scheduler.h>
 #include <coio/utils/stop_token.h>
@@ -23,9 +24,12 @@ namespace coio {
             );
         }
 
-        template<typename Sndr>
-        COIO_ALWAYS_INLINE auto affined_sndr(Sndr&& sndr) noexcept {
-            if constexpr (requires { std::declval<Sndr>().affine(); }) {
+        template<typename Sndr, typename PromiseEnv>
+        COIO_ALWAYS_INLINE auto affined_sndr(Sndr&& sndr, const PromiseEnv& env) noexcept {
+            if constexpr (std::same_as<decltype(execution::get_start_scheduler(env)), execution::inline_scheduler>) {
+                return std::forward<Sndr>(sndr);
+            }
+            else if constexpr (requires { std::declval<Sndr>().affine(); }) {
                 return std::forward<Sndr>(sndr).affine();
             }
             else {
@@ -87,7 +91,7 @@ namespace coio {
                 base(coro),
                 rcvr_(std::move(rcvr)),
                 stop_propagator_(coio::get_stop_token(execution::get_env(rcvr_))) {
-                coro.promise().sched_.emplace((make_task_scheduler<typename Promise::scheduler_type>)(execution::get_env(rcvr_)));
+                coro.promise().sched_.construct((make_task_scheduler<typename Promise::scheduler_type>)(execution::get_env(rcvr_)));
             }
 
             COIO_ALWAYS_INLINE auto start() & noexcept -> void {
@@ -141,7 +145,7 @@ namespace coio {
                 base(coro),
                 continuation_(std::coroutine_handle<RcvrPromise>::from_promise(receiver)),
                 stop_propagator_(coio::get_stop_token(execution::get_env(receiver))) {
-                coro.promise().sched_.emplace((make_task_scheduler<typename Promise::scheduler_type>)(execution::get_env(receiver)));
+                coro.promise().sched_.construct((make_task_scheduler<typename Promise::scheduler_type>)(execution::get_env(receiver)));
             }
 
             COIO_ALWAYS_INLINE static auto await_ready() noexcept -> bool {
@@ -264,7 +268,7 @@ namespace coio {
                 }
 
                 auto query(execution::get_start_scheduler_t) const noexcept {
-                    return *promise->sched_;
+                    return promise->sched_.get();
                 }
 
                 auto query(execution::get_scheduler_t) const noexcept {
@@ -280,13 +284,17 @@ namespace coio {
 
             task_promise(const auto&, std::allocator_arg_t, auto alloc, const auto&...) noexcept : alloc_adaptor_(std::move(alloc)) {}
 
+            ~task_promise() {
+                sched_.destroy();
+            }
+
             COIO_ALWAYS_INLINE auto get_return_object() noexcept -> TaskType {
                 return std::coroutine_handle<task_promise>::from_promise(*this);
             }
 
             template<execution::sender Sndr>
             COIO_ALWAYS_INLINE decltype(auto) await_transform(Sndr&& sndr) noexcept {
-                return execution::as_awaitable(detail::affined_sndr(std::forward<Sndr>(sndr)), *this);
+                return execution::as_awaitable(detail::affined_sndr(std::forward<Sndr>(sndr), get_env()), *this);
             }
 
             COIO_ALWAYS_INLINE auto get_env() const noexcept -> env {
@@ -294,7 +302,7 @@ namespace coio {
             }
 
             COIO_NO_UNIQUE_ADDRESS allocator_adaptor<Alloc> alloc_adaptor_;
-            std::optional<Sched> sched_;
+            manual_lifetime<Sched> sched_;
         };
     }
 
