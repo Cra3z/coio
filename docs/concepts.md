@@ -91,10 +91,10 @@ Receivers carry an *environment* — a queryable bag of properties. coio operati
 |-------|---------|
 | `execution::get_scheduler` | the scheduler associated with the current computation |
 | `execution::get_start_scheduler` | the scheduler on which the operation is started; used to construct a child task's scheduler |
-| `get_allocator` | the allocator for internal allocations (coroutine frames, type-erased state) |
+| `get_allocator` | the allocator for internal allocations (child operation state and coroutine environments) |
 | `get_stop_token` | the stop token to observe for cancellation |
 
-A task's promise answers all four: `get_scheduler`/`get_start_scheduler` return the task's own scheduler, `get_stop_token` returns the task's chained `inplace_stop_token`, and `get_allocator` returns the task's allocator. With the default `Alloc = void`, the allocator is presented as `std::pmr::polymorphic_allocator<>`, type-erasing whatever allocator the task was created with — so pmr-aware containers can allocate from the same resource as the coroutine frame.
+A task's promise answers all four: `get_scheduler`/`get_start_scheduler` return the task's own scheduler, `get_stop_token` returns the task's chained `inplace_stop_token`, and `get_allocator` forwards the allocator from the receiver environment after conversion to the task's allocator type. If the receiver environment has no allocator, a default-constructed task allocator is used. This environment allocator is independent of the coroutine frame allocator selected by `Alloc`.
 
 Inside a task, read the environment by awaiting the helpers from `<coio/core.h>`:
 

@@ -25,7 +25,7 @@ namespace coio {
             // I/O scheduler: hosts files, sockets and pipes (see io/model.md)
         };
 
-        template<typename T = void, typename Alloc = void>
+        template<typename T = void, typename Alloc = std::allocator<std::byte>>
         using task = coio::task<T, Alloc, scheduler>;
 
         uring_context();
@@ -76,7 +76,7 @@ The user-facing I/O interface is documented in [the I/O model](../io/model.md). 
 ### `task` alias
 
 ```cpp
-template<typename T = void, typename Alloc = void>
+template<typename T = void, typename Alloc = std::allocator<std::byte>>
 using task = coio::task<T, Alloc, scheduler>;
 ```
 

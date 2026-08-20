@@ -12,7 +12,7 @@ Use `task` whenever you want to express asynchronous work as a coroutine. A `tas
 - is **move-only** and single-shot — a task can be awaited/connected exactly once;
 - is a **sender** — completion signatures are `set_value_t(T)` (or `set_value_t()` for `T = void`), `set_error_t(std::exception_ptr)`, `set_stopped_t()`;
 - is **scheduler-affine** — every sender awaited inside the task resumes the coroutine on the task's scheduler;
-- supports **allocator customization** of the coroutine frame, exposed to the body via `get_allocator`.
+- supports **allocator customization** of the coroutine frame; the body can query the receiver environment's allocator with `get_allocator`.
 
 The default `task<T>` uses [`polymorphic_scheduler`](../execution/polymorphic-scheduler.md), so it can be started from any environment that provides a scheduler. `inline_task<T>` uses `execution::inline_scheduler` and performs no re-scheduling at all.
 
@@ -20,7 +20,7 @@ The default `task<T>` uses [`polymorphic_scheduler`](../execution/polymorphic-sc
 
 ```cpp
 namespace coio {
-    template<typename T = void, typename Alloc = void, typename Sched = polymorphic_scheduler>
+    template<typename T = void, typename Alloc = std::allocator<std::byte>, typename Sched = polymorphic_scheduler>
     class task {
     public:
         using value_type = T;
@@ -56,7 +56,7 @@ namespace coio {
         friend auto swap(task& lhs, task& rhs) noexcept -> void;
     };
 
-    template<typename T = void, typename Alloc = void>
+    template<typename T = void, typename Alloc = std::allocator<std::byte>>
     using inline_task = task<T, Alloc, execution::inline_scheduler>;
 }
 ```
@@ -68,7 +68,7 @@ namespace coio {
 | Parameter | Constraint | Meaning |
 |-----------|-----------|---------|
 | `T` | `void`, a move-constructible unqualified object type, or an lvalue-reference type | the value produced by `co_return` |
-| `Alloc` | `void` or an allocator whose `allocator_traits<Alloc>::pointer` is a raw pointer | coroutine-frame allocation policy (see below) |
+| `Alloc` | an allocator whose `allocator_traits<Alloc>::pointer` is a raw pointer | coroutine-frame allocation policy (see below); defaults to `std::allocator<std::byte>` |
 | `Sched` | a scheduler whose `schedule()` cannot complete with an error | the scheduler the task is affine to |
 
 Violating the constraints on `T` or `Alloc` is a compile-time error (`static_assert`). The constraint on `Sched` (`infallible_scheduler`) is checked when the task is connected or awaited; all coio context schedulers, `polymorphic_scheduler` and `inline_scheduler` satisfy it.
@@ -95,7 +95,7 @@ A default-constructed or moved-from task is *empty*; `operator bool` returns `fa
 
 ### Scheduler affinity
 
-When a task is connected or awaited, its scheduler (`Sched`) is constructed from the **parent environment**: uses-allocator construction from `get_start_scheduler(env)` (falling back to `get_scheduler(env)`, then to `inline_scheduler`) with `get_allocator(env)` (defaulting to `std::allocator` when the environment provides none). Consequences:
+When a task is connected or awaited, its scheduler (`Sched`) is constructed from the **parent environment**: uses-allocator construction from `get_start_scheduler(env)` (falling back to `get_scheduler(env)`, then to `inline_scheduler`) with `get_allocator(env)` (defaulting to `std::allocator<std::byte>` when the environment provides none). Consequences:
 
 - A `task<T>` (default `Sched = polymorphic_scheduler`) can be started from any environment with a scheduler — the parent's scheduler is type-erased.
 - A context-bound task such as `epoll_context::task<T>` (`Sched = epoll_context::scheduler`) must be started from an environment whose scheduler is (convertible to) that concrete scheduler type — e.g. via `starts_on(ctx.get_scheduler(), ...)` or by being awaited from another task on the same context.
@@ -115,16 +115,10 @@ The task's environment answers `execution::get_scheduler` and `execution::get_st
 The coroutine frame is allocated according to `Alloc` and the coroutine's arguments, following the standard **leading-allocator-argument convention**:
 
 - If the coroutine's parameter list starts with `std::allocator_arg_t` followed by an allocator (for member functions: after the object parameter), that allocator allocates the frame.
-    - With `Alloc = void` (the default), *any* allocator type may be passed; deallocation is type-erased inside the frame.
-    - With a concrete `Alloc`, the passed allocator must be convertible to `Alloc`.
-- Otherwise the frame is allocated with a default-constructed allocator: `std::allocator` for `Alloc = void`, else a default-constructed `Alloc` (which must be default-initializable).
+    - The passed allocator is used for the frame; the frame stores the type needed for deallocation.
+- Otherwise the frame is allocated with a default-constructed `Alloc`, which must be default-initializable. The default is `std::allocator<std::byte>`.
 
-The task's environment answers `get_allocator` with the frame's allocator:
-
-- `Alloc = void`: presented as `std::pmr::polymorphic_allocator<>` (a passed pmr allocator is forwarded directly; any other allocator is wrapped in an internal `memory_resource`).
-- concrete `Alloc`: presented as `Alloc` rebound to `std::byte`.
-
-Read it with `co_await coio::read_allocator()` and hand it to pmr-aware containers so they share the frame's memory resource.
+When a task is connected or awaited, its promise environment answers `get_allocator` with the allocator from the **receiver's environment**, converted to `Alloc`. If that environment does not provide an allocator, a default-constructed `Alloc` is used. This allocator is independent of the allocator used for the coroutine frame, and is forwarded to nested tasks through their receiver environments. Read it with `co_await coio::read_allocator()` and hand it to allocator-aware operations or containers.
 
 ### Cancellation
 
@@ -147,7 +141,7 @@ auto as_awaitable(ReceiverPromise& receiver) && noexcept -> /*awaiter*/;
 ### inline_task
 
 ```cpp
-template<typename T = void, typename Alloc = void>
+template<typename T = void, typename Alloc = std::allocator<std::byte>>
 using inline_task = task<T, Alloc, execution::inline_scheduler>;
 ```
 
@@ -168,19 +162,18 @@ Allocator propagation and scheduler affinity (adapted from `examples/task.cpp`):
 #include <coio/core.h>
 #include <coio/execution_context.h>
 
-auto bar(std::allocator_arg_t, auto) -> coio::task<> {
-    auto alloc = co_await coio::read_allocator();  // the frame's allocator, as pmr
+auto bar() -> coio::task<void, std::pmr::polymorphic_allocator<std::byte>> {
+    auto alloc = co_await coio::read_allocator();  // allocator from the receiver environment
     std::pmr::string str{"bar: allocated from the caller's buffer", alloc};
     std::cout << str << '\n';
 }
 
-auto foo(std::allocator_arg_t, auto) -> coio::task<> {
+auto foo() -> coio::task<void, std::pmr::polymorphic_allocator<std::byte>> {
     std::cout << "foo\n";
-    // forward the allocator: bar's frame comes from the same buffer
-    co_await bar(std::allocator_arg, co_await coio::read_allocator());
+    co_await bar();
 }
 
-auto baz() -> coio::task<void, void, coio::time_loop::scheduler> {
+auto baz() -> coio::task<void, std::allocator<std::byte>, coio::time_loop::scheduler> {
     using namespace std::chrono_literals;
     auto sched = co_await coio::read_start_scheduler();  // time_loop::scheduler
     co_await sched.schedule_after(1s);
@@ -191,9 +184,15 @@ auto main() -> int {
     {
         std::byte buffer[1024];
         std::pmr::monotonic_buffer_resource resource{buffer, sizeof buffer};
-        // foo's frame (and bar's) is allocated inside `buffer`
+        // foo and bar's coroutine frames use a default-constructed polymorphic_allocator,
+        // backed by `std::pmr::get_default_resource()`, rather than this resource. The
+        // monotonic_buffer_resource is supplied only through their receiver environment.
         coio::this_thread::sync_wait(
-            foo(std::allocator_arg, std::pmr::polymorphic_allocator<>{&resource}));
+            coio::execution::write_env(
+                foo(),
+                coio::execution::prop{
+                    coio::get_allocator,
+                    std::pmr::polymorphic_allocator<>{&resource}}));
     }
     {
         coio::time_loop loop;

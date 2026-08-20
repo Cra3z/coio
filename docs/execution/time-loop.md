@@ -18,7 +18,7 @@ namespace coio {
     public:
         struct scheduler;   // models execution::scheduler; see below
 
-        template<typename T = void, typename Alloc = void>
+        template<typename T = void, typename Alloc = std::allocator<std::byte>>
         using task = coio::task<T, Alloc, scheduler>;
 
         explicit time_loop(std::pmr::memory_resource& resource = *std::pmr::get_default_resource()) noexcept;
@@ -84,7 +84,7 @@ struct scheduler;
 ### `task` alias
 
 ```cpp
-template<typename T = void, typename Alloc = void>
+template<typename T = void, typename Alloc = std::allocator<std::byte>>
 using task = coio::task<T, Alloc, scheduler>;
 ```
 

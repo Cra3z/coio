@@ -16,6 +16,16 @@
 
 namespace coio {
     namespace detail {
+        template<typename Alloc, typename Env>
+        COIO_ALWAYS_INLINE auto make_task_allocator(const Env& env) noexcept -> Alloc {
+            if constexpr (requires { Alloc(get_allocator(env)); }) {
+                return Alloc(get_allocator(env));
+            }
+            else {
+                return Alloc{};
+            }
+        }
+
         template<typename Sched, typename Env>
         COIO_ALWAYS_INLINE auto make_task_scheduler(const Env& env) -> Sched {
             return std::make_obj_using_allocator<Sched>(
@@ -91,7 +101,9 @@ namespace coio {
                 base(coro),
                 rcvr_(std::move(rcvr)),
                 stop_propagator_(coio::get_stop_token(execution::get_env(rcvr_))) {
-                coro.promise().sched_.construct((make_task_scheduler<typename Promise::scheduler_type>)(execution::get_env(rcvr_)));
+                const auto env = execution::get_env(rcvr_);
+                coro.promise().alloc_.construct((make_task_allocator<typename Promise::allocator_type>)(env));
+                coro.promise().sched_.construct((make_task_scheduler<typename Promise::scheduler_type>)(env));
             }
 
             COIO_ALWAYS_INLINE auto start() & noexcept -> void {
@@ -145,7 +157,9 @@ namespace coio {
                 base(coro),
                 continuation_(std::coroutine_handle<RcvrPromise>::from_promise(receiver)),
                 stop_propagator_(coio::get_stop_token(execution::get_env(receiver))) {
-                coro.promise().sched_.construct((make_task_scheduler<typename Promise::scheduler_type>)(execution::get_env(receiver)));
+                const auto env = execution::get_env(receiver);
+                coro.promise().alloc_.construct((make_task_allocator<typename Promise::allocator_type>)(env));
+                coro.promise().sched_.construct((make_task_scheduler<typename Promise::scheduler_type>)(env));
             }
 
             COIO_ALWAYS_INLINE static auto await_ready() noexcept -> bool {
@@ -259,19 +273,19 @@ namespace coio {
             using allocator_type = Alloc;
             using scheduler_type = Sched;
             struct env {
-                auto query(get_allocator_t) const noexcept {
-                    return promise->alloc_adaptor_.get_allocator();
+                auto query(get_allocator_t) const noexcept -> allocator_type {
+                    return promise->alloc_.get();
                 }
 
-                auto query(get_stop_token_t) const noexcept {
+                auto query(get_stop_token_t) const noexcept -> inplace_stop_token {
                     return promise->state_->get_stop_token();
                 }
 
-                auto query(execution::get_start_scheduler_t) const noexcept {
+                auto query(execution::get_start_scheduler_t) const noexcept -> scheduler_type {
                     return promise->sched_.get();
                 }
 
-                auto query(execution::get_scheduler_t) const noexcept {
+                auto query(execution::get_scheduler_t) const noexcept -> scheduler_type {
                     return query(execution::get_start_scheduler);
                 }
 
@@ -280,12 +294,9 @@ namespace coio {
 
             task_promise() = default;
 
-            task_promise(std::allocator_arg_t, auto alloc, const auto&...) noexcept : alloc_adaptor_(std::move(alloc)) {}
-
-            task_promise(const auto&, std::allocator_arg_t, auto alloc, const auto&...) noexcept : alloc_adaptor_(std::move(alloc)) {}
-
             ~task_promise() {
                 sched_.destroy();
+                alloc_.destroy();
             }
 
             COIO_ALWAYS_INLINE auto get_return_object() noexcept -> TaskType {
@@ -301,12 +312,12 @@ namespace coio {
                 return env{this};
             }
 
-            COIO_NO_UNIQUE_ADDRESS allocator_adaptor<Alloc> alloc_adaptor_;
-            manual_lifetime<Sched> sched_;
+            manual_lifetime<allocator_type> alloc_;
+            manual_lifetime<scheduler_type> sched_;
         };
     }
 
-    template<typename T = void, typename Alloc = void, typename Sched = polymorphic_scheduler>
+    template<typename T = void, typename Alloc = std::allocator<std::byte>, typename Sched = polymorphic_scheduler>
     class task {
         static_assert(
             std::same_as<T, void> or
@@ -316,16 +327,16 @@ namespace coio {
         );
 
         static_assert(
-            std::is_void_v<Alloc> or simple_allocator<Alloc>,
-            "type `Alloc` shall be `void` or an allocator-type whose `typename std::allocator_traits<Alloc>::pointer` is a pointer-type."
+            simple_allocator<Alloc>,
+            "type `Alloc` shall be an allocator-type whose `typename std::allocator_traits<Alloc>::pointer` is a pointer-type."
         );
 
-        friend detail::task_promise<task, T, Alloc, Sched>;
+        friend detail::task_promise<task, T, typename std::allocator_traits<Alloc>::template rebind_alloc<std::byte>, Sched>;
     public:
         using value_type = T;
-        using allocator_type = Alloc;
+        using allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<std::byte>;
         using scheduler_type = Sched;
-        using promise_type = detail::task_promise<task, T, Alloc, Sched>;
+        using promise_type = detail::task_promise<task, T, allocator_type, Sched>;
         using sender_concept = execution::sender_tag;
         using completion_signatures =execution::completion_signatures<
             detail::set_value_t<T>,
@@ -397,7 +408,7 @@ namespace coio {
         std::coroutine_handle<promise_type> coro_;
     };
 
-    template<typename T = void, typename Alloc = void>
+    template<typename T = void, typename Alloc = std::allocator<std::byte>>
     using inline_task = task<T, Alloc, execution::inline_scheduler>;
 }
 

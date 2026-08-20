@@ -5,6 +5,8 @@
 #include <chrono>
 #include <exception>
 #include <functional>
+#include <memory>
+#include <cstddef>
 #include <memory_resource>
 #include <mutex>
 #include <limits>
@@ -545,7 +547,7 @@ namespace coio {
             using scheduler_base::scheduler_base;
         };
 
-        template<typename T = void, typename Alloc = void>
+        template<typename T = void, typename Alloc = std::allocator<std::byte>>
         using task = coio::task<T, Alloc, scheduler>;
 
     public:

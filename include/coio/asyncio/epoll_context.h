@@ -305,7 +305,7 @@ namespace coio {
             friend auto operator== (const scheduler& lhs, const scheduler& rhs) -> bool = default;
         };
 
-        template<typename T = void, typename Alloc = void>
+        template<typename T = void, typename Alloc = std::allocator<std::byte>>
         using task = coio::task<T, Alloc, scheduler>;
 
     public:

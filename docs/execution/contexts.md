@@ -43,7 +43,7 @@ namespace coio {
     public:
         class scheduler;                   // see below
 
-        template<typename T = void, typename Alloc = void>
+        template<typename T = void, typename Alloc = std::allocator<std::byte>>
         using task = coio::task<T, Alloc, scheduler>;
 
         /*context*/(const /*context*/&) = delete;

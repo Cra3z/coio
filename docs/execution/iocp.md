@@ -26,7 +26,7 @@ namespace coio {
             friend auto operator== (const scheduler&, const scheduler&) -> bool;
         };
 
-        template<typename T = void, typename Alloc = void>
+        template<typename T = void, typename Alloc = std::allocator<std::byte>>
         using task = coio::task<T, Alloc, scheduler>;
 
         explicit iocp_context(
@@ -71,7 +71,7 @@ The user-facing I/O interface is documented in [the I/O model](../io/model.md). 
 ### `task` alias
 
 ```cpp
-template<typename T = void, typename Alloc = void>
+template<typename T = void, typename Alloc = std::allocator<std::byte>>
 using task = coio::task<T, Alloc, scheduler>;
 ```
 

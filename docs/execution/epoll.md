@@ -28,7 +28,7 @@ namespace coio {
             friend auto operator== (const scheduler&, const scheduler&) -> bool;
         };
 
-        template<typename T = void, typename Alloc = void>
+        template<typename T = void, typename Alloc = std::allocator<std::byte>>
         using task = coio::task<T, Alloc, scheduler>;
 
         explicit epoll_context(
@@ -74,7 +74,7 @@ An I/O object must outlive all of its operations, and its senders must be connec
 ### `task` alias
 
 ```cpp
-template<typename T = void, typename Alloc = void>
+template<typename T = void, typename Alloc = std::allocator<std::byte>>
 using task = coio::task<T, Alloc, scheduler>;
 ```
 

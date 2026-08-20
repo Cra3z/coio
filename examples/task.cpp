@@ -44,26 +44,26 @@ struct my_allocator : my_allocator_global_state {
     }
 };
 
-auto bar(std::allocator_arg_t, auto) -> coio::task<> {
-    auto alloc = co_await coio::execution::read_env(coio::get_allocator);
-    using string_allocator = typename std::allocator_traits<decltype(alloc)>::template rebind_alloc<char>;
-    using string = std::basic_string<char, std::char_traits<char>, string_allocator>;
+template<typename Alloc, typename StringAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<char>>
+auto bar(std::allocator_arg_t, Alloc alloc) -> coio::task<std::basic_string<char, std::char_traits<char>, StringAlloc>, Alloc> {
+    using string = std::basic_string<char, std::char_traits<char>, StringAlloc>;
     // `str` will be allocated on `alloc`
-    string str("bar\n*******************", std::move(alloc));
-    ::println("{}", str);
+    StringAlloc al(std::move(alloc));
+    string str("bar\n*******************", al);
+    co_return str;
 }
 
-auto foo(std::allocator_arg_t, auto) -> coio::task<> {
+auto foo(std::allocator_arg_t, std::pmr::polymorphic_allocator<> alloc) -> coio::task<void, std::pmr::polymorphic_allocator<>> {
     ::println("foo");
-    co_await bar(std::allocator_arg, co_await coio::execution::read_env(coio::get_allocator));
+    ::println("{}", co_await bar(std::allocator_arg, alloc));
 }
 
 auto qux() -> coio::task<void, my_allocator<>> {
     ::println("qux");
-    co_await bar(std::allocator_arg, co_await coio::execution::read_env(coio::get_allocator));
+    ::println("{}", co_await bar(std::allocator_arg, my_allocator<>{}));
 }
 
-auto baz() -> coio::task<void, void, coio::time_loop::scheduler> {
+auto baz() -> coio::task<void, std::allocator<std::byte>, coio::time_loop::scheduler> {
     using namespace std::chrono_literals;
     coio::time_loop::scheduler sched = co_await coio::execution::read_env(coio::execution::get_start_scheduler);
     co_await sched.schedule_after(1s);

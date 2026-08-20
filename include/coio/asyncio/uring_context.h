@@ -254,7 +254,7 @@ namespace coio {
             auto make_io_object(int fd) const -> io_object ;
         };
 
-        template<typename T = void, typename Alloc = void>
+        template<typename T = void, typename Alloc = std::allocator<std::byte>>
         using task = coio::task<T, Alloc, scheduler>;
 
     public:
