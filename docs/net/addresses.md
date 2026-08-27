@@ -13,7 +13,7 @@ Header: `#include <coio/net/basic.h>`
 | `ip_address` | either of the above | implicit from `ipv4_address`/`ipv6_address` |
 | `endpoint` | `ip_address` + 16-bit port | — |
 
-All four are equality- and three-way-comparable and have `std::formatter` specializations, so they format directly with `std::format`.
+All four are equality- and three-way-comparable and have `std::formatter` specializations plus `operator<<` overloads, so they format directly with `std::format` and stream directly to `std::ostream`.
 
 ## Synopsis
 
@@ -31,6 +31,10 @@ namespace coio {
         auto operator== (const ipv4_address&) const noexcept -> bool;
         auto operator<=>(const ipv4_address&) const noexcept -> std::strong_ordering;
 
+        template<typename Traits>
+        friend auto operator<< (std::basic_ostream<char, Traits>&, const ipv4_address&)
+            -> std::basic_ostream<char, Traits>&;
+
         static auto loopback() noexcept -> ipv4_address;            // 127.0.0.1
         static auto any() noexcept -> ipv4_address;                 // 0.0.0.0
     };
@@ -43,6 +47,10 @@ namespace coio {
         auto to_string() const -> std::string;
         friend auto operator== (const ipv6_address&, const ipv6_address&) noexcept -> bool = default;
         friend auto operator<=>(const ipv6_address&, const ipv6_address&) noexcept = default;
+
+        template<typename Traits>
+        friend auto operator<< (std::basic_ostream<char, Traits>&, const ipv6_address&)
+            -> std::basic_ostream<char, Traits>&;
 
         static auto loopback() noexcept -> ipv6_address;            // ::1
         static auto any() noexcept -> ipv6_address;                 // ::
@@ -63,6 +71,10 @@ namespace coio {
 
         friend auto operator== (const ip_address&, const ip_address&) noexcept -> bool;
         friend auto operator<=>(const ip_address&, const ip_address&) noexcept -> std::strong_ordering;
+
+        template<typename Traits>
+        friend auto operator<< (std::basic_ostream<char, Traits>&, const ip_address&)
+            -> std::basic_ostream<char, Traits>&;
     };
 
     class endpoint {
@@ -76,8 +88,14 @@ namespace coio {
         auto port() noexcept -> std::uint16_t&;
         auto port() const noexcept -> const std::uint16_t&;
 
+        auto to_string() const -> std::string;                      // "ip:port" / "[ip]:port"
+
         friend auto operator== (const endpoint&, const endpoint&) noexcept -> bool = default;
         friend auto operator<=>(const endpoint&, const endpoint&) noexcept -> std::strong_ordering = default;
+
+        template<typename Traits>
+        friend auto operator<< (std::basic_ostream<char, Traits>&, const endpoint&)
+            -> std::basic_ostream<char, Traits>&;
 
         template<std::size_t I> requires (I < 2)
         decltype(auto) get() noexcept;              // structured-binding support
@@ -139,6 +157,7 @@ A tagged union of `ipv4_address` and `ipv6_address`.
 An (`ip_address`, port) pair. The port is a plain `std::uint16_t` in host byte order.
 
 - **`ip()` / `port()`** — both have const and non-const overloads; the non-const ones return mutable references, so `ep.port() = 8080;` is valid.
+- **`to_string()`** — `ip:port` for IPv4, `[ip]:port` for IPv6; the same text `std::formatter` and `operator<<` produce.
 - Comparison: defaulted `==` / `<=>` (ip first, then port).
 - **Structured bindings**: `endpoint` opts into the tuple protocol with element 0 = `ip_address`, element 1 = `std::uint16_t`:
 
@@ -156,6 +175,17 @@ std::format("connected to {}", sock.remote_endpoint());   // e.g. "connected to 
 
 !!! note
     IPv6 endpoints are bracketed in the RFC 3986 form used by asio (e.g. `[::1]:8086`), so the port is unambiguous even though the address itself contains `:`.
+
+### Streaming
+
+All four types also insert into narrow output streams, producing exactly the text `to_string()` (and hence `std::format`) produces. The value is inserted as a single unit, so the stream's `width`/`fill`/`adjustfield` apply to the whole address:
+
+```cpp
+std::cout << sock.remote_endpoint() << '\n';                        // e.g. "127.0.0.1:8086"
+std::cout << std::setw(21) << std::left << ep << " connected\n";    // padded as one field
+```
+
+The overloads are templates on the stream's `Traits`, but fixed to `char`: `to_string()` yields a `std::string`, so there is no wide-stream (`std::wostream`) overload.
 
 ### Byte-order helpers
 
@@ -182,7 +212,7 @@ auto main() -> int {
     std::cout << std::format("{} -> ip={}, port={}\n", server, ip, port);
 
     coio::endpoint v6ep{coio::ipv6_address::loopback(), 8086};
-    std::cout << std::format("v6: {}\n", v6ep);                     // "[::1]:8086"
+    std::cout << "v6: " << v6ep << '\n';                            // "[::1]:8086"
 }
 ```
 

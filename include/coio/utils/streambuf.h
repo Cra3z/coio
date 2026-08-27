@@ -1,9 +1,13 @@
 #pragma once
 // from asio::streambuf
+#include <algorithm>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <span>
+#include <stdexcept>
 #include <streambuf>
+#include <system_error>
 #include <vector>
 
 namespace coio {
@@ -46,10 +50,22 @@ namespace coio {
             return {reinterpret_cast<const std::byte*>(gptr()), size()};
         }
 
+        /// Strong guarantee. Reports `std::errc::no_buffer_space` when `size() + n` would cross
+        /// `max_size()`, and `std::errc::not_enough_memory` when the storage cannot grow.
+        [[nodiscard]]
+        auto prepare(std::size_t n, std::error_code& ec) noexcept -> std::span<std::byte> {
+            ec.clear();
+            if (not reserve(n, ec)) return {};
+            return {reinterpret_cast<std::byte*>(pptr()), n};
+        }
+
         [[nodiscard]]
         auto prepare(std::size_t n) -> std::span<std::byte> {
-            reserve(n);
-            return {reinterpret_cast<std::byte*>(pptr()), n};
+            std::error_code ec;
+            const auto prepared = prepare(n, ec);
+            if (ec == std::errc::not_enough_memory) throw std::bad_alloc{};
+            if (ec == std::errc::no_buffer_space) throw std::length_error{"coio::streambuf too long"};
+            return prepared;
         }
 
         auto commit(std::size_t n) -> void {
@@ -92,30 +108,48 @@ namespace coio {
             return traits_type::not_eof(c);
         }
 
-        auto reserve(std::size_t n) -> void {
-            std::size_t gnext = gptr() - &buffer_[0];
-            std::size_t pnext = pptr() - &buffer_[0];
+        auto reserve(std::size_t n, std::error_code& ec) noexcept -> bool {
+            const std::size_t gnext = gptr() - &buffer_[0];
+            const std::size_t pnext = pptr() - &buffer_[0];
             std::size_t pend = epptr() - &buffer_[0];
 
-            if (n <= pend - pnext) return;
+            if (n <= pend - pnext) return true;
+
+            // where the put area lands once the get area is shifted down to the front
+            const std::size_t compacted = pnext - gnext;
+
+            // Everything that can fail runs first, while the stream positions still describe the
+            // bytes. Shifting before the growth (as asio does) would leave `data()` naming the
+            // pre-shift layout on failure, since the positions are only updated at the end.
+            if (n > pend - compacted) {
+                if (n > max_size_ or compacted > max_size_ - n) {
+                    ec = std::make_error_code(std::errc::no_buffer_space);
+                    return false;
+                }
+                pend = compacted + n;
+                try {
+                    buffer_.resize(std::max(pend, std::size_t{1})); // grows: never truncates live bytes
+                }
+                catch (...) {
+                    ec = std::make_error_code(std::errc::not_enough_memory);
+                    return false;
+                }
+            }
 
             if (gnext > 0) {
-                pnext -= gnext;
-                std::memmove(&buffer_[0], &buffer_[0] + gnext, pnext);
+                std::memmove(&buffer_[0], &buffer_[0] + gnext, compacted);
             }
 
-            if (n > pend - pnext) {
-                if (n <= max_size_ and pnext <= max_size_ - n) {
-                    pend = pnext + n;
-                    buffer_.resize(std::max(pend, std::size_t{1}));
-                }
-                else {
-                    throw std::length_error{"coio::streambuf too long"};
-                }
-            }
+            setg(&buffer_[0], &buffer_[0], &buffer_[0] + compacted);
+            setp(&buffer_[0] + compacted, &buffer_[0] + pend);
+            return true;
+        }
 
-            setg(&buffer_[0], &buffer_[0], &buffer_[0] + pnext);
-            setp(&buffer_[0] + pnext, &buffer_[0] + pend);
+        auto reserve(std::size_t n) -> void {
+            std::error_code ec;
+            if (reserve(n, ec)) return;
+            if (ec == std::errc::not_enough_memory) throw std::bad_alloc{};
+            throw std::length_error{"coio::streambuf too long"};
         }
 
     private:

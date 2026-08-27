@@ -136,7 +136,7 @@ auto handle_connection(tcp_socket socket) -> io_context::task<> try {
     }
 }
 catch (const std::system_error& e) {
-    std::cerr << "connetion error: " << e.what() << '\n';
+    std::cerr << "connection error: " << e.what() << '\n';
 }
 
 auto start_server(coio::async_scope& scope) -> io_context::task<> try {

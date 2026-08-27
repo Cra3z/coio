@@ -2,10 +2,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <latch>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <vector>
 #include <doctest/doctest.h>
 #include <coio/core.h>
@@ -200,6 +202,31 @@ namespace {
         CHECK_EQ(written, 0);
     }
 
+    // --- completion-thread probe -----------------------------------------------
+
+    // Records which thread delivered the completion. Deliberately a bare receiver rather than a
+    // `co_await` inside a task: awaited senders go through `affine()`, which would force the
+    // continuation onto the task's scheduler and hide where the sender itself completed.
+    struct probe_state {
+        std::error_code ec{};
+        std::size_t n = 0;
+        std::thread::id completed_on{};
+        std::latch done{1};
+    };
+
+    struct completion_probe {
+        using receiver_concept = coio::execution::receiver_tag;
+
+        auto set_value(std::error_code ec, std::size_t n) && noexcept -> void {
+            state->ec = ec;
+            state->n = n;
+            state->completed_on = std::this_thread::get_id();
+            state->done.count_down();
+        }
+
+        probe_state* state;
+    };
+
     // --- make_pipe overload helper ---------------------------------------------
 
     // one byte through the pair, synchronously (sync members never touch the completion
@@ -292,6 +319,63 @@ TEST_CASE_TEMPLATE("pipe: large transfer with backpressure preserves the byte st
     ));
 
     CHECK(received == payload);
+}
+
+TEST_CASE_TEMPLATE("pipe: composed transfers complete on the context consumer, never inline", Context, COIO_TEST_CONTEXTS) {
+    std::optional<Context> context;
+    if (not try_make_context(context)) return;
+    auto scheduler = context->get_scheduler();
+
+    auto [reader, writer] = coio::make_pipe(scheduler);
+
+    // keep the context running while this thread wires operations up
+    std::optional<coio::work_guard<Context>> guard{std::in_place, *context};
+    std::thread runner{[&] { context->run(); }};
+    REQUIRE_NE(runner.get_id(), std::this_thread::get_id());
+
+    { // async_read over several chunks: the last chunk's completion carries the whole transfer
+        constexpr std::size_t chunk = 64;
+        constexpr int chunks = 3;
+        const auto payload = make_payload(chunk * chunks, 3);
+        std::vector<std::byte> received(payload.size());
+
+        probe_state probe;
+        auto op = coio::execution::connect(coio::async_read(reader, received), completion_probe{&probe});
+        coio::execution::start(op);
+
+        for (int i = 0; i < chunks; ++i) {
+            // dribble the payload in so the read loop has to restart at least once
+            CHECK_EQ(writer.write_some(std::span{payload}.subspan(i * chunk, chunk)), chunk);
+            std::this_thread::sleep_for(10ms);
+        }
+
+        probe.done.wait();
+        CHECK_FALSE(probe.ec);
+        CHECK_EQ(probe.n, payload.size());
+        CHECK(received == payload);
+        CHECK_EQ(probe.completed_on, runner.get_id());
+        CHECK_NE(probe.completed_on, std::this_thread::get_id());
+    }
+
+    { // async_write: same guarantee on the other direction
+        const auto payload = make_payload(128, 4);
+        probe_state probe;
+        auto op = coio::execution::connect(coio::async_write(writer, payload), completion_probe{&probe});
+        coio::execution::start(op);
+
+        probe.done.wait();
+        CHECK_FALSE(probe.ec);
+        CHECK_EQ(probe.n, payload.size());
+        CHECK_EQ(probe.completed_on, runner.get_id());
+        CHECK_NE(probe.completed_on, std::this_thread::get_id());
+
+        std::vector<std::byte> drained(payload.size());
+        CHECK_EQ(coio::read(reader, drained), payload.size());
+        CHECK(drained == payload);
+    }
+
+    guard.reset();
+    runner.join();
 }
 
 TEST_CASE_TEMPLATE("pipe: pending read on an empty pipe is cancelled by a timer race", Context, COIO_TEST_CONTEXTS) {

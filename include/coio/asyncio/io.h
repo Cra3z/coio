@@ -1,10 +1,21 @@
 ﻿// ReSharper disable CppRedundantTypenameKeyword
 #pragma once
 #include <algorithm>
+#include <concepts>
+#include <cstddef>
+#include <cstring>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <span>
 #include <stop_token>  // IWYU pragma: keep
 #include <string_view>
+#include <system_error>
+#include <tuple>
+#include <type_traits>
+#include <utility>
 #include <coio/utils/async_result.h>
+#include <coio/utils/scope_exit.h>
 #include <coio/core.h>
 #include <coio/detail/error.h> //  IWYU pragma: keep
 
@@ -62,30 +73,62 @@ namespace coio {
     concept async_random_access_device = async_input_random_access_device<T> and async_output_random_access_device<T>;
 
     template<typename T>
-    concept dynamic_buffer = requires (T t, const T& ct, std::size_t n) {
+    concept dynamic_buffer = requires (T t, const T& ct, std::size_t n, std::error_code& ec) {
         { ct.size() } -> std::integral;
         { ct.capacity() } -> std::integral;
         { ct.max_size() } -> std::integral;
         { ct.data() } -> std::convertible_to<std::span<const std::byte>>;
         { t.prepare(n) } -> std::convertible_to<std::span<std::byte>>;
+        { t.prepare(n, ec) } noexcept -> std::convertible_to<std::span<std::byte>>;
         t.commit(n);
         t.consume(n);
     };
 
     namespace detail {
+        inline constexpr std::size_t min_transfer_chunk = 512;
+        inline constexpr std::size_t max_transfer_chunk = 65536;
+
+        COIO_ALWAYS_INLINE auto room_in(const dynamic_buffer auto& buffer) noexcept -> std::size_t {
+            return static_cast<std::size_t>(buffer.max_size()) - static_cast<std::size_t>(buffer.size());
+        }
+
+        COIO_ALWAYS_INLINE auto next_chunk_size(
+            const dynamic_buffer auto& buffer,
+            std::size_t remaining = static_cast<std::size_t>(-1)
+        ) noexcept -> std::size_t {
+            const auto free_capacity = static_cast<std::size_t>(buffer.capacity()) - static_cast<std::size_t>(buffer.size());
+            return std::min({std::max(min_transfer_chunk, free_capacity), max_transfer_chunk, remaining, room_in(buffer)});
+        }
+
+        /// Rejects a `total` the buffer could never hold — the counterpart of the throw the
+        /// synchronous overloads raise — and prepares the first chunk. A failure is carried into
+        /// the loop rather than short-circuited: completing on the spot would be cheaper, but it
+        /// would complete on whatever thread called `start()` instead of where the device
+        /// completes, which is where every other outcome of these algorithms arrives.
+        struct first_chunk_result {
+            std::error_code ec;
+            std::span<std::byte> prepared;
+        };
+
+        COIO_ALWAYS_INLINE auto first_chunk(dynamic_buffer auto& buffer, std::size_t total) noexcept -> first_chunk_result {
+            if (total > room_in(buffer)) {
+                return {std::make_error_code(std::errc::no_buffer_space), {}};
+            }
+            first_chunk_result result;
+            result.prepared = buffer.prepare(next_chunk_size(buffer, total), result.ec);
+            return result;
+        }
+
         struct read_t {
             COIO_STATIC_CALL_OP auto operator() (
                 input_stream_device auto& device,
                 std::span<std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
-                const std::size_t total = buffer.size();
-                if (total == 0) return 0;
-                std::size_t remain = total;
-                do {
-                    remain -= device.read_some(buffer.subspan(total - remain, remain));
+                std::size_t bytes_transferred = 0;
+                while (bytes_transferred < buffer.size()) {
+                    bytes_transferred += device.read_some(buffer.subspan(bytes_transferred));
                 }
-                while (remain > 0);
-                return total;
+                return bytes_transferred;
             }
 
             COIO_STATIC_CALL_OP auto operator() (
@@ -93,10 +136,19 @@ namespace coio {
                 dynamic_buffer auto& dyn_buffer,
                 std::size_t total
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
-                std::size_t bytes_transferred = read_t{}(device, dyn_buffer.prepare(total));
-                COIO_ASSERT(bytes_transferred == total);
-                dyn_buffer.commit(bytes_transferred);
-                return total;
+                if (total > detail::room_in(dyn_buffer)) {
+                    throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
+                }
+                std::size_t bytes_transferred = 0;
+                while (bytes_transferred < total) {
+                    // committing per chunk keeps what already arrived if the next read throws
+                    const std::size_t n = device.read_some(
+                        dyn_buffer.prepare(next_chunk_size(dyn_buffer, total - bytes_transferred))
+                    );
+                    dyn_buffer.commit(n);
+                    bytes_transferred += n;
+                }
+                return bytes_transferred;
             }
         };
 
@@ -105,22 +157,24 @@ namespace coio {
                 output_stream_device auto& device,
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
-                const std::size_t total = buffer.size();
-                if (total == 0) return 0;
-                std::size_t remain = total;
-                do {
-                    remain -= device.write_some(buffer.subspan(total - remain, remain));
+                std::size_t bytes_transferred = 0;
+                while (bytes_transferred < buffer.size()) {
+                    bytes_transferred += device.write_some(buffer.subspan(bytes_transferred));
                 }
-                while (remain > 0);
-                return total;
+                return bytes_transferred;
             }
 
             COIO_STATIC_CALL_OP auto operator() (
                 output_stream_device auto& device,
                 dynamic_buffer auto& dyn_buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
-                const std::size_t bytes_transferred = write_t{}(device, dyn_buffer.data());
-                dyn_buffer.consume(bytes_transferred);
+                const std::span<const std::byte> data = dyn_buffer.data();
+                std::size_t bytes_transferred = 0;
+                // on a throw this consumes only what was sent, so a retry does not repeat it
+                scope_exit consume_written{[&]() noexcept { dyn_buffer.consume(bytes_transferred); }};
+                while (bytes_transferred < data.size()) {
+                    bytes_transferred += device.write_some(data.subspan(bytes_transferred));
+                }
                 return bytes_transferred;
             }
         };
@@ -131,16 +185,11 @@ namespace coio {
                 std::size_t offset,
                 std::span<std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
-                const std::size_t total = buffer.size();
-                if (total == 0) return 0;
-                std::size_t remain = total;
-                do {
-                    const auto bytes_transferred = device.read_some_at(offset, buffer.subspan(total - remain, remain));
-                    offset += bytes_transferred;
-                    remain -= bytes_transferred;
+                std::size_t bytes_transferred = 0;
+                while (bytes_transferred < buffer.size()) {
+                    bytes_transferred += device.read_some_at(offset + bytes_transferred, buffer.subspan(bytes_transferred));
                 }
-                while (remain > 0);
-                return total;
+                return bytes_transferred;
             }
 
             COIO_STATIC_CALL_OP auto operator() (
@@ -149,10 +198,19 @@ namespace coio {
                 dynamic_buffer auto& dyn_buffer,
                 std::size_t total
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
-                std::size_t bytes_transferred = read_at_t{}(device, offset, dyn_buffer.prepare(total));
-                COIO_ASSERT(bytes_transferred == total);
-                dyn_buffer.commit(bytes_transferred);
-                return total;
+                if (total > detail::room_in(dyn_buffer)) {
+                    throw std::system_error{std::make_error_code(std::errc::no_buffer_space)};
+                }
+                std::size_t bytes_transferred = 0;
+                while (bytes_transferred < total) {
+                    const std::size_t n = device.read_some_at(
+                        offset + bytes_transferred,
+                        dyn_buffer.prepare(next_chunk_size(dyn_buffer, total - bytes_transferred))
+                    );
+                    dyn_buffer.commit(n);
+                    bytes_transferred += n;
+                }
+                return bytes_transferred;
             }
         };
 
@@ -162,26 +220,24 @@ namespace coio {
                 std::size_t offset,
                 std::span<const std::byte> buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
-                const std::size_t total = buffer.size();
-                if (total == 0) return 0;
-                std::size_t remain = total;
-                do {
-                    const auto bytes_transferred = device.write_some_at(offset, buffer.subspan(total - remain, remain));
-                    offset += bytes_transferred;
-                    remain -= bytes_transferred;
+                std::size_t bytes_transferred = 0;
+                while (bytes_transferred < buffer.size()) {
+                    bytes_transferred += device.write_some_at(offset + bytes_transferred, buffer.subspan(bytes_transferred));
                 }
-                while (remain > 0);
-                return total;
+                return bytes_transferred;
             }
 
             COIO_STATIC_CALL_OP auto operator() (
                 output_random_access_device auto& device,
                 std::size_t offset,
-                dynamic_buffer auto& dyn_buffer,
-                std::size_t total
+                dynamic_buffer auto& dyn_buffer
             ) COIO_STATIC_CALL_OP_CONST -> std::size_t {
-                const std::size_t bytes_transferred = write_at_t{}(device, offset, dyn_buffer.data());
-                dyn_buffer.consume(bytes_transferred);
+                const std::span<const std::byte> data = dyn_buffer.data();
+                std::size_t bytes_transferred = 0;
+                scope_exit consume_written{[&]() noexcept { dyn_buffer.consume(bytes_transferred); }};
+                while (bytes_transferred < data.size()) {
+                    bytes_transferred += device.write_some_at(offset + bytes_transferred, data.subspan(bytes_transferred));
+                }
                 return bytes_transferred;
             }
         };
@@ -207,16 +263,11 @@ namespace coio {
 
                     search_pos = data.size();
 
-                    if (buffer.size() == buffer.max_size()) [[unlikely]] {
+                    if (room_in(buffer) == 0) [[unlikely]] {
                         throw std::system_error{error::not_found, "read_until"};
                     }
 
-                    const std::size_t bytes_to_read = std::min(
-                        std::max<std::size_t>(512, buffer.capacity() - buffer.size()),
-                        std::min<std::size_t>(65536, buffer.max_size() - buffer.size())
-                    );
-
-                    auto prep = buffer.prepare(bytes_to_read);
+                    auto prep = buffer.prepare(next_chunk_size(buffer));
                     std::size_t n = device.read_some(prep);
                     buffer.commit(n);
                 }
@@ -252,21 +303,51 @@ namespace coio {
 
                     search_pos = size;
 
-                    if (buffer.size() == buffer.max_size()) [[unlikely]] {
+                    if (room_in(buffer) == 0) [[unlikely]] {
                         throw std::system_error{error::not_found, "read_until"};
                     }
 
-                    const std::size_t bytes_to_read = std::min(
-                        std::max<std::size_t>(512, buffer.capacity() - buffer.size()),
-                        std::min<std::size_t>(65536, buffer.max_size() - buffer.size())
-                    );
-
-                    auto prep = buffer.prepare(bytes_to_read);
+                    auto prep = buffer.prepare(next_chunk_size(buffer));
                     std::size_t n = device.read_some(prep);
                     buffer.commit(n);
                 }
             }
         };
+
+        struct deferred_start_t {
+            using sender_concept = execution::sender_tag;
+
+            using completion_signatures = execution::completion_signatures<execution::set_value_t()>;
+
+            template<typename Rcvr>
+            struct state {
+                using operation_state_concept = execution::operation_state_tag;
+
+                explicit state(Rcvr rcvr) noexcept : rcvr(std::move(rcvr)) {}
+
+                state(const state&) = delete;
+
+                auto operator= (const state&) -> state& = delete;
+
+                COIO_ALWAYS_INLINE auto start() & noexcept -> void {
+                    execution::set_value(std::move(rcvr));
+                }
+
+                Rcvr rcvr;
+            };
+
+            template<execution::receiver Rcvr>
+            COIO_ALWAYS_INLINE auto connect(Rcvr rcvr) const noexcept -> state<Rcvr> {
+                return state<Rcvr>{std::move(rcvr)};
+            }
+
+            template<similar_to<deferred_start_t>, typename...>
+            static consteval auto get_completion_signatures() noexcept -> completion_signatures {
+                return {};
+            }
+        };
+
+        inline constexpr deferred_start_t deferred_start{};
 
         template<typename Rcvr>
         struct transfer_bytes_state_base {
@@ -280,13 +361,13 @@ namespace coio {
                     return detail::fwd_env(execution::get_env(state_->rcvr));
                 }
 
-                COIO_ALWAYS_INLINE auto set_value(std::size_t bytes_transferred, bool again) && noexcept -> void {
+                COIO_ALWAYS_INLINE auto set_value(std::size_t bytes_transferred, bool again, std::error_code ec) && noexcept -> void {
                     state_->accumulated += bytes_transferred;
                     if (again) {
                         state_->restart(state_);
                     }
                     else {
-                        execution::set_value(std::move(state_->rcvr), std::error_code{}, state_->accumulated);
+                        execution::set_value(std::move(state_->rcvr), ec, state_->accumulated);
                     }
                 }
 
@@ -357,12 +438,24 @@ namespace coio {
                 return {};
             }
 
+            COIO_ALWAYS_INLINE auto get_env() const noexcept {
+                return factory.get_env();
+            }
+
             Factory factory;
         };
 
-        template<typename Source, typename Continuation, typename... Datas> requires std::invocable<Source&, Datas&...> and std::invocable<Continuation&, std::size_t, Datas&...>
+        template<typename Source, typename Continuation, typename... Datas>
+            requires std::invocable<Source&, Datas&...> and std::invocable<Continuation&, std::size_t, std::error_code&, Datas&...>
         struct io_sender_factory {
-            io_sender_factory(Source src, Continuation cont, Datas... datas) noexcept : src(std::move(src)), cont(std::move(cont)), datas(std::move(datas)...) {}
+            /// the device's sender for one chunk, e.g. what `async_read_some` returns
+            using source_sender_t = std::invoke_result_t<Source&, Datas&...>;
+
+            io_sender_factory(Source src, Continuation cont, Datas... datas) :
+                src(std::move(src)),
+                cont(std::move(cont)),
+                datas(std::move(datas)...),
+                sndr(std::apply(this->src, this->datas)) {}
 
             io_sender_factory(const io_sender_factory&) = delete;
 
@@ -373,16 +466,27 @@ namespace coio {
             auto operator= (io_sender_factory&&) noexcept -> io_sender_factory& = default;
 
             COIO_ALWAYS_INLINE auto operator()() & noexcept {
-                return let_value(std::apply(src, datas), [this](std::size_t bytes_transferred) noexcept {
-                    return just(bytes_transferred, [&]<std::size_t... I>(std::index_sequence<I...>) noexcept -> bool {
-                        return std::invoke(cont, bytes_transferred, std::get<I>(datas)...);
-                    }(std::index_sequence_for<Datas...>{}));
+                return let_value(*std::move(sndr), [this](std::size_t bytes_transferred) noexcept {
+                    std::error_code ec;
+                    const bool again = std::apply(
+                        [&](Datas&... datas) noexcept { return std::invoke(cont, bytes_transferred, ec, datas...); },
+                        datas
+                    );
+                    if (again) {
+                        sndr.emplace(std::apply(src, datas));
+                    }
+                    return just(bytes_transferred, again, ec);
                 });
+            }
+
+            COIO_ALWAYS_INLINE auto get_env() const noexcept {
+                return execution::get_env(*sndr);
             }
 
             COIO_NO_UNIQUE_ADDRESS Source src;
             COIO_NO_UNIQUE_ADDRESS Continuation cont;
             std::tuple<Datas...> datas;
+            std::optional<source_sender_t> sndr;
         };
 
         struct async_read_t {
@@ -395,7 +499,7 @@ namespace coio {
                    [](auto* device, std::span<std::byte> remaining) noexcept {
                        return device->async_read_some(remaining);
                    },
-                   [](std::size_t bytes_transferred, auto, std::span<std::byte>& buffer) noexcept {
+                   [](std::size_t bytes_transferred, std::error_code&, auto, std::span<std::byte>& buffer) noexcept {
                        buffer = buffer.subspan(bytes_transferred);
                        return not buffer.empty();
                    },
@@ -411,11 +515,85 @@ namespace coio {
                 std::size_t total
             ) COIO_STATIC_CALL_OP_CONST {
                 return let_value(
-                    async_read_t{}(device, dyn_buffer.prepare(total)),
-                    [total, &dyn_buffer](std::error_code ec, std::size_t bytes_transferred) noexcept {
-                        COIO_ASSERT(ec or bytes_transferred == total);
-                        dyn_buffer.commit(bytes_transferred);
-                        return just(ec, bytes_transferred);
+                    deferred_start,
+                    [dev = std::addressof(device), buf = std::addressof(dyn_buffer), total]() noexcept {
+                        auto [initial_ec, prepared] = first_chunk(*buf, total);
+                        return transfer_bytes_sender{io_sender_factory{
+                            [](auto* device, auto*, std::size_t&, std::span<std::byte>& prepared, std::error_code&) noexcept {
+                                return device->async_read_some(prepared);
+                            },
+                            [](
+                                std::size_t bytes_transferred,
+                                std::error_code& ec,
+                                auto,
+                                auto* dyn_buffer,
+                                std::size_t& remaining,
+                                std::span<std::byte>& prepared,
+                                std::error_code& initial_ec
+                            ) noexcept {
+                                if (initial_ec) {
+                                    ec = initial_ec;
+                                    return false;
+                                }
+                                dyn_buffer->commit(bytes_transferred);
+                                remaining -= bytes_transferred;
+                                if (remaining == 0) return false;
+                                prepared = dyn_buffer->prepare(next_chunk_size(*dyn_buffer, remaining), ec);
+                                return not ec;
+                            },
+                            dev,
+                            buf,
+                            total,
+                            prepared,
+                            initial_ec
+                        }};
+                    }
+                );
+            }
+
+            /// Reads until the stream ends or `dyn_buffer` is full — the counterpart of
+            /// `async_write(device, dyn_buffer)`, for when the length is not known in advance.
+            /// The stopping conditions are told apart by the error code: `coio::error::eof` means
+            /// the stream ended, no error means the buffer reached `max_size()`, and anything else
+            /// — `std::errc::not_enough_memory`, or whatever the device reported — is a failure.
+            [[nodiscard]]
+            COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
+                async_input_stream_device auto& device,
+                dynamic_buffer auto& dyn_buffer
+            ) COIO_STATIC_CALL_OP_CONST {
+                return let_value(
+                    deferred_start,
+                    [dev = std::addressof(device), buf = std::addressof(dyn_buffer)]() noexcept {
+                        std::error_code initial_ec;
+                        const auto prepared = buf->prepare(next_chunk_size(*buf), initial_ec);
+                        return transfer_bytes_sender{io_sender_factory{
+                            [](auto* device, auto*, std::span<std::byte>& prepared, std::error_code&) noexcept {
+                                return device->async_read_some(prepared);
+                            },
+                            [](
+                                std::size_t bytes_transferred,
+                                std::error_code& ec,
+                                auto,
+                                auto* dyn_buffer,
+                                std::span<std::byte>& prepared,
+                                std::error_code& initial_ec
+                            ) noexcept {
+                                if (initial_ec) {
+                                    ec = initial_ec;
+                                    return false;
+                                }
+                                dyn_buffer->commit(bytes_transferred);
+                                // stopping on a zero-byte read keeps a device that yields nothing without
+                                // reporting an error from spinning, as asio's `transfer_all` loop does
+                                if (bytes_transferred == 0 or room_in(*dyn_buffer) == 0) return false;
+                                prepared = dyn_buffer->prepare(next_chunk_size(*dyn_buffer), ec);
+                                return not ec;
+                            },
+                            dev,
+                            buf,
+                            prepared,
+                            initial_ec
+                        }};
                     }
                 );
             }
@@ -431,7 +609,7 @@ namespace coio {
                     [](auto* device, std::span<const std::byte> remaining) noexcept {
                         return device->async_write_some(remaining);
                     },
-                    [](std::size_t bytes_transferred, auto, std::span<const std::byte>& buffer) noexcept {
+                    [](std::size_t bytes_transferred, std::error_code&, auto, std::span<const std::byte>& buffer) noexcept {
                         buffer = buffer.subspan(bytes_transferred);
                         return not buffer.empty();
                     },
@@ -467,7 +645,7 @@ namespace coio {
                    [](auto* device, std::size_t offset, std::span<std::byte> remaining) noexcept {
                        return device->async_read_some_at(offset, remaining);
                    },
-                   [](std::size_t bytes_transferred, auto, std::size_t& offset, std::span<std::byte>& buffer) noexcept {
+                   [](std::size_t bytes_transferred, std::error_code&, auto, std::size_t& offset, std::span<std::byte>& buffer) noexcept {
                        offset += bytes_transferred;
                        buffer = buffer.subspan(bytes_transferred);
                        return not buffer.empty();
@@ -486,11 +664,41 @@ namespace coio {
                 std::size_t total
             ) COIO_STATIC_CALL_OP_CONST {
                 return let_value(
-                    async_read_at_t{}(device, offset, dyn_buffer.prepare(total)),
-                    [total, &dyn_buffer](std::error_code ec, std::size_t bytes_transferred) noexcept {
-                        COIO_ASSERT(ec or bytes_transferred == total);
-                        dyn_buffer.commit(bytes_transferred);
-                        return just(ec, bytes_transferred);
+                    deferred_start,
+                    [dev = std::addressof(device), buf = std::addressof(dyn_buffer), offset, total]() noexcept {
+                        auto [initial_ec, prepared] = first_chunk(*buf, total);
+                        return transfer_bytes_sender{io_sender_factory{
+                            [](auto* device, auto*, std::size_t offset, std::size_t&, std::span<std::byte>& prepared, std::error_code&) noexcept {
+                                return device->async_read_some_at(offset, prepared);
+                            },
+                            [](
+                                std::size_t bytes_transferred,
+                                std::error_code& ec,
+                                auto,
+                                auto* dyn_buffer,
+                                std::size_t& offset,
+                                std::size_t& remaining,
+                                std::span<std::byte>& prepared,
+                                std::error_code& initial_ec
+                            ) noexcept {
+                                if (initial_ec) {
+                                    ec = initial_ec;
+                                    return false;
+                                }
+                                dyn_buffer->commit(bytes_transferred);
+                                offset += bytes_transferred;
+                                remaining -= bytes_transferred;
+                                if (remaining == 0) return false;
+                                prepared = dyn_buffer->prepare(next_chunk_size(*dyn_buffer, remaining), ec);
+                                return not ec;
+                            },
+                            dev,
+                            buf,
+                            offset,
+                            total,
+                            prepared,
+                            initial_ec
+                        }};
                     }
                 );
             }
@@ -507,7 +715,7 @@ namespace coio {
                     [](auto* device, std::size_t offset, std::span<const std::byte> remaining) noexcept {
                         return device->async_write_some_at(offset, remaining);
                     },
-                    [](std::size_t bytes_transferred, auto, std::size_t& offset, std::span<const std::byte>& buffer) noexcept {
+                    [](std::size_t bytes_transferred, std::error_code&, auto, std::size_t& offset, std::span<const std::byte>& buffer) noexcept {
                         offset += bytes_transferred;
                         buffer = buffer.subspan(bytes_transferred);
                         return not buffer.empty();
@@ -598,7 +806,7 @@ namespace coio {
                     execution::set_value(std::move(this->rcvr), std::error_code{}, pos);
                     return;
                 }
-                if (buffer->size() == buffer->max_size()) [[unlikely]] {
+                if (room_in(*buffer) == 0) [[unlikely]] {
                     execution::set_value(std::move(this->rcvr), make_error_code(error::not_found), std::size_t{0});
                     return;
                 }
@@ -635,11 +843,12 @@ namespace coio {
             }
 
             COIO_ALWAYS_INLINE auto do_read() noexcept -> void {
-                const std::size_t bytes_to_read = std::min(
-                    std::max<std::size_t>(512, buffer->capacity() - buffer->size()),
-                    std::min<std::size_t>(65536, buffer->max_size() - buffer->size())
-                );
-                auto prep = buffer->prepare(bytes_to_read);
+                std::error_code ec;
+                auto prep = buffer->prepare(next_chunk_size(*buffer), ec);
+                if (ec) [[unlikely]] {
+                    execution::set_value(std::move(this->rcvr), ec, std::size_t{0});
+                    return;
+                }
                 read_state.emplace(elide{execution::connect, device->async_read_some(prep), receiver{this}});
                 execution::start(*read_state);
             }
@@ -693,7 +902,16 @@ namespace coio {
                 return read_until_sender{std::addressof(device), std::addressof(buffer), delim};
             }
 
-            // Read until string delimiter
+            /// Read until string delimiter.
+            ///
+            /// `delim` is held as a `std::string_view`, so its characters — like `device` and
+            /// `buffer` — must outlive the operation. Awaiting the call directly is safe, since a
+            /// temporary argument lives to the end of the full-expression that contains the
+            /// `co_await`; storing the sender first and starting it later is not:
+            ///
+            ///     co_await async_read_until(sock, buf, prefix + "\r\n");   // ok
+            ///     auto s = async_read_until(sock, buf, prefix + "\r\n");   // the temporary dies here
+            ///     co_await std::move(s);                                   // `delim` dangles
             [[nodiscard]]
             COIO_ALWAYS_INLINE COIO_STATIC_CALL_OP auto operator() (
                 async_input_stream_device auto& device,

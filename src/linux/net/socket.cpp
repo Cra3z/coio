@@ -169,7 +169,8 @@ namespace coio::detail::socket {
         if (rc == 0) return;
 
         const int ec = errno;
-        if (ec != EINPROGRESS) {
+        // an interrupted connect() keeps going in the background: wait it out, never reissue it
+        if (ec != EINPROGRESS and ec != EINTR) {
             throw std::system_error{ec, std::system_category(), "connect"};
         }
 
@@ -187,6 +188,7 @@ namespace coio::detail::socket {
         check_fd(handle);
         while (true) {
             auto accepted = ::accept4(handle, nullptr, nullptr, 0);
+            if (accepted == -1 and errno == EINTR) continue;
             if (accepted == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLIN, "accept");
                 continue;
@@ -203,6 +205,7 @@ namespace coio::detail::socket {
         }
         while (true) {
             ::ssize_t n = ::recv(handle, buffer.data(), buffer.size(), 0);
+            if (n == -1 and errno == EINTR) continue;
             if (n == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLIN, "receive");
                 continue;
@@ -219,6 +222,7 @@ namespace coio::detail::socket {
         check_fd(handle);
         while (true) {
             ::ssize_t n = ::send(handle, buffer.data(), buffer.size(), MSG_NOSIGNAL);
+            if (n == -1 and errno == EINTR) continue;
             if (n == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLOUT, "send");
                 continue;
@@ -234,6 +238,7 @@ namespace coio::detail::socket {
             ::sockaddr_storage addr{};
             ::socklen_t len = sizeof(addr);
             ::ssize_t n = ::recvfrom(handle, buffer.data(), buffer.size(), 0, reinterpret_cast<::sockaddr*>(&addr), &len);
+            if (n == -1 and errno == EINTR) continue;
             if (n == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLIN, "receive_from");
                 continue;
@@ -249,6 +254,7 @@ namespace coio::detail::socket {
         auto [psa, len] = to_sockaddr(sa);
         while (true) {
             ::ssize_t n = ::sendto(handle, buffer.data(), buffer.size(), MSG_NOSIGNAL, psa, len);
+            if (n == -1 and errno == EINTR) continue;
             if (n == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLOUT, "send_to");
                 continue;

@@ -99,11 +99,14 @@ namespace coio {
     iocp_context::scheduler::file_object::file_object(iocp_context& ctx, ::HANDLE handle)
         : io_object(ctx, handle) {
         if (handle != INVALID_HANDLE_VALUE and handle != nullptr) {
-            if (::GetFileType(handle) == FILE_TYPE_DISK) {
+            // a pipe or a tty has no file pointer, so `offset_` stays unused and
+            // OVERLAPPED::Offset must be left at zero for every operation on it
+            seekable_ = ::GetFileType(handle) == FILE_TYPE_DISK;
+            if (seekable_) {
                 skip_cp_on_success_ = detail::try_skip_completion_port_on_success(handle);
-            }
-            if (::LARGE_INTEGER current{}; ::SetFilePointerEx(handle, {}, &current, FILE_CURRENT)) {
-                offset_ = static_cast<std::size_t>(current.QuadPart);
+                if (::LARGE_INTEGER current{}; ::SetFilePointerEx(handle, {}, &current, FILE_CURRENT)) {
+                    offset_ = static_cast<std::size_t>(current.QuadPart);
+                }
             }
         }
     }
@@ -115,6 +118,7 @@ namespace coio {
     auto iocp_context::scheduler::file_object::close() -> void {
         const auto handle = std::exchange(handle_, INVALID_HANDLE_VALUE);
         offset_ = 0;
+        seekable_ = false;
         if (handle == INVALID_HANDLE_VALUE or handle == nullptr) return;
         detail::throw_win_error(::CloseHandle(handle), "close");
     }
@@ -158,12 +162,14 @@ namespace coio {
     }
 
     auto iocp_context::scheduler::file_object::read_some(std::span<std::byte> buffer) -> std::size_t {
+        if (not seekable_) return detail::file_read_at(handle_, 0, buffer);
         const auto n = detail::file_read_at(handle_, offset_, buffer);
         offset_ += n;
         return n;
     }
 
     auto iocp_context::scheduler::file_object::write_some(std::span<const std::byte> buffer) -> std::size_t {
+        if (not seekable_) return detail::file_write_at(handle_, 0, buffer);
         const auto n = detail::file_write_at(handle_, offset_, buffer);
         offset_ += n;
         return n;
@@ -367,6 +373,9 @@ namespace coio {
         }
 
         auto iocp_state_base_for<read_some_at_tag>::complete(::DWORD bytes_transferred, ::DWORD error) noexcept -> void {
+            // a message-mode pipe truncates the message to the buffer and reports it this way; the
+            // completion entry still carries what was transferred, so treat it as a short read
+            if (error == ERROR_MORE_DATA) error = ERROR_SUCCESS;
             if (error) {
                 if (error == ERROR_OPERATION_ABORTED) result.set_stopped();
                 else if (error == ERROR_HANDLE_EOF or error == ERROR_BROKEN_PIPE) result.set_error(error::eof);

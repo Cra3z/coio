@@ -2,6 +2,7 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <ostream>
 #include <span>
 #include <string>
 #include <tuple>
@@ -46,6 +47,11 @@ namespace coio {
 
         auto operator<=> (const ipv4_address& other) const noexcept -> std::strong_ordering;
 
+        template<typename Traits>
+        friend auto operator<< (std::basic_ostream<char, Traits>& os, const ipv4_address& ipv4) -> std::basic_ostream<char, Traits>& {
+            return os << ipv4.to_string();
+        }
+
         [[nodiscard]]
         static auto loopback() noexcept ->ipv4_address {
             return ipv4_address{0x7f000001u};
@@ -72,6 +78,11 @@ namespace coio {
         friend auto operator== (const ipv6_address& lhs, const ipv6_address& rhs) noexcept -> bool = default;
 
         friend auto operator<=> (const ipv6_address& lhs, const ipv6_address& rhs) noexcept = default;
+
+        template<typename Traits>
+        friend auto operator<< (std::basic_ostream<char, Traits>& os, const ipv6_address& ipv6) -> std::basic_ostream<char, Traits>& {
+            return os << ipv6.to_string();
+        }
 
         [[nodiscard]]
         static auto loopback() noexcept -> ipv6_address {
@@ -144,6 +155,11 @@ namespace coio {
             return lhs.v6() <=> rhs.v6();
         }
 
+        template<typename Traits>
+        friend auto operator<< (std::basic_ostream<char, Traits>& os, const ip_address& ip) -> std::basic_ostream<char, Traits>& {
+            return os << ip.to_string();
+        }
+
     private:
         union {
             ipv4_address v4_;
@@ -181,9 +197,25 @@ namespace coio {
             return port_;
         }
 
+        /**
+         * \brief the endpoint in text form: `ip:port` for IPv4, `[ip]:port` for IPv6 (the RFC 3986
+         * bracketed form, so that the port stays unambiguous).
+         */
+        [[nodiscard]]
+        auto to_string() const -> std::string {
+            auto ip_str = ip_.to_string();
+            if (ip_.is_v6()) return '[' + std::move(ip_str) + "]:" + std::to_string(port_);
+            return std::move(ip_str) + ':' + std::to_string(port_);
+        }
+
         friend auto operator== (const endpoint& lhs, const endpoint& rhs) noexcept -> bool = default;
 
         friend auto operator<=> (const endpoint& lhs, const endpoint& rhs) noexcept -> std::strong_ordering = default;
+
+        template<typename Traits>
+        friend auto operator<< (std::basic_ostream<char, Traits>& os, const endpoint& ep) -> std::basic_ostream<char, Traits>& {
+            return os << ep.to_string();
+        }
 
         template<std::size_t I> requires (I < 2)
         decltype(auto) get() noexcept {
@@ -272,10 +304,7 @@ struct std::formatter<coio::ip_address> : coio::no_specification_formatter {
 template<>
 struct std::formatter<coio::endpoint> : coio::no_specification_formatter {
     auto format(const coio::endpoint& ep, std::format_context& ctx) const {
-        if (ep.ip().is_v6()) {
-            return std::format_to(ctx.out(), "[{}]:{}", ep.ip().to_string(), ep.port());
-        }
-        return std::format_to(ctx.out(), "{}:{}", ep.ip().to_string(), ep.port());
+        return std::format_to(ctx.out(), "{}", ep.to_string());
     }
 };
 

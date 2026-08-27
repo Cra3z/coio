@@ -3,8 +3,10 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <new>
 #include <span>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 #include <coio/detail/config.h>
 
@@ -191,8 +193,12 @@ namespace coio {
         [[nodiscard]]
         auto cdata() const noexcept -> std::span<const std::byte> { return data(); }
 
+        /// Strong guarantee. Reports `std::errc::no_buffer_space` when `size() + n` would cross
+        /// `max_size()`, and `std::errc::not_enough_memory` when the allocator refuses.
         [[nodiscard]]
-        auto prepare(std::size_t n) -> std::span<std::byte> {
+        auto prepare(std::size_t n, std::error_code& ec) noexcept -> std::span<std::byte> {
+            ec.clear();
+
             if (n == 0) {
                 return {};
             }
@@ -215,10 +221,13 @@ namespace coio {
             }
 
             if (n > max_ - len) {
-                throw std::length_error("coio::flat_buffer too long");
+                ec = std::make_error_code(std::errc::no_buffer_space);
+                return {};
             }
 
-            std::size_t new_cap = std::max(end_, std::size_t{512});
+            // capacity must stay within max_size(): the two fast paths above only consult `end_`,
+            // so letting the allocation outgrow `max_` would let a later prepare walk past it
+            std::size_t new_cap = std::min(std::max(end_, std::size_t{512}), max_);
             while (new_cap < len + n) {
                 if (const std::size_t next = new_cap * 2; next > new_cap and next <= max_) {
                     new_cap = next;
@@ -229,7 +238,15 @@ namespace coio {
                 }
             }
 
-            std::byte* new_data = alloc_traits::allocate(alloc_, new_cap);
+            std::byte* new_data;
+            try {
+                new_data = alloc_traits::allocate(alloc_, new_cap);
+            }
+            catch (...) { // an allocator may signal exhaustion with anything; this one may not
+                ec = std::make_error_code(std::errc::not_enough_memory);
+                return {};
+            }
+
             if (len > 0) {
                 std::memcpy(new_data, data_ + in_, len);
             }
@@ -242,6 +259,15 @@ namespace coio {
             end_ = new_cap;
 
             return {data_ + out_, n};
+        }
+
+        [[nodiscard]]
+        auto prepare(std::size_t n) -> std::span<std::byte> {
+            std::error_code ec;
+            const auto prepared = prepare(n, ec);
+            if (ec == std::errc::not_enough_memory) throw std::bad_alloc{};
+            if (ec == std::errc::no_buffer_space) throw std::length_error{"coio::flat_buffer too long"};
+            return prepared;
         }
 
         auto commit(std::size_t n) noexcept -> void {

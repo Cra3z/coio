@@ -46,6 +46,7 @@ namespace coio::detail {
     auto file_read(file_native_handle_type handle, std::span<std::byte> buffer) -> std::size_t {
         while (true) {
             const auto n = ::read(handle, buffer.data(), buffer.size());
+            if (n == -1 and errno == EINTR) continue;
             if (n == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLIN, "read_some");
                 continue;
@@ -59,6 +60,7 @@ namespace coio::detail {
     auto file_write(file_native_handle_type handle, std::span<const std::byte> buffer) -> std::size_t {
         while (true) {
             const auto n = ::write(handle, buffer.data(), buffer.size());
+            if (n == -1 and errno == EINTR) continue;
             if (n == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLOUT, "write_some");
                 continue;
@@ -74,6 +76,7 @@ namespace coio::detail {
         }
         while (true) {
             const auto n = ::pread(handle, buffer.data(), buffer.size(), offset);
+            if (n == -1 and errno == EINTR) continue;
             if (n == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLIN, "read_some_at");
                 continue;
@@ -90,6 +93,7 @@ namespace coio::detail {
         }
         while (true) {
             const auto n = ::pwrite(handle, buffer.data(), buffer.size(), offset);
+            if (n == -1 and errno == EINTR) continue;
             if (n == -1 and is_blocking_errno(errno)) {
                 poll_file(handle, POLLOUT, "write_some_at");
                 continue;

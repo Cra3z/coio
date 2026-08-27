@@ -176,7 +176,8 @@ namespace coio {
 
                 file_object(file_object&& other) noexcept :
                     io_object(std::move(other)),
-                    offset_(std::exchange(other.offset_, 0))
+                    offset_(std::exchange(other.offset_, 0)),
+                    seekable_(std::exchange(other.seekable_, false))
                 {}
 
                 ~file_object();
@@ -189,6 +190,7 @@ namespace coio {
                 auto swap(file_object& other) noexcept -> void {
                     swap_handle(other);
                     std::ranges::swap(offset_, other.offset_);
+                    std::ranges::swap(seekable_, other.seekable_);
                 }
 
                 friend auto swap(file_object& lhs, file_object& rhs) noexcept -> void {
@@ -216,12 +218,15 @@ namespace coio {
 
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_read_some(std::span<std::byte> buffer) noexcept {
+                    // OVERLAPPED::Offset must stay zero on a device with no file pointer, such as a pipe
+                    if (not seekable_) return async_initiate<detail::read_some_at_tag>(std::size_t{0}, buffer);
                     const auto length = std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu);
                     return async_initiate<detail::read_some_at_tag>(std::exchange(offset_, offset_ + length), buffer);
                 }
 
                 [[nodiscard]]
                 COIO_ALWAYS_INLINE auto async_write_some(std::span<const std::byte> buffer) noexcept {
+                    if (not seekable_) return async_initiate<detail::write_some_at_tag>(std::size_t{0}, buffer);
                     const auto length = std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu);
                     return async_initiate<detail::write_some_at_tag>(std::exchange(offset_, offset_ + length), buffer);
                 }
@@ -238,6 +243,7 @@ namespace coio {
 
             private:
                 std::size_t offset_ = 0; // for `stream_file`
+                bool seekable_ = false;  // false for pipes and ttys, whose OVERLAPPED::Offset must stay zero
             };
 
             class socket_object final : public io_object {

@@ -50,26 +50,27 @@ namespace coio::detail {
             };
             ::DWORD n = 0;
 
-            do {
-                if (not ::ReadFile(handle, buffer.data(), static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)), &n, &overlapped)) {
-                    ::DWORD err = ::GetLastError();
-                    if (err == ERROR_IO_PENDING) {
-                        if (not ::GetOverlappedResult(handle, &overlapped, &n, TRUE)) {
-                            err = ::GetLastError();
-                            // ERROR_BROKEN_PIPE is how a pipe reports its writer closing: map it to EOF like POSIX read() == 0
-                            if (err == ERROR_HANDLE_EOF or err == ERROR_BROKEN_PIPE) throw std::system_error{coio::error::eof, msg};
-                            throw std::system_error{static_cast<int>(err), std::system_category(), msg};
-                        }
-                    }
-                    else if (err == ERROR_OPERATION_ABORTED) continue;
-                    else if (err == ERROR_HANDLE_EOF or err == ERROR_BROKEN_PIPE) throw std::system_error{coio::error::eof, msg};
-                    else throw std::system_error{static_cast<int>(err), std::system_category(), msg};
+            if (not ::ReadFile(handle, buffer.data(), static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)), &n, &overlapped)) {
+                ::DWORD err = ::GetLastError();
+                if (err == ERROR_IO_PENDING) {
+                    err = ::GetOverlappedResult(handle, &overlapped, &n, TRUE) ? ERROR_SUCCESS : ::GetLastError();
                 }
-                break;
+                // a message-mode pipe truncates the message to the buffer and reports it this way;
+                // `n` still counts what was transferred, and read_some may return short anyway
+                if (err == ERROR_MORE_DATA) err = ERROR_SUCCESS;
+                if (err != ERROR_SUCCESS) {
+                    // cancel() and close() reach this operation through CancelIoEx, so an abort almost
+                    // always surfaces here rather than from ReadFile itself
+                    if (err == ERROR_OPERATION_ABORTED) {
+                        throw std::system_error{std::make_error_code(std::errc::operation_canceled), msg};
+                    }
+                    // ERROR_BROKEN_PIPE is how a pipe reports its writer closing: map it to EOF like POSIX read() == 0
+                    if (err == ERROR_HANDLE_EOF or err == ERROR_BROKEN_PIPE) throw std::system_error{coio::error::eof, msg};
+                    throw std::system_error{static_cast<int>(err), std::system_category(), msg};
+                }
             }
-            while (true);
 
-            if (not buffer.empty() and n == 0) {
+            if (n == 0) {
                 throw std::system_error{coio::error::eof, msg};
             }
             return n;
@@ -96,21 +97,18 @@ namespace coio::detail {
             };
             ::DWORD n = 0;
 
-            do {
-                if (not ::WriteFile(handle, buffer.data(), static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)), &n, &overlapped)) {
-                    ::DWORD err = ::GetLastError();
-                    if (err == ERROR_IO_PENDING) {
-                        if (not ::GetOverlappedResult(handle, &overlapped, &n, TRUE)) {
-                            err = ::GetLastError();
-                            throw std::system_error{static_cast<int>(err), std::system_category(), msg};
-                        }
-                    }
-                    else if (err == ERROR_OPERATION_ABORTED) continue;
-                    else throw std::system_error{static_cast<int>(err), std::system_category(), msg};
+            if (not ::WriteFile(handle, buffer.data(), static_cast<::DWORD>(std::min<std::size_t>(buffer.size(), 0xff'ff'ff'ffu)), &n, &overlapped)) {
+                ::DWORD err = ::GetLastError();
+                if (err == ERROR_IO_PENDING) {
+                    err = ::GetOverlappedResult(handle, &overlapped, &n, TRUE) ? ERROR_SUCCESS : ::GetLastError();
                 }
-                break;
+                if (err != ERROR_SUCCESS) {
+                    if (err == ERROR_OPERATION_ABORTED) {
+                        throw std::system_error{std::make_error_code(std::errc::operation_canceled), msg};
+                    }
+                    throw std::system_error{static_cast<int>(err), std::system_category(), msg};
+                }
             }
-            while (true);
             return n;
         }
     }
